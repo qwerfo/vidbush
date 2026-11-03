@@ -10,3 +10,4 @@ renderer/node_modules/
 renderer/out/
 *.egg-info/
 .venv/
+.sandbox-ca.crt

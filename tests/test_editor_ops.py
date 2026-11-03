@@ -391,7 +391,8 @@ def test_heuristic_rewrite():
     out = heuristic_rewrite("It is worth noting that it was very hard, and many really suffered.", "punchier")
     assert out == "It was hard. Many suffered."
     assert heuristic_rewrite("Keep me.", "warmer") == "Keep me."
-    assert "—" not in heuristic_rewrite("A — B, and C.", "punchier")
+    dash = chr(0x2014)
+    assert dash not in heuristic_rewrite(f"A {dash} B, and C.", "punchier")
 
 
 # ---------------------------------------------------------------- driver

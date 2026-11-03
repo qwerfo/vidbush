@@ -1,0 +1,98 @@
+id: test_profile
+name: test_profile
+visual_mix:
+  footage: 20.0
+  footage_overlay: 21.0
+  image: 7.0
+  image_overlay: 10.0
+  motion_graphic: 42.0
+  ai_image: 0.0
+  ai_video: 0.0
+pacing:
+  footage:
+    min: 1.72
+    max: 4.01
+    mean: 2.75
+  footage_overlay:
+    min: 1.72
+    max: 4.01
+    mean: 2.86
+  image:
+    min: 2.29
+    max: 4.58
+    mean: 3.15
+  image_overlay:
+    min: 2.29
+    max: 4.58
+    mean: 3.32
+  ai_image:
+    min: 2.29
+    max: 4.58
+    mean: 3.15
+  ai_video:
+    min: 1.72
+    max: 3.44
+    mean: 2.58
+  motion_graphic:
+    min: 4.0
+    max: 8.59
+    mean: 4.87
+  hook_seconds: 60.0
+  hook_multiplier: 0.7
+  jitter: 0.36
+captions:
+  enabled: true
+  font: Inter
+  weight: ExtraBold
+  size: 50
+  color: '#FFFFFF'
+  outline_color: '#000000'
+  outline: 4
+  shadow: 0
+  highlight_color: '#FFD84A'
+  uppercase: false
+  min_words: 3
+  max_words: 5
+  position: bottom_band
+  band_height: 0.48
+letterbox:
+  enabled: true
+  ratio: 2.39
+transitions:
+  cut_probability: 0.9
+  crossfade_duration: 0.4
+colour:
+  lut_path: null
+music:
+  ducking_depth_db: 12.0
+  attack_ms: 80.0
+  release_ms: 600.0
+  bed_gain_db: -18.0
+  scene_crossfade_s: 1.5
+motion:
+  ken_burns_intensity: 0.12
+  depthflow: false
+palette: documentary_warm
+top10: false
+provenance:
+  source: fixtures/reference_video.mp4
+  date: '2026-11-03T09:50:16+00:00'
+  shot_count: 12
+  duration_s: 45.0
+  mix: unknown
+  letterbox_detected: true
+  captions_detected: true
+  letterbox_ratio: 2.39
+  caption_font_px_1080: 50
+  caption_band_height: 0.48
+  caption_frame_share: 0.833
+  caption_color: '#FCFCFC'
+  sampled_frames: 24
+  durations:
+    count: 12
+    min: 2.2
+    max: 6.8
+    mean: 3.75
+    median: 3.4
+    cv: 0.363
+  classified_counts: {}

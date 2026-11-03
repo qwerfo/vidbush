@@ -78,7 +78,7 @@ def detect_shots(path: Path, threshold: float = 27.0, min_len_s: float = 0.5) ->
     from scenedetect import ContentDetector, detect
     _, _, fps, duration = probe(path)
     scenes = detect(str(path), ContentDetector(threshold=threshold, min_scene_len=max(1, int(fps * min_len_s))))
-    spans = [(round(s.get_seconds(), 3), round(e.get_seconds(), 3)) for s, e in scenes]
+    spans = [(round(float(s.seconds), 3), round(float(e.seconds), 3)) for s, e in scenes]
     return spans or [(0.0, round(duration, 3))]
 
 

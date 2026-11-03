@@ -162,13 +162,20 @@ def visual_mix(durations: list[float], labels: list[str], default: dict[str, flo
     return {t: round(100.0 * v / total, 1) for t, v in acc.items()}
 
 
+def caption_colour(hex_colour: str) -> str:
+    """Measured text colour; near white (compression tinted) snaps to pure white."""
+    rgb = [int(hex_colour[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#FFFFFF" if min(rgb) >= 228 else hex_colour.upper()
+
+
 def build_profile(name: str, base: StyleProfile, durations: list[float], starts: list[float],
                   labels: Optional[list[str]], letterbox: LetterboxResult, captions: CaptionResult,
                   provenance: dict[str, Any]) -> StyleProfile:
     """A full StyleProfile from the measurements, starting from the base profile."""
     caps = base.captions.model_copy(update={"enabled": captions.detected})
     if captions.detected:
-        caps = caps.model_copy(update={"size": captions.font_px_1080, "band_height": captions.band_height})
+        caps = caps.model_copy(update={"size": captions.font_px_1080, "band_height": captions.band_height,
+                                       "color": caption_colour(captions.color)})
     lb = base.letterbox.model_copy(update={"enabled": letterbox.detected,
                                            "ratio": letterbox.ratio or base.letterbox.ratio})
     mix = visual_mix(durations, labels, base.visual_mix) if labels else dict(base.visual_mix)

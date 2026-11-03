@@ -36,13 +36,18 @@ regenerate_ai {shot_id, prompt_delta}: new AI image, prompt_delta is extra direc
 set_duration {shot_id, seconds}: set one shot length, the neighbour absorbs the change
 split_shot {shot_id, at}: split at seconds into the shot
 merge_shots {a, b}: merge two adjacent shots
-change_type {shot_id, type, kind?, intent?}: type is one of footage, footage_overlay, image, image_overlay, ai_image, ai_video, motion_graphic; for motion_graphic kind may be map, number_card or text_overlay and intent describes it
-set_overlay {shot_id, motion_spec}: motion_spec is {kind, payload}, kinds lower_third, callout, text_overlay with payload {title, subtitle}
+change_type {shot_id, type, kind?, intent?}: type is one of footage, footage_overlay, image, image_overlay,
+  ai_image, ai_video, motion_graphic; for motion_graphic, kind may be map, number_card or text_overlay and intent
+  describes it
+set_overlay {shot_id, motion_spec}: motion_spec is {kind, payload}, kinds lower_third, callout, text_overlay,
+  payload {title, subtitle}
 remove_overlay {shot_id}
 reorder {shot_id, new_index}: new_index is 0-based
-retime_section {range: [start_s, end_s] or scene_id, factor}: factor below 1 cuts faster (0.7 typical), above 1 slower (1.4 typical)
+retime_section {range: [start_s, end_s] or scene_id, factor}: factor below 1 cuts faster (0.7 typical),
+  above 1 slower (1.4 typical)
 change_music {track}: a file name from the music list
-set_caption_style {delta}: delta keys from CaptionStyle: size (px at 1080p), color, highlight_color, outline_color, outline, weight, uppercase, enabled, band_height
+set_caption_style {delta}: delta keys from CaptionStyle: size (px at 1080p), color, highlight_color,
+  outline_color, outline, weight, uppercase, enabled, band_height
 rewrite_beat {beat_id, instruction}: rewrite and re-narrate one beat"""
 
 SYSTEM = ("You turn a video editor's revision request into edit operations for a long-form documentary. Use only "
@@ -222,14 +227,15 @@ def parse_clause(clause: str, rc: RuleContext) -> list[EditOp]:
 # ---------------------------------------------------------------- references and numbers
 
 _REF_HEAD = re.compile(r"\bshots?\b\s*(?:number\s*|no\.?\s*)?#?\s*(\d+)\b")
-_REF_MORE = re.compile(r"\s*(?:,|&|\band\b|\bwith\b|\binto\b)\s*(?:the\s+)?(?:shots?\s*)?#?\s*(\d+)\b(?!\s*(?:s|sec|secs|"
-                       r"seconds?|minutes?|mins?|x|%)\b)")
+_REF_MORE = re.compile(r"\s*(?:,|&|\band\b|\bwith\b|\binto\b)\s*(?:the\s+)?(?:shots?\s*)?#?\s*(\d+)\b"
+                       r"(?!\s*(?:s|sec|secs|seconds?|minutes?|mins?|x|%)\b)")
 _ORDINAL = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
             "ninth": 9, "tenth": 10, "opening": 1}
 _WORD_NUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
              "eight": 8, "nine": 9, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
              "sixty": 60, "ninety": 90, "half a": 0.5}
-_NUM = r"(\d+(?:\.\d+)?|half a|an|a|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty|fifty|sixty|ninety)"
+_NUM = (r"(\d+(?:\.\d+)?|half a|an|a|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|"
+        r"forty|fifty|sixty|ninety)")
 _SECONDS = re.compile(r"(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds?)\b")
 
 
@@ -491,8 +497,8 @@ def rule_motion(text: str, clause: str, rc: RuleContext) -> list[EditOp]:
 
 
 _QUOTED = re.compile(r"[\"“]([^\"”]{2,80})[\"”]|'([^']{2,80})'")
-_SAYING = re.compile(r"\b(?:saying|that says|reading|which says|with the text)\s+(.+?)(?:\s+(?:to|on|over|for)\s+(?:the\s+)?"
-                     r"(?:shot|\d+(?:st|nd|rd|th)|first|last)\b.*)?$", re.I)
+_SAYING = re.compile(r"\b(?:saying|that says|reading|which says|with the text)\s+(.+?)"
+                     r"(?:\s+(?:to|on|over|for)\s+(?:the\s+)?(?:shot|\d+(?:st|nd|rd|th)|first|last)\b.*)?$", re.I)
 
 
 def rule_add_text(text: str, clause: str, rc: RuleContext) -> list[EditOp]:
