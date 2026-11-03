@@ -4,6 +4,7 @@ data_folder: data
 source_cache_folder: data/source_cache
 music_folder: fixtures/music
 offline: false          # true = never touch the network, every seat runs mock
+allow_mock_fallback: false  # true = if every real provider for a role fails, use mock instead of failing the stage
 
 sources:
   # order is the search order; disabled sources are skipped

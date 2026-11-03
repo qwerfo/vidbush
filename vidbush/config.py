@@ -87,6 +87,7 @@ class Settings(BaseModel):
     cost: CostConfig = Field(default_factory=CostConfig)
     render: RenderConfig = Field(default_factory=RenderConfig)
     offline: bool = False  # never touch the network (tests, sandbox)
+    allow_mock_fallback: bool = False  # True: a role whose real providers all fail falls back to mock instead of failing the stage
     fail_at_stage: Optional[str] = None  # test hook: raise when this stage starts
 
     def key(self, name: str) -> str:
@@ -124,6 +125,7 @@ def load_settings(root: Optional[Path] = None, overrides: Optional[dict[str, Any
         cost=CostConfig(**app.get("cost", {})),
         render=RenderConfig(**app.get("render", {})),
         offline=_truthy(env.get("VIDBUSH_OFFLINE", app.get("offline", False))),
+        allow_mock_fallback=_truthy(env.get("VIDBUSH_ALLOW_MOCK_FALLBACK", app.get("allow_mock_fallback", False))),
         fail_at_stage=env.get("VIDBUSH_FAIL_AT") or None,
     )
     if env.get("YOUTUBE_ENABLED"):

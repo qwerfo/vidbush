@@ -152,7 +152,7 @@ class Project(Model):
     brief: Optional[Brief] = None
     script_path: Optional[str] = None  # input script (script mode or voiceover sidecar)
     voiceover_path: Optional[str] = None  # input audio (voiceover mode)
-    status: Literal["created", "running", "done", "failed"] = "created"
+    status: Literal["created", "running", "done", "needs_review", "failed"] = "created"
     current_stage: Optional[str] = None
     stages: dict[str, StageRecord] = Field(default_factory=dict)
     paths: ProjectPaths
@@ -358,6 +358,7 @@ class BoxPayload(Model):
 class RecapPayload(Model):
     title: str = "Recap"
     items: list[str]  # ordered labels, item 10 first or item 1 first as given
+    numbers: Optional[list[int]] = None  # explicit item numbers (top10 countdown); highlight number 1
 
 
 class MotionSpec(Model):
@@ -411,7 +412,7 @@ class Candidate(Model):
     score: Optional[float] = None
     judge_reason: str = ""
     reject_reason: Optional[str] = None
-    flags: list[str] = Field(default_factory=list)  # nc_nd, mock, low_res
+    flags: list[str] = Field(default_factory=list)  # nc_nd, mock, judge_mock, low_res, anachronism, depthflow, fixture_rotation, frame_grab
     crop: Optional[list[float]] = None  # derived framing [x, y, w, h] in 0..1
 
 
@@ -663,6 +664,7 @@ class EditResult(Model):
     errors: list[str] = Field(default_factory=list)
     dirty_shots: list[str] = Field(default_factory=list)
     needs_renarration: bool = False
+    force: list[str] = Field(default_factory=list)  # stages that must rerun after these ops
 
 
 # ---------------------------------------------------------------- reports

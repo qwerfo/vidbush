@@ -236,6 +236,7 @@
         "created",
         "running",
         "done",
+        "needs_review",
         "failed"
       ],
       "title": "Status",
