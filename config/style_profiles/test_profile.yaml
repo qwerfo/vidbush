@@ -76,7 +76,7 @@ palette: documentary_warm
 top10: false
 provenance:
   source: fixtures/reference_video.mp4
-  date: '2026-11-03T09:50:16+00:00'
+  date: '2026-11-03T11:55:12+00:00'
   shot_count: 12
   duration_s: 45.0
   mix: unknown
@@ -96,3 +96,5 @@ provenance:
     median: 3.4
     cv: 0.363
   classified_counts: {}
+  mix_unit: shot_count
+  screen_time_mix: {}
