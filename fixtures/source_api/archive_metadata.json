@@ -1,0 +1,57 @@
+{
+  "created": 1730000000,
+  "dir": "/1/items/PanamaCanal1913",
+  "server": "ia800000.us.archive.org",
+  "metadata": {
+    "identifier": "PanamaCanal1913",
+    "title": "Panama Canal Construction (1913)",
+    "creator": "Edison Manufacturing Company",
+    "mediatype": "movies",
+    "collection": [
+      "prelinger",
+      "feature_films"
+    ],
+    "rights": ""
+  },
+  "files": [
+    {
+      "name": "PanamaCanal1913.ogv",
+      "source": "derivative",
+      "format": "Ogg Video",
+      "size": "40000000",
+      "length": "312.4",
+      "height": "480",
+      "width": "640"
+    },
+    {
+      "name": "PanamaCanal1913_512kb.mp4",
+      "source": "derivative",
+      "format": "h.264",
+      "size": "20000000",
+      "length": "312.4",
+      "height": "480",
+      "width": "640"
+    },
+    {
+      "name": "PanamaCanal1913.mp4",
+      "source": "original",
+      "format": "MPEG4",
+      "size": "90000000",
+      "length": "312.4",
+      "height": "1080",
+      "width": "1440"
+    },
+    {
+      "name": "PanamaCanal1913.thumbs/PanamaCanal1913_000001.jpg",
+      "source": "derivative",
+      "format": "Thumbnail",
+      "size": "5000"
+    },
+    {
+      "name": "__ia_thumb.jpg",
+      "source": "original",
+      "format": "Item Tile",
+      "size": "8000"
+    }
+  ]
+}

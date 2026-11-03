@@ -1,0 +1,60 @@
+{
+  "_type": "playlist",
+  "id": "panama canal construction archival",
+  "title": "panama canal construction archival",
+  "extractor": "youtube:search",
+  "entries": [
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "aaaaaaaaaa1",
+      "url": "https://www.youtube.com/watch?v=aaaaaaaaaa1",
+      "title": "Building the Panama Canal (1913) [HD] Archival newsreel footage",
+      "channel": "British Pathe",
+      "duration": 412.0,
+      "description": "Restored archival newsreel of canal construction.",
+      "view_count": 120000
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "bbbbbbbbbb2",
+      "url": "https://www.youtube.com/watch?v=bbbbbbbbbb2",
+      "title": "Panama Canal Documentary",
+      "channel": "History Films",
+      "duration": 2700.0,
+      "description": "A documentary about the canal.",
+      "view_count": 50000
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "cccccccccc3",
+      "url": "https://www.youtube.com/watch?v=cccccccccc3",
+      "title": "Reacting to the Panama Canal! (reaction vlog)",
+      "channel": "Some Streamer",
+      "duration": 900.0,
+      "description": "",
+      "view_count": 9000
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "dddddddddd4",
+      "url": "https://www.youtube.com/shorts/dddddddddd4",
+      "title": "Canal in 30 seconds #shorts",
+      "channel": "Clips",
+      "duration": 30.0
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "eeeeeeeeee5",
+      "url": "https://www.youtube.com/watch?v=eeeeeeeeee5",
+      "title": "Top 10 Canal Facts Explained",
+      "channel": "Facts Daily",
+      "duration": 600.0,
+      "description": "podcast style"
+    }
+  ]
+}

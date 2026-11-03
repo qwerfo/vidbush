@@ -1,0 +1,88 @@
+{
+  "batchcomplete": "",
+  "continue": {
+    "gsroffset": 3,
+    "continue": "gsroffset||"
+  },
+  "query": {
+    "pages": {
+      "51234": {
+        "pageid": 51234,
+        "ns": 6,
+        "title": "File:Culebra Cut, Panama Canal, 1913.jpg",
+        "index": 1,
+        "imagerepository": "local",
+        "imageinfo": [
+          {
+            "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Culebra_Cut_1913.jpg/1920px-Culebra_Cut_1913.jpg",
+            "thumbwidth": 1920,
+            "thumbheight": 1280,
+            "url": "https://upload.wikimedia.org/wikipedia/commons/a/ab/Culebra_Cut_1913.jpg",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Culebra_Cut,_Panama_Canal,_1913.jpg",
+            "size": 2400000,
+            "width": 3000,
+            "height": 2000,
+            "mime": "image/jpeg",
+            "extmetadata": {
+              "ObjectName": {
+                "value": "Culebra Cut, Panama Canal, 1913"
+              },
+              "LicenseShortName": {
+                "value": "Public domain"
+              },
+              "Artist": {
+                "value": "<a href=\"https://en.wikipedia.org/wiki/Underwood\" title=\"Underwood\">Underwood &amp; Underwood</a>"
+              },
+              "ImageDescription": {
+                "value": "Steam shovels at work in the <b>Culebra Cut</b>."
+              }
+            }
+          }
+        ]
+      },
+      "51235": {
+        "pageid": 51235,
+        "ns": 6,
+        "title": "File:Gatun Locks construction.jpg",
+        "index": 2,
+        "imageinfo": [
+          {
+            "url": "https://upload.wikimedia.org/wikipedia/commons/c/cd/Gatun_Locks_construction.jpg",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Gatun_Locks_construction.jpg",
+            "width": 1600,
+            "height": 1100,
+            "mime": "image/jpeg",
+            "extmetadata": {
+              "LicenseShortName": {
+                "value": "CC BY-NC-SA 2.0"
+              },
+              "Artist": {
+                "value": "<span class=\"fn\">Panama Canal Museum</span>"
+              }
+            }
+          }
+        ]
+      },
+      "51236": {
+        "pageid": 51236,
+        "ns": 6,
+        "title": "File:Canal route map.svg",
+        "index": 3,
+        "imageinfo": [
+          {
+            "url": "https://upload.wikimedia.org/wikipedia/commons/e/ef/Canal_route_map.svg",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Canal_route_map.svg",
+            "width": 800,
+            "height": 600,
+            "mime": "image/svg+xml",
+            "extmetadata": {
+              "LicenseShortName": {
+                "value": "CC BY-SA 4.0"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

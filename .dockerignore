@@ -1,0 +1,8 @@
+.git
+.env
+output
+data
+**/__pycache__
+ui/node_modules
+renderer/node_modules
+.pytest_cache

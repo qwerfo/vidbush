@@ -1,0 +1,659 @@
+"""Heuristic visual ideas from beat text: the deterministic fallback for the director seat.
+
+ideas_for_beat(bc, palette, rng) returns at least one footage, one still and one
+motion VisualIdea for a beat, built from the concrete nouns, people, places,
+era and numbers it mentions. Text helpers here are also used by the director
+to validate model output (numbers cited by charts, places on maps).
+"""
+from __future__ import annotations
+
+import random
+import re
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+from ..models import Beat, FactCard, MotionSpec, Research, Scene, ScenePurpose, VisualIdea
+from ..util import no_em_dash
+
+# ---------------------------------------------------------------- vocabulary
+
+ACTIVITY_NOUNS = {
+    "worker", "workers", "laborer", "laborers", "men", "women", "crowd", "crowds", "soldier", "soldiers", "ship",
+    "ships", "steamship", "steamer", "boat", "boats", "train", "trains", "locomotive", "railroad", "shovel",
+    "shovels", "excavator", "dredge", "dredges", "crane", "cranes", "explosion", "dynamite", "construction",
+    "factory", "factories", "engine", "engines", "parade", "march", "battle", "troops", "army", "sailors",
+    "doctor", "doctors", "nurse", "nurses", "hospital", "patients", "children", "families", "farmers", "miners",
+    "engineers", "engineer", "people", "president", "car", "cars", "truck", "trucks", "aircraft", "plane",
+    "planes", "rocket", "launch", "tugboat", "tugboats", "locks", "workforce", "gang", "crew", "crews",
+    "fire", "flood", "storm", "waves", "riot", "protest", "ceremony", "celebration", "mule", "mules",
+    "horse", "horses", "wagon", "wagons", "steam", "drill", "drills", "machine", "machines", "mosquito",
+    "mosquitoes", "fumigation", "fumigating", "spraying", "digging", "dig", "blast", "blasting", "landslide",
+    "landslides", "mudslide", "mudslides", "passengers", "immigrants", "tanker", "tankers", "freighter", "war",
+}
+SCENIC_NOUNS = {
+    "jungle", "jungles", "mountain", "mountains", "river", "rivers", "ocean", "oceans", "sea", "seas", "lake",
+    "lakes", "valley", "desert", "forest", "forests", "rainforest", "swamp", "swamps", "coast", "coastline",
+    "island", "islands", "canyon", "cliffs", "hills", "landscape", "isthmus", "beach", "rock", "rocks", "sky",
+    "sunset", "sunrise", "harbor", "harbour", "port", "bay", "channel", "waterway", "canal", "dam", "bridge",
+    "city", "town", "village", "tunnel", "map", "ruins", "cathedral", "fort", "fortress", "building",
+    "buildings", "skyline", "gate", "gates", "lock", "spillway", "reservoir", "tropics", "rain", "mud",
+    "grave", "graves", "cemetery", "office", "offices", "treaty", "document", "documents", "flag", "flags",
+    "money", "gold", "coins", "bank", "stock", "shares", "newspaper", "newspapers", "headline", "headlines",
+    "telegram", "letter", "letters", "blueprint", "blueprints", "plans", "model", "dirt", "earth",
+}
+CONCRETE = ACTIVITY_NOUNS | SCENIC_NOUNS
+TITLE_WORDS = {"president", "king", "queen", "general", "doctor", "dr", "colonel", "captain", "emperor", "sir",
+               "lord", "senator", "governor", "admiral", "major", "lieutenant", "chief", "engineer", "secretary"}
+UNIT_ALIASES = {
+    "mile": "miles", "miles": "miles", "km": "km", "kilometers": "km", "kilometres": "km", "kilometer": "km",
+    "feet": "feet", "foot": "feet", "ft": "feet", "meters": "meters", "metres": "meters", "meter": "meters",
+    "tons": "tons", "ton": "tons", "tonnes": "tons", "dollars": "dollars", "dollar": "dollars", "$": "dollars",
+    "usd": "dollars", "percent": "percent", "%": "percent", "workers": "people", "worker": "people",
+    "people": "people", "men": "people", "lives": "people", "deaths": "people", "laborers": "people",
+    "employees": "people", "ships": "ships", "vessels": "ships", "years": "years", "days": "days",
+    "hours": "hours", "acres": "acres", "gallons": "gallons", "cubic": "cubic yards", "yards": "yards",
+    "locomotives": "locomotives", "shovels": "shovels", "francs": "francs",
+}
+TIME_UNITS = {"years", "days", "hours", "months", "weeks", "decades", "centuries", "minutes", "seconds"}
+_MULT = {"thousand": 1e3, "million": 1e6, "billion": 1e9, "hundred": 1e2}
+_NUM_RE = re.compile(r"(\$)?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(thousand|million|billion|hundred)?\s*(%|percent)?",
+                     re.I)
+_YEAR_RE = re.compile(r"\b(1[0-9]{3}|20[0-9]{2})(s)?\b")
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'\-]*")
+STOP = {"the", "a", "an", "of", "and", "or", "to", "in", "on", "at", "by", "for", "with", "from", "that", "this",
+        "it", "its", "was", "were", "is", "are", "be", "been", "had", "has", "have", "their", "they", "them",
+        "he", "she", "his", "her", "about", "roughly", "nearly", "almost", "around", "over", "more", "than",
+        "some", "into", "would", "could", "which", "who", "what", "when", "then", "just", "only", "also", "so",
+        "but", "not", "no", "as", "one", "all", "most", "after", "before", "while", "every", "each", "there",
+        "these", "those", "again", "still", "even", "very", "much", "many", "such", "own", "suddenly", "during",
+        "across", "through", "between", "under", "within", "without", "against", "toward", "towards", "up",
+        "down", "out", "off", "until", "since", "because", "though", "although", "among", "per", "will"}
+DISPLAY_NAMES = {"United States of America": "United States", "United Kingdom": "Britain"}
+
+
+class NumberMention(BaseModel):
+    """A number found in text with its unit and a short label from context."""
+
+    value: float
+    unit: str = ""
+    raw: str
+    label: str = ""
+    after: str = ""
+    is_year: bool = False
+
+
+class BeatContext(BaseModel):
+    """Everything the heuristics know about one beat."""
+
+    beat: Beat
+    scene: Scene
+    first_in_scene: bool = False
+    era: Optional[int] = None
+    facts: list[FactCard] = Field(default_factory=list)
+    topic: str = ""
+    scene_index: int = 0
+
+
+# ---------------------------------------------------------------- text helpers
+
+def topic_of(title: str, research: Optional[Research]) -> str:
+    """Short topic: research topic or the script title before a colon."""
+    topic = research.topic if research and research.topic else re.split(r"[:|]", title or "")[0]
+    return re.sub(r"^the\s+", "", topic.strip(), flags=re.I)
+
+
+def extract_years(text: str) -> list[int]:
+    """Four digit years (1000 to 2099) that are not quantities with units."""
+    out = []
+    for m in _YEAR_RE.finditer(text):
+        nxt = _WORD_RE.match(text[m.end():].lstrip())
+        if nxt and nxt.group(0).lower() in UNIT_ALIASES and nxt.group(0).lower() not in TIME_UNITS:
+            continue
+        if text[max(0, m.start() - 1):m.start()] == "$":
+            continue
+        out.append(int(m.group(1)))
+    return out
+
+
+def _context_words(text: str, start: int, end: int, n: int = 3) -> tuple[str, str]:
+    pre = re.split(r"[,.;:!?\d$]", text[max(0, start - 60):start])[-1]
+    before = [w for w in _WORD_RE.findall(pre) if w.lower() not in STOP][-n:]
+    seg = re.split(r"[,.;:!?\d$]", text[end:end + 60])[0]
+    after = [w for w in _WORD_RE.findall(seg)][:4]
+    while after and after[-1].lower() in STOP:
+        after.pop()
+    return " ".join(before), " ".join(after)
+
+
+def extract_numbers(text: str) -> list[NumberMention]:
+    """Quantities in text with normalised units; bare numbers inherit the unit used earlier in the sentence."""
+    out: list[NumberMention] = []
+    years = set(extract_years(text))
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        last_unit = ""
+        for m in _NUM_RE.finditer(sentence):
+            out_m = _mention(sentence, m, years, last_unit)
+            if out_m is None:
+                continue
+            last_unit = out_m.unit or last_unit
+            out.append(out_m)
+    return out
+
+
+def _mention(sentence: str, m: re.Match, years: set[int], last_unit: str) -> Optional[NumberMention]:
+    dollar, digits, mult, pct = m.group(1), m.group(2), m.group(3), m.group(4)
+    if re.match(r"[A-Za-z]", sentence[m.end(2):m.end(2) + 1] or " "):
+        return None  # part of a word, such as 1880s or 3rd
+    value = float(digits.replace(",", ""))
+    is_year = not dollar and not mult and not pct and "," not in digits and int(value) in years
+    end = m.start() + len(m.group(0).rstrip())
+    nxt = _WORD_RE.match(sentence[end:].lstrip())
+    word = nxt.group(0).lower() if nxt and sentence[end:end + 2].strip()[:1].isalpha() else ""
+    unit = "dollars" if dollar else "percent" if pct else UNIT_ALIASES.get(word, "")
+    if not unit and not is_year and re.fullmatch(r"[a-z]{3,}[^s]s", word or ""):
+        unit = word
+    if not unit and not is_year:
+        unit = last_unit
+    value *= _MULT.get((mult or "").lower(), 1.0)
+    label, after = _context_words(sentence, m.start(), end)
+    return NumberMention(value=value, unit=unit, raw=m.group(0).strip(), label=label, after=after, is_year=is_year)
+
+
+def fact_numbers(facts: list[FactCard]) -> list[tuple[NumberMention, FactCard]]:
+    """Numbers carried by fact cards: structured numbers first, then numbers in the claim text."""
+    out: list[tuple[NumberMention, FactCard]] = []
+    for f in facts:
+        for n in f.numbers:
+            try:
+                v = float(str(n.get("value", "")).replace(",", ""))
+            except ValueError:
+                continue
+            unit = UNIT_ALIASES.get(str(n.get("unit", "")).lower(), str(n.get("unit", "")).lower())
+            out.append((NumberMention(value=v, unit=unit, raw=str(n.get("value")), label=str(n.get("label", ""))), f))
+        out.extend((m, f) for m in extract_numbers(f.claim) if not m.is_year)
+    return out
+
+
+def number_is_cited(value: float, facts: list[FactCard]) -> Optional[FactCard]:
+    """Fact card whose numbers include value (1 percent tolerance, any thousand scale), else None."""
+    for m, f in fact_numbers(facts):
+        for scale in (1.0, 1e3, 1e6, 1e9):
+            target = m.value / scale
+            if abs(value - target) <= max(0.011 * abs(target), 1e-9):
+                return f
+    return None
+
+
+def capitalised_names(text: str) -> list[str]:
+    """People mentioned in text: runs that start with a known first name or follow a title word."""
+    from ..mg import geo
+    toks = geo.tokens(text)
+    out: list[str] = []
+    for start, words, _initial in geo.cap_runs(toks):
+        if not words:
+            continue
+        prev = toks[start - 1].lower().rstrip(".") if start > 0 else ""
+        first = words[0].lower().rstrip(".")
+        if first in TITLE_WORDS and len(words) >= 2:
+            words = words[1:]
+        elif not (first in geo.FIRST_NAMES and len(words) >= 2) and prev not in TITLE_WORDS:
+            continue
+        name = " ".join(words).strip()
+        if name and geo.lookup(name) is None and name not in out:
+            out.append(name)
+    return out
+
+
+COMPOUND_HEADS = {"steam", "yellow", "cargo", "container", "sailing", "railroad", "construction", "rock", "dirt",
+                  "concrete", "steel", "lock"}
+
+
+def visual_nouns(text: str) -> list[str]:
+    """Concrete visual nouns in order of appearance, with compound pairs like 'steam shovels'."""
+    raw = _WORD_RE.findall(text)
+    words = [w.lower() for w in raw]
+    out: list[str] = []
+    for i, w in enumerate(words):
+        if w not in CONCRETE or (w in TITLE_WORDS and raw[i][0].isupper()):
+            continue
+        prev = words[i - 1] if i > 0 else ""
+        if prev in COMPOUND_HEADS:
+            if prev in out:
+                out.remove(prev)
+            w = f"{prev} {w}"
+        if w not in out:
+            out.append(w)
+    return out
+
+
+def content_words(text: str, n: int = 4) -> list[str]:
+    """Longest non-stopword words, used when no concrete noun is found."""
+    words = [w for w in _WORD_RE.findall(text) if w.lower() not in STOP and len(w) > 3
+             and not w.lower().endswith("ly")]
+    ranked = sorted(dict.fromkeys(words), key=lambda w: (-len(w), words.index(w)))
+    return [w.lower() for w in ranked[:n]]
+
+
+def key_phrase(text: str, max_words: int = 9) -> str:
+    """The most quotable short clause of a beat, ideally 4 to max_words words."""
+    clauses = [c.strip(" \"'") for c in re.split(r"[;:.!?](?!\d)|,(?!\d{3})", text) if c.strip()]
+    clauses = [re.sub(r"^(and|but|so|yet|or|then)\s+", "", c, flags=re.I) for c in clauses]
+    clauses = [re.sub(r"^(in|by|on) (the )?\d{4}s?\s*", "", c, flags=re.I) for c in clauses]
+
+    def score(c: str) -> float:
+        n = len(c.split())
+        s = -5.0 if n < 3 else 2.0 if n <= max_words else 2.0 - (n - max_words) * 0.4
+        s += 0.8 if re.search(r"\d", c) else 0.0
+        s += 0.4 * sum(w.lower().strip(",") in CONCRETE for w in c.split())
+        return s - abs(n - 6) * 0.1
+    best = max(clauses, key=score) if clauses else text
+    words = best.split()
+    if len(words) > max_words + 3:
+        words = words[:max_words]
+        while words and words[-1].lower() in STOP:
+            words.pop()
+    phrase = " ".join(words).strip(" ,")
+    return no_em_dash(phrase[:1].upper() + phrase[1:]) if phrase else ""
+
+
+def era_label(year: Optional[int]) -> str:
+    """'1910s' for 1914, '' when unknown."""
+    return f"{year // 10 * 10}s" if year else ""
+
+
+def era_avoid(year: Optional[int]) -> list[str]:
+    """Anachronism guards for a historical era."""
+    if not year or year >= 1990:
+        return []
+    out = ["modern vehicles", "modern buildings", "modern clothing", "smartphones or screens"]
+    if year < 1935:
+        out.append("color footage")
+    return out
+
+
+def era_from_facts(facts: list[FactCard]) -> Optional[int]:
+    """First year mentioned in fact dates."""
+    for f in facts:
+        ys = extract_years(f.date or "")
+        if ys:
+            return ys[0]
+    return None
+
+
+# ---------------------------------------------------------------- entities
+
+class BeatEntities(BaseModel):
+    """What a beat is about, extracted once."""
+
+    places: list[tuple[str, float, float]] = Field(default_factory=list)
+    countries: list[str] = Field(default_factory=list)
+    people: list[str] = Field(default_factory=list)
+    nouns: list[str] = Field(default_factory=list)
+    years: list[int] = Field(default_factory=list)
+    numbers: list[NumberMention] = Field(default_factory=list)
+    phrase: str = ""
+
+
+def beat_entities(bc: BeatContext) -> BeatEntities:
+    """Places, people, nouns, years, numbers and key phrase of a beat (scene title adds places)."""
+    from ..mg import geo
+    text = bc.beat.text
+    hits = geo.find_place_hits(text) or geo.find_place_hits(bc.scene.title)
+    scene_text = " ".join(b.text for b in bc.scene.beats)
+    nouns = (visual_nouns(text) or visual_nouns(bc.scene.title) or visual_nouns(scene_text)[:2]
+             or content_words(bc.topic, 2))
+    return BeatEntities(places=[(DISPLAY_NAMES.get(h.name, h.name), h.lat, h.lon) for h in hits],
+                        countries=[DISPLAY_NAMES.get(h.name, h.name) for h in hits if h.kind == "country"],
+                        people=capitalised_names(text), nouns=nouns, years=extract_years(text),
+                        numbers=[n for n in extract_numbers(text) if not n.is_year], phrase=key_phrase(text))
+
+
+def _join(items: list[str]) -> str:
+    items = [i for i in items if i]
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _queries(parts: list[list[str]]) -> list[str]:
+    out: list[str] = []
+    for p in parts:
+        q = re.sub(r"\s+", " ", " ".join(dict.fromkeys(x for x in p if x))).strip()
+        if q and len(q.split()) >= 2 and q.lower() not in (o.lower() for o in out):
+            out.append(q)
+    return out[:5]
+
+
+CTA_RE = re.compile(r"\b(subscribe|enjoyed this|leave a comment|like this video|this channel|next video)\b", re.I)
+BASE_AVOID = ["people talking to camera", "on-screen text", "watermarks or channel logos"]
+
+
+# ---------------------------------------------------------------- footage and still ideas
+
+MASS_NOUNS = {"jungle", "rock", "rocks", "swamp", "mud", "rain", "steam", "dirt", "earth", "gold", "money",
+              "fire", "dynamite", "construction", "people", "men", "women", "children", "workforce", "sky"}
+
+
+def noun_phrase(noun: str) -> str:
+    """'a ship', 'workers', 'jungle': adds an article to singular count nouns."""
+    head = noun.split()[-1]
+    if noun[:1].isupper() or head.endswith("s") or head in MASS_NOUNS:
+        return noun
+    return ("an " if noun[0] in "aeiou" else "a ") + noun
+
+
+def footage_ideas(bc: BeatContext, ent: BeatEntities) -> list[VisualIdea]:
+    """Two footage ideas: the main subject, then a secondary subject or a wide establishing shot."""
+    era = era_label(bc.era)
+    old = bool(bc.era and bc.era < 1990)
+    kind = "archival footage" if old else "footage"
+    place = next((p[0] for p in ent.places if p[0] not in ent.countries), ent.places[0][0] if ent.places else "")
+    main = (ent.people[:1] + ent.nouns[:2])[:2] or [bc.topic]
+    rest = [n for n in ent.nouns if n not in main][:2]
+    variants: list[tuple[list[str], bool]] = [(main, False)]
+    variants.append((rest, False) if rest else ([place or bc.topic], True))
+    out: list[VisualIdea] = []
+    for k, (subj, wide) in enumerate(variants):
+        prep = _prep(place)
+        where = f" {prep} {place}" if place and place not in subj else ""
+        when = f", {era}" if era else ""
+        what = _join([noun_phrase(x) for x in subj])
+        intent = (f"Wide establishing {kind} of {what}{when}." if wide
+                  else f"{kind.capitalize()} of {what}{where}{when}.")
+        queries = _queries([[place if place not in subj else "", *subj[:2], era, kind], [*subj[:2], era, kind],
+                            [place, subj[0]], [bc.topic, subj[0], "film" if old else "footage"],
+                            [bc.topic, kind]])
+        activity = not wide and (bool(ent.people) or any(w.split()[-1] in ACTIVITY_NOUNS for w in subj))
+        out.append(VisualIdea(beat_id=bc.beat.id, family="footage", intent=no_em_dash(intent),
+                              must_show=subj[:2] + ([place] if place and k == 0 and place not in subj else []),
+                              must_avoid=BASE_AVOID + era_avoid(bc.era), queries=queries,
+                              priority=0.6 - 0.15 * k, opening_safe=activity))
+    return out
+
+
+def still_ideas(bc: BeatContext, ent: BeatEntities) -> list[VisualIdea]:
+    """Two still ideas: a period photograph (or painting) and a detail or portrait."""
+    era = era_label(bc.era)
+    medium = "painting" if bc.era and bc.era < 1840 else "photograph"
+    place = ent.places[0][0] if ent.places else ""
+    out: list[VisualIdea] = []
+    subjects = ent.nouns[:2] or [bc.topic]
+    if ent.people:
+        person = ent.people[0]
+        out.append(VisualIdea(beat_id=bc.beat.id, family="still", intent=f"Portrait {medium} of {person}.",
+                              must_show=[person], must_avoid=["on-screen text", "watermarks", "modern reproductions"],
+                              queries=_queries([[person, "portrait", medium], [person, era], [person]]),
+                              priority=0.62, opening_safe=True))
+    main = _join([noun_phrase(x) for x in subjects])
+    lead = "Historical" if bc.era and bc.era < 1990 else "Documentary"
+    prep = f" {_prep(place)} "
+    intent = f"{lead} {medium} of {main}{prep + place if place else ''}{', ' + era if era else ''}."
+    out.append(VisualIdea(beat_id=bc.beat.id, family="still", intent=no_em_dash(intent),
+                          must_show=subjects + ([place] if place else []),
+                          must_avoid=["on-screen text", "watermarks or channel logos"] + era_avoid(bc.era),
+                          queries=_queries([[place, *subjects, era, medium], [*subjects, era, medium],
+                                            [place, subjects[0], medium], [bc.topic, subjects[0]],
+                                            [bc.topic, "historical", medium]]),
+                          priority=0.55, opening_safe=bool(ent.people)))
+    if len(out) < 2:
+        detail = (ent.nouns[1:2] or ent.nouns[:1] or [bc.topic])[0]
+        out.append(VisualIdea(beat_id=bc.beat.id, family="still",
+                              intent=f"Close detail {medium} of {noun_phrase(detail)}.",
+                              must_show=[detail], must_avoid=["on-screen text", "watermarks"] + era_avoid(bc.era),
+                              queries=_queries([[bc.topic, detail, medium], [detail, era], [detail, "close up"]]),
+                              priority=0.4, opening_safe=False))
+    return out
+
+
+def overlay_options(bc: BeatContext, ent: BeatEntities, palette: str, rng: random.Random) -> list[MotionSpec]:
+    """Overlay specs for footage and still ideas, best first."""
+    from ..mg import builders as b
+    out: list[MotionSpec] = []
+    era = era_label(bc.era)
+    if ent.people:
+        out.append(b.lower_third_spec(ent.people[0], era or bc.scene.title, palette=palette))
+    for name, _la, _lo in ent.places[:1]:
+        sub = "" if name in ent.countries else _place_sub(name)
+        out.append(b.lower_third_spec(name, sub, palette=palette))
+    for y in ent.years[:1]:
+        out.append(b.text_overlay_spec(str(y), position="upper_left", subtitle=ent.places[0][0] if ent.places else "",
+                                       palette=palette))
+    if ent.phrase and len(ent.phrase.split()) >= 3:
+        out.append(b.callout_spec(ent.phrase, palette=palette))
+    roll = rng.random()
+    if roll < 0.12 and ent.nouns:
+        out.append(b.highlight_box_spec(0.3 + rng.random() * 0.2, 0.3, 0.32, 0.3, ent.nouns[0].title(),
+                                        palette=palette))
+    elif roll < 0.2 and ent.nouns:
+        out.append(b.arrow_spec(0.2, 0.3, 0.45 + rng.random() * 0.15, 0.5, ent.nouns[0].title(), palette=palette))
+    return out
+
+
+PREPOSITIONS = {
+    "at the": {"canal", "locks", "dam", "bridge", "building", "railroad"},
+    "at": {"monument", "fort", "battlefield", "site", "port", "spaceport", "camp", "settlement", "ruins",
+           "landmark", "waterfall", "geyser", "beach", "harbor"},
+    "on the": {"river"},
+    "on": {"lake"},
+    "in the": {"ocean", "sea", "gulf", "strait", "bay", "isthmus", "canyon", "valley"},
+}
+
+
+def _prep(place: str) -> str:
+    """Natural preposition for a place: 'at the' Gatun Locks, 'on the' Chagres River, 'in' Panama."""
+    from ..mg import geo
+    hit = geo.lookup(place)
+    if hit is None or hit.kind != "landmark":
+        return "in"
+    kind = next((lm.get("kind", "") for lm in geo.landmarks() if lm["name"] == hit.name), "")
+    prep = next((p for p, kinds in PREPOSITIONS.items() if kind in kinds), "in")
+    return prep.replace(" the", "") if place.lower().startswith("the ") else prep
+
+
+def _place_sub(name: str) -> str:
+    from ..mg import geo
+    hit = geo.lookup(name)
+    if hit is None or not hit.country or hit.country == name:
+        return ""
+    return "United States" if hit.country == geo.US else hit.country
+
+
+def default_overlay(bc: BeatContext, palette: str) -> MotionSpec:
+    """Overlay used when an overlay slot's idea has none: lower third, date stamp or key phrase callout."""
+    from ..mg import builders as b
+    ent = beat_entities(bc)
+    opts = overlay_options(bc, ent, palette, random.Random(bc.beat.id))
+    if opts:
+        return opts[0]
+    return b.callout_spec(ent.phrase or bc.scene.title, palette=palette)
+
+
+# ---------------------------------------------------------------- motion ideas
+
+def _motion_idea(bc: BeatContext, spec: MotionSpec, intent: str, priority: float) -> VisualIdea:
+    return VisualIdea(beat_id=bc.beat.id, family="motion", intent=no_em_dash(intent), motion=spec,
+                      priority=priority, opening_safe=spec.kind.value in {"map", "number_card"})
+
+
+def map_idea(bc: BeatContext, ent: BeatEntities, palette: str) -> Optional[VisualIdea]:
+    """Route map for two or more places, shaded countries when only countries are named, push-in always."""
+    from ..mg import builders as b
+    if not ent.places:
+        return None
+    points = [p for p in ent.places if p[0] not in ent.countries]
+    shaded = ent.countries[:3]
+    route = len(points) >= 2
+    if route:
+        title = f"{points[0][0]} to {points[-1][0]}"
+        intent = f"Map tracing the route from {points[0][0]} to {points[-1][0]}."
+    else:
+        title = points[0][0] if points else _join(shaded)
+        if points:
+            intent = f"Map pushing in on {title}" + (f", with {_join(shaded)} shaded." if shaded else ".")
+        else:
+            intent = f"Map pushing in with {title} shaded."
+    spec = b.map_spec(points[:6], route=route, shaded=shaded, title=title, palette=palette)
+    return _motion_idea(bc, spec, intent, 0.95)
+
+
+def _same_unit_groups(mentions: list[NumberMention]) -> dict[str, list[NumberMention]]:
+    groups: dict[str, list[NumberMention]] = {}
+    for m in mentions:
+        if m.unit and m.unit not in TIME_UNITS:
+            g = groups.setdefault(m.unit, [])
+            if all(abs(o.value - m.value) > 1e-9 for o in g):
+                g.append(m)
+    return groups
+
+
+def _chart_labels(group: list[NumberMention], text: str) -> list[str]:
+    from ..mg.builders import format_number
+    if len(group) == 2 and re.search(r"\b(shrunk|shrank|fell|dropped|cut|rose|grew|from\b.*\bto)\b", text, re.I):
+        return ["Before", "After"]
+    labels = []
+    for m in group:
+        after = " ".join(w for w in m.after.split() if UNIT_ALIASES.get(w.lower(), w.lower()) != m.unit)
+        words = (after or m.label or format_number(m.value, m.unit)).split()[:5]
+        while len(words) > 1 and words[-1].lower() in STOP:
+            words.pop()
+        lab = " ".join(words)[:32].strip()
+        labels.append(lab[:1].upper() + lab[1:])
+    return labels if len(set(labels)) == len(labels) else [format_number(m.value, m.unit) for m in group]
+
+
+CHART_SKIP = {"approximate", "approx", "estimated", "estimate", "total", "number", "figure", "average"}
+
+
+def _chart_title(group: list[NumberMention], unit: str) -> str:
+    counts: dict[str, int] = {}
+    for m in group:
+        for w in set(_WORD_RE.findall(m.label.lower())) - STOP - CHART_SKIP:
+            counts[w] = counts.get(w, 0) + 1
+    common = [w for w, c in sorted(counts.items(), key=lambda kv: -kv[1]) if c >= 2 and len(w) > 3]
+    return f"{(common[0] if common else unit).capitalize()} compared"
+
+
+def chart_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research], palette: str) -> Optional[VisualIdea]:
+    """Bar chart when the beat (or its facts) has two or more comparable numbers with the same unit."""
+    from ..mg import builders as b
+    facts = research.facts if research else []
+    mentions = list(ent.numbers) + [m for m, _f in fact_numbers(bc.facts)]
+    if facts:
+        mentions = [m for m in mentions if number_is_cited(m.value, facts)]
+    groups = {u: g for u, g in _same_unit_groups(mentions).items() if len(g) >= 2}
+    if not groups:
+        return None
+    unit, group = max(groups.items(), key=lambda kv: len(kv[1]))
+    group = group[:6]
+    src = number_is_cited(group[0].value, facts) if facts else None
+    values = [m.value for m in group]
+    title = ent.phrase if re.search(r"\d", ent.phrase) else _chart_title(group, unit)
+    spec = b.bar_chart_spec(_chart_labels(group, bc.beat.text), values, units=unit, title=title,
+                            source_note=src.source_title if src else "",
+                            highlight_index=values.index(max(values)), palette=palette)
+    return _motion_idea(bc, spec, f"Bar chart comparing {unit}: {title}.", 1.0)
+
+
+def line_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research], palette: str) -> Optional[VisualIdea]:
+    """Line chart for a series of one unit over three or more years found in fact cards."""
+    from ..mg import builders as b
+    if not research:
+        return None
+    units = {m.unit for m in ent.numbers} | {m.unit for m, _f in fact_numbers(bc.facts)}
+    series: dict[tuple[str, str], dict[int, tuple[float, FactCard]]] = {}
+    for m, f in fact_numbers(research.facts):
+        ys = extract_years(m.label) or (extract_years(f.date)[:1] if len(extract_years(f.date)) == 1 else [])
+        key = (m.unit, _YEAR_RE.sub("", m.label.lower()).strip(" ,in"))
+        if m.unit in units - {""} and ys and key[1]:
+            series.setdefault(key, {}).setdefault(ys[0], (m.value, f))
+    best: list[tuple[int, float, FactCard]] = []
+    best_unit = ""
+    for (unit, _label), pts in series.items():
+        if len(pts) >= 3 and len(pts) > len(best):
+            best = sorted((y, v, f) for y, (v, f) in pts.items())
+            best_unit = unit
+    if not best:
+        return None
+    spec = b.line_chart_spec([str(y) for y, _v, _f in best], [v for _y, v, _f in best], units=best_unit,
+                             title=f"{best_unit.title()} by year", source_note=best[0][2].source_title,
+                             palette=palette)
+    return _motion_idea(bc, spec, f"Line chart of {best_unit} over the years.", 1.0)
+
+
+def number_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research], palette: str) -> Optional[VisualIdea]:
+    """Number card for the most striking number (count up) or, failing that, the year."""
+    from ..mg import builders as b
+    facts = research.facts if research else []
+    if ent.numbers:
+        cited = [m for m in ent.numbers if not facts or number_is_cited(m.value, facts)]
+        pool = cited or ent.numbers
+        m = max(pool, key=lambda x: (x.unit not in TIME_UNITS, x.value))
+        src = number_is_cited(m.value, facts) if facts else None
+        label = (m.after or m.unit or "").strip()
+        spec = b.number_card_spec(b.format_number(m.value, m.unit), label=label[:40], sublabel=era_label(bc.era),
+                                  count_up=True, palette=palette,
+                                  source_note=b.source_note_for(src.source_title) if src else "")
+        return _motion_idea(bc, spec, f"Number card: {m.raw} {label}.", 0.85)
+    if ent.years:
+        spec = b.number_card_spec(str(ent.years[0]), label=" ".join(ent.phrase.split()[:6]), count_up=False,
+                                  palette=palette)
+        return _motion_idea(bc, spec, f"Year card: {ent.years[0]}.", 0.6)
+    return None
+
+
+def text_ideas(bc: BeatContext, ent: BeatEntities, palette: str) -> list[VisualIdea]:
+    """Title card at scene starts, quote card of the key phrase, and a callout card."""
+    from ..mg import builders as b
+    out: list[VisualIdea] = []
+    if bc.first_in_scene and bc.scene.purpose not in (ScenePurpose.hook,):
+        sub = era_label(bc.era) if bc.era else ""
+        out.append(_motion_idea(bc, b.title_card_spec(bc.scene.title, sub, palette=palette),
+                                f"Chapter title card: {bc.scene.title}.", 0.7))
+    phrase = ent.phrase or bc.scene.title
+    if CTA_RE.search(bc.beat.text):
+        if not out:
+            out.append(_motion_idea(bc, b.title_card_spec(bc.scene.title, palette=palette),
+                                    f"Closing title card: {bc.scene.title}.", 0.4))
+        return out
+    out.append(_motion_idea(bc, b.text_overlay_spec(phrase, position="center", palette=palette, background="solid"),
+                            f"Quote card: {phrase}.", 0.45))
+    out.append(_motion_idea(bc, b.callout_spec(phrase, subtitle=bc.scene.title, position="center", palette=palette,
+                                               background="solid"), f"Callout card: {phrase}.", 0.3))
+    return out
+
+
+# ---------------------------------------------------------------- per beat
+
+def ideas_for_beat(bc: BeatContext, research: Optional[Research], palette: str,
+                   rng: random.Random) -> list[VisualIdea]:
+    """All heuristic ideas for one beat; always includes footage, still and motion."""
+    ent = beat_entities(bc)
+    foot = footage_ideas(bc, ent)
+    still = still_ideas(bc, ent)
+    overlays = overlay_options(bc, ent, palette, rng)
+    for i, idea in enumerate(foot + still):
+        if overlays:
+            idea.overlay = overlays[i % len(overlays)]
+    motion = [x for x in (chart_idea(bc, ent, research, palette), line_idea(bc, ent, research, palette),
+                          map_idea(bc, ent, palette), number_idea(bc, ent, research, palette)) if x]
+    return foot + still + motion + text_ideas(bc, ent, palette)
+
+
+def beat_contexts(script_scenes: list[Scene], research: Optional[Research], topic: str) -> list[BeatContext]:
+    """BeatContext for every beat with the era carried forward from earlier beats."""
+    facts = {f.id: f for f in (research.facts if research else [])}
+    out: list[BeatContext] = []
+    era: Optional[int] = None
+    for si, scene in enumerate(script_scenes):
+        for bi, beat in enumerate(scene.beats):
+            bfacts = [facts[f] for f in beat.facts_used if f in facts]
+            years = extract_years(beat.text)
+            era = years[0] if years else (era_from_facts(bfacts) or era)
+            out.append(BeatContext(beat=beat, scene=scene, first_in_scene=bi == 0, era=era, facts=bfacts,
+                                   topic=topic, scene_index=si))
+    later: Optional[int] = None
+    for bc in reversed(out):  # beats before the first dated beat take the next known era
+        later = bc.era or later
+        bc.era = bc.era or later
+    return out

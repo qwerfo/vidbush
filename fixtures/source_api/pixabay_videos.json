@@ -1,0 +1,41 @@
+{
+  "total": 1,
+  "totalHits": 1,
+  "hits": [
+    {
+      "id": 31377,
+      "pageURL": "https://pixabay.com/videos/ship-sea-ocean-31377/",
+      "type": "film",
+      "tags": "ship, sea, ocean",
+      "duration": 22,
+      "videos": {
+        "large": {
+          "url": "https://cdn.pixabay.com/video/31377-large.mp4",
+          "width": 3840,
+          "height": 2160,
+          "size": 30000000
+        },
+        "medium": {
+          "url": "https://cdn.pixabay.com/video/31377-medium.mp4",
+          "width": 1920,
+          "height": 1080,
+          "size": 9000000
+        },
+        "small": {
+          "url": "https://cdn.pixabay.com/video/31377-small.mp4",
+          "width": 1280,
+          "height": 720,
+          "size": 4000000
+        },
+        "tiny": {
+          "url": "https://cdn.pixabay.com/video/31377-tiny.mp4",
+          "width": 640,
+          "height": 360,
+          "size": 900000
+        }
+      },
+      "user": "Pixel-Shot",
+      "user_id": 3
+    }
+  ]
+}

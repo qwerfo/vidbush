@@ -1,0 +1,4751 @@
+{
+  "ideas": [
+    {
+      "beat_id": "b001",
+      "family": "footage",
+      "intent": "A steamship ploughing through heavy seas, to show how dangerous the old voyage around South America was.",
+      "must_show": [
+        "steamship or sailing ship",
+        "rough ocean waves"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "early 1900s steamship rough seas archival film",
+        "Cape Horn storm sailing ship historical footage",
+        "steamship at sea 1910s film"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b001",
+      "family": "still",
+      "intent": "An old sailing ship or steamer battling waves near Cape Horn, the route ships used before the canal.",
+      "must_show": [
+        "ship in a storm",
+        "historic vessel"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Cape Horn sailing ship storm painting",
+        "clipper ship rounding Cape Horn 19th century"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Cape Horn",
+          "subtitle": "Southern tip of South America",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b001",
+      "family": "motion",
+      "intent": "Map of the long sea route from New York around Cape Horn versus the short route through Panama.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth. Distances approximate, commonly cited figures",
+        "payload": {
+          "center": [
+            -5.0,
+            -88.0
+          ],
+          "zoom": 1.9,
+          "zoom_end": null,
+          "title": "New York to San Francisco by sea",
+          "markers": [
+            {
+              "lat": 40.713,
+              "lon": -74.006,
+              "label": "New York",
+              "appear_at": 0.2
+            },
+            {
+              "lat": 37.775,
+              "lon": -122.419,
+              "label": "San Francisco",
+              "appear_at": 0.2
+            },
+            {
+              "lat": -55.98,
+              "lon": -67.27,
+              "label": "Cape Horn",
+              "appear_at": 2.0
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  40.713,
+                  -74.006
+                ],
+                [
+                  35.0,
+                  -73.5
+                ],
+                [
+                  20.0,
+                  -58.0
+                ],
+                [
+                  5.0,
+                  -36.0
+                ],
+                [
+                  -8.0,
+                  -33.8
+                ],
+                [
+                  -23.5,
+                  -41.0
+                ],
+                [
+                  -35.5,
+                  -53.0
+                ],
+                [
+                  -52.0,
+                  -65.5
+                ],
+                [
+                  -55.98,
+                  -67.27
+                ],
+                [
+                  -53.5,
+                  -76.0
+                ],
+                [
+                  -40.0,
+                  -75.5
+                ],
+                [
+                  -20.0,
+                  -72.5
+                ],
+                [
+                  -5.0,
+                  -82.5
+                ],
+                [
+                  10.0,
+                  -91.0
+                ],
+                [
+                  23.0,
+                  -110.0
+                ],
+                [
+                  33.0,
+                  -119.5
+                ],
+                [
+                  37.775,
+                  -122.419
+                ]
+              ],
+              "reveal_start": 0.5,
+              "reveal_end": 4.5,
+              "label": "Around Cape Horn: about 13,000 miles",
+              "dashed": true
+            },
+            {
+              "points": [
+                [
+                  40.713,
+                  -74.006
+                ],
+                [
+                  35.0,
+                  -74.5
+                ],
+                [
+                  25.0,
+                  -75.5
+                ],
+                [
+                  20.0,
+                  -73.8
+                ],
+                [
+                  12.0,
+                  -78.5
+                ],
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  8.983,
+                  -79.517
+                ],
+                [
+                  7.5,
+                  -80.5
+                ],
+                [
+                  8.0,
+                  -84.0
+                ],
+                [
+                  13.0,
+                  -95.0
+                ],
+                [
+                  23.0,
+                  -110.0
+                ],
+                [
+                  33.0,
+                  -119.5
+                ],
+                [
+                  37.775,
+                  -122.419
+                ]
+              ],
+              "reveal_start": 4.5,
+              "reveal_end": 7.0,
+              "label": "Through Panama: about 5,200 miles",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b001",
+      "family": "motion",
+      "intent": "Number card for the old route length.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Approximate, commonly cited",
+        "payload": {
+          "number": "13,000",
+          "label": "miles around Cape Horn",
+          "sublabel": "New York to San Francisco, approximate",
+          "count_up": true
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b002",
+      "family": "footage",
+      "intent": "A ship moving through the canal locks, the shortcut that cut the trip by more than half.",
+      "must_show": [
+        "ship inside a canal lock"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal lock ship transit 1915 film",
+        "ship passing Gatun Locks archival footage",
+        "Panama Canal early transit footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b002",
+      "family": "still",
+      "intent": "An early photograph of a ship in the Panama Canal locks.",
+      "must_show": [
+        "ship in lock chamber",
+        "lock walls"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal locks ship 1915 photograph",
+        "Gatun Locks ship early photograph"
+      ],
+      "overlay": {
+        "kind": "callout",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "8,000 miles saved",
+          "subtitle": "approximate",
+          "position": "lower_right"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b002",
+      "family": "motion",
+      "intent": "Bar chart comparing the two route lengths.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "bar_chart",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Panama Canal, Wikipedia (commonly cited approximate figures)",
+        "payload": {
+          "title": "New York to San Francisco by sea",
+          "labels": [
+            "Around Cape Horn",
+            "Through the Panama Canal"
+          ],
+          "series": [
+            {
+              "name": "",
+              "values": [
+                13000,
+                5200
+              ]
+            }
+          ],
+          "units": "miles",
+          "animate": "grow",
+          "highlight_index": 1
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b002",
+      "family": "motion",
+      "intent": "Number card for the new route length.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Approximate, commonly cited",
+        "payload": {
+          "number": "5,200",
+          "label": "miles through Panama",
+          "sublabel": "approximate",
+          "count_up": true
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b003",
+      "family": "footage",
+      "intent": "Aerial view of the canal cutting through green jungle hills from sea to sea.",
+      "must_show": [
+        "canal channel",
+        "jungle hills"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "unrelated canals such as Suez or Kiel",
+        "on screen presenters"
+      ],
+      "queries": [
+        "Panama Canal aerial view jungle",
+        "Panama Canal aerial footage Culebra Cut",
+        "Gaillard Cut aerial"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b003",
+      "family": "still",
+      "intent": "Historic map or plan of the Panama Canal route across the isthmus.",
+      "must_show": [
+        "canal route map"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal map 1913",
+        "Panama Canal Zone map historic"
+      ],
+      "overlay": null,
+      "priority": 0.9,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b003",
+      "family": "motion",
+      "intent": "Map zoomed on the isthmus with Panama shaded and the canal route drawn from Colon to Panama City.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            9.15,
+            -79.72
+          ],
+          "zoom": 7.6,
+          "zoom_end": 8.4,
+          "title": "The Panama Canal: Colon to Panama City",
+          "markers": [
+            {
+              "lat": 9.359,
+              "lon": -79.901,
+              "label": "Colon",
+              "appear_at": 0.3
+            },
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 0.6
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  9.272,
+                  -79.921
+                ],
+                [
+                  9.17,
+                  -79.84
+                ],
+                [
+                  9.115,
+                  -79.695
+                ],
+                [
+                  9.05,
+                  -79.65
+                ],
+                [
+                  9.017,
+                  -79.612
+                ],
+                [
+                  8.997,
+                  -79.592
+                ],
+                [
+                  8.95,
+                  -79.565
+                ],
+                [
+                  8.983,
+                  -79.517
+                ]
+              ],
+              "reveal_start": 1.0,
+              "reveal_end": 5.0,
+              "label": "Panama Canal",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [
+            {
+              "lat": 9.2,
+              "lon": -79.9,
+              "text": "Gatun Lake",
+              "size": "small"
+            }
+          ],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b003",
+      "family": "motion",
+      "intent": "Number card for the canal length.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Panama Canal, Wikipedia",
+        "payload": {
+          "number": "51",
+          "label": "miles long",
+          "sublabel": "Atlantic to Pacific",
+          "count_up": true
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b004",
+      "family": "footage",
+      "intent": "Archival footage of hundreds of laborers digging in the canal cut, to show the human scale of the work.",
+      "must_show": [
+        "many workers",
+        "excavation"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal workers digging 1912 archival film",
+        "Panama Canal construction laborers footage",
+        "Culebra Cut workers 1913"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b004",
+      "family": "still",
+      "intent": "Photograph of canal workers at the excavation site.",
+      "must_show": [
+        "workers",
+        "construction site"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal laborers photograph 1910",
+        "West Indian workers Panama Canal photograph"
+      ],
+      "overlay": {
+        "kind": "callout",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Tens of thousands of lives",
+          "subtitle": "",
+          "position": "lower_right"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b004",
+      "family": "motion",
+      "intent": "Bar chart of deaths in the French era versus the American era.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "bar_chart",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia (estimates; records are incomplete)",
+        "payload": {
+          "title": "Deaths during construction",
+          "labels": [
+            "French era, 1881 to 1889",
+            "American era, 1904 to 1914"
+          ],
+          "series": [
+            {
+              "name": "",
+              "values": [
+                22000,
+                5600
+              ]
+            }
+          ],
+          "units": "deaths",
+          "animate": "grow",
+          "highlight_index": 0
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b004",
+      "family": "motion",
+      "intent": "Number card for French era deaths.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia",
+        "payload": {
+          "number": "22,000",
+          "label": "estimated deaths, French era",
+          "sublabel": "1881 to 1889",
+          "count_up": true
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b005",
+      "family": "footage",
+      "intent": "A sweeping shot of a ship entering the canal, setting up the story.",
+      "must_show": [
+        "ship",
+        "canal"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal ship transit archival",
+        "Panama Canal 1914 ship footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b005",
+      "family": "still",
+      "intent": "Iconic photograph of the canal under construction.",
+      "must_show": [
+        "canal construction"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal construction photograph 1913",
+        "Panama Canal locks under construction photograph"
+      ],
+      "overlay": null,
+      "priority": 0.9,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b005",
+      "family": "motion",
+      "intent": "Opening title card.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "title_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "THE PANAMA CANAL",
+          "subtitle": "The human cost and engineering triumph",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b006",
+      "family": "footage",
+      "intent": "Old engravings or maps of Central America, to evoke the centuries old dream of a passage.",
+      "must_show": [
+        "historic map"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "16th century map Central America",
+        "Isthmus of Panama old map engraving"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b006",
+      "family": "still",
+      "intent": "A sixteenth century map of the Isthmus of Panama or portrait of Charles V.",
+      "must_show": [
+        "old map or portrait"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Isthmus of Panama 16th century map",
+        "Charles V portrait Titian"
+      ],
+      "overlay": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "1534",
+          "subtitle": "Spain surveys the isthmus",
+          "position": "upper_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b006",
+      "family": "motion",
+      "intent": "Act title card.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "title_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "The French Dream",
+          "subtitle": "1881 to 1889",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b006",
+      "family": "motion",
+      "intent": "Number card for the first survey.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia",
+        "payload": {
+          "number": "1534",
+          "label": "Spain orders a survey",
+          "sublabel": "of the Isthmus of Panama",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b007",
+      "family": "footage",
+      "intent": "Archival film or photographs of French excavation equipment in Panama in the 1880s.",
+      "must_show": [
+        "French era machinery"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "French Panama Canal excavation 1880s",
+        "Compagnie universelle du canal interoceanique dredge"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b007",
+      "family": "still",
+      "intent": "Portrait of Ferdinand de Lesseps.",
+      "must_show": [
+        "Ferdinand de Lesseps"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Ferdinand de Lesseps portrait photograph",
+        "Ferdinand de Lesseps 1880"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Ferdinand de Lesseps",
+          "subtitle": "Builder of the Suez Canal",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b007",
+      "family": "motion",
+      "intent": "Map with an arrow from Suez to Panama, showing de Lesseps bringing his Suez fame to Panama.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            20.0,
+            -20.0
+          ],
+          "zoom": 1.6,
+          "zoom_end": null,
+          "title": "From Suez to Panama",
+          "markers": [
+            {
+              "lat": 30.0,
+              "lon": 32.55,
+              "label": "Suez Canal",
+              "appear_at": 0.3
+            },
+            {
+              "lat": 9.08,
+              "lon": -79.68,
+              "label": "Panama",
+              "appear_at": 1.5
+            }
+          ],
+          "routes": [],
+          "arrows": [
+            {
+              "start": [
+                30.0,
+                32.55
+              ],
+              "end": [
+                9.08,
+                -79.68
+              ],
+              "appear_at": 1.0,
+              "label": "1881"
+            }
+          ],
+          "labels": [],
+          "shaded_regions": []
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b007",
+      "family": "motion",
+      "intent": "Number card for the start of the French effort.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Ferdinand de Lesseps, Wikipedia",
+        "payload": {
+          "number": "1881",
+          "label": "France begins digging",
+          "sublabel": "under Ferdinand de Lesseps",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b008",
+      "family": "footage",
+      "intent": "Footage of the Suez Canal, flat desert with a level waterway, the model de Lesseps wanted to copy.",
+      "must_show": [
+        "Suez Canal",
+        "desert"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "modern container ships"
+      ],
+      "queries": [
+        "Suez Canal early 1900s footage",
+        "Suez Canal ship desert archival"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b008",
+      "family": "still",
+      "intent": "Historic photograph of the Suez Canal through the desert.",
+      "must_show": [
+        "Suez Canal",
+        "flat desert"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Suez Canal 1869 photograph",
+        "Suez Canal 19th century"
+      ],
+      "overlay": {
+        "kind": "callout",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Sea level canal",
+          "subtitle": "no locks",
+          "position": "lower_right"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b008",
+      "family": "motion",
+      "intent": "Text card explaining the sea level plan.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "A canal at sea level",
+          "subtitle": "De Lesseps planned no locks, just like Suez",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b009",
+      "family": "footage",
+      "intent": "Dense tropical rain forest on steep hills under heavy rain.",
+      "must_show": [
+        "rain forest",
+        "hills",
+        "rain"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "unrelated canals such as Suez or Kiel",
+        "on screen presenters"
+      ],
+      "queries": [
+        "Panama rainforest heavy rain",
+        "tropical jungle hills rain footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b009",
+      "family": "still",
+      "intent": "Photograph of the jungle covered hills of the isthmus.",
+      "must_show": [
+        "jungle",
+        "mountains"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "unrelated canals such as Suez or Kiel",
+        "on screen presenters"
+      ],
+      "queries": [
+        "Panama jungle hills photograph",
+        "Chagres River jungle"
+      ],
+      "overlay": null,
+      "priority": 0.9,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b009",
+      "family": "motion",
+      "intent": "Isthmus map with the Continental Divide labelled to show the mountains in the way.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            9.15,
+            -79.72
+          ],
+          "zoom": 7.6,
+          "zoom_end": 8.4,
+          "title": "Mountains in the way",
+          "markers": [
+            {
+              "lat": 9.359,
+              "lon": -79.901,
+              "label": "Colon",
+              "appear_at": 0.3
+            },
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 0.6
+            }
+          ],
+          "routes": [],
+          "arrows": [],
+          "labels": [
+            {
+              "lat": 9.05,
+              "lon": -79.65,
+              "text": "Continental Divide",
+              "size": "medium"
+            }
+          ],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b010",
+      "family": "footage",
+      "intent": "Mosquitoes and swampy standing water, to show where the disease came from.",
+      "must_show": [
+        "mosquito or swamp"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "unrelated canals such as Suez or Kiel",
+        "on screen presenters"
+      ],
+      "queries": [
+        "mosquito macro footage",
+        "tropical swamp standing water"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b010",
+      "family": "still",
+      "intent": "Archival photograph of a French era hospital or sick workers in Panama.",
+      "must_show": [
+        "hospital or patients"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "French Panama Canal hospital Ancon 1880s",
+        "yellow fever hospital Panama historic"
+      ],
+      "overlay": {
+        "kind": "callout",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Yellow fever. Malaria.",
+          "subtitle": "",
+          "position": "lower_right"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b010",
+      "family": "motion",
+      "intent": "Act title card.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "title_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Death in the Jungle",
+          "subtitle": "",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b010",
+      "family": "motion",
+      "intent": "Text card naming the killers.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Yellow fever and malaria",
+          "subtitle": "Carried by mosquitoes, not yet understood",
+          "position": "center"
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b011",
+      "family": "footage",
+      "intent": "Archival footage of a landslide or collapsed slope in the canal cut.",
+      "must_show": [
+        "collapsed earth",
+        "excavation"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Culebra Cut landslide archival",
+        "Panama Canal slide 1913 footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b011",
+      "family": "still",
+      "intent": "Photograph of a landslide in the Culebra Cut.",
+      "must_show": [
+        "landslide",
+        "cut"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Culebra Cut slide photograph",
+        "Cucaracha slide Panama Canal"
+      ],
+      "overlay": {
+        "kind": "highlight_box",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "x": 0.25,
+          "y": 0.3,
+          "w": 0.5,
+          "h": 0.4,
+          "label": "Landslide"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b011",
+      "family": "motion",
+      "intent": "Map marking the Culebra section where the slides hit.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            9.15,
+            -79.72
+          ],
+          "zoom": 7.6,
+          "zoom_end": 8.4,
+          "title": "Where the hills kept falling",
+          "markers": [
+            {
+              "lat": 9.359,
+              "lon": -79.901,
+              "label": "Colon",
+              "appear_at": 0.3
+            },
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 0.6
+            },
+            {
+              "lat": 9.05,
+              "lon": -79.65,
+              "label": "Culebra",
+              "appear_at": 1.5
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  9.272,
+                  -79.921
+                ],
+                [
+                  9.17,
+                  -79.84
+                ],
+                [
+                  9.115,
+                  -79.695
+                ],
+                [
+                  9.05,
+                  -79.65
+                ],
+                [
+                  9.017,
+                  -79.612
+                ],
+                [
+                  8.997,
+                  -79.592
+                ],
+                [
+                  8.95,
+                  -79.565
+                ],
+                [
+                  8.983,
+                  -79.517
+                ]
+              ],
+              "reveal_start": 1.0,
+              "reveal_end": 5.0,
+              "label": "Panama Canal",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b012",
+      "family": "footage",
+      "intent": "Archival film of abandoned rusting French machinery in the jungle.",
+      "must_show": [
+        "rusting machinery"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "abandoned French equipment Panama Canal",
+        "French dredges abandoned Panama"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b012",
+      "family": "still",
+      "intent": "Photograph of abandoned French locomotives or dredges overgrown by jungle.",
+      "must_show": [
+        "abandoned equipment"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "abandoned French machinery Panama Canal photograph",
+        "French dredge Panama 1904 photograph"
+      ],
+      "overlay": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "1889",
+          "subtitle": "The French company collapses",
+          "position": "upper_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b012",
+      "family": "motion",
+      "intent": "Number card for the collapse.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia",
+        "payload": {
+          "number": "1889",
+          "label": "French company bankrupt",
+          "sublabel": "investors ruined",
+          "count_up": false
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b013",
+      "family": "footage",
+      "intent": "Old graves or a cemetery in Panama, a quiet image for the death toll.",
+      "must_show": [
+        "graves or cemetery"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "French cemetery Panama Canal",
+        "old cemetery Panama historic"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b013",
+      "family": "still",
+      "intent": "Photograph of the French era cemetery or memorial in Panama.",
+      "must_show": [
+        "graves"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "French cemetery Panama Canal photograph",
+        "Panama Canal workers cemetery"
+      ],
+      "overlay": null,
+      "priority": 0.9,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b013",
+      "family": "motion",
+      "intent": "Number card counting up the French era death toll.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia (estimate)",
+        "payload": {
+          "number": "22,000",
+          "label": "estimated deaths",
+          "sublabel": "French era, 1881 to 1889",
+          "count_up": true
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b013",
+      "family": "motion",
+      "intent": "Bar chart of deaths by era.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "bar_chart",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia (estimates; records are incomplete)",
+        "payload": {
+          "title": "Deaths during construction",
+          "labels": [
+            "French era, 1881 to 1889",
+            "American era, 1904 to 1914"
+          ],
+          "series": [
+            {
+              "name": "",
+              "values": [
+                22000,
+                5600
+              ]
+            }
+          ],
+          "units": "deaths",
+          "animate": "grow",
+          "highlight_index": 0
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b014",
+      "family": "footage",
+      "intent": "Archival images of Washington politics in 1903, the US government pressing for the canal.",
+      "must_show": [
+        "early 1900s officials"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Theodore Roosevelt 1903 footage",
+        "US Capitol 1903 archival"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b014",
+      "family": "still",
+      "intent": "Portrait of Theodore Roosevelt, who pushed for the canal.",
+      "must_show": [
+        "Theodore Roosevelt"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Theodore Roosevelt 1903 portrait",
+        "Roosevelt Panama Canal cartoon"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Theodore Roosevelt",
+          "subtitle": "President of the United States",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b014",
+      "family": "motion",
+      "intent": "Act title card.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "title_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "A Nation Is Born",
+          "subtitle": "1903",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b014",
+      "family": "motion",
+      "intent": "Map with Colombia and Panama shaded, showing that Colombia then ruled the isthmus.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            7.0,
+            -76.0
+          ],
+          "zoom": 4.5,
+          "zoom_end": null,
+          "title": "Colombia in 1903",
+          "markers": [
+            {
+              "lat": 4.711,
+              "lon": -74.072,
+              "label": "Bogota",
+              "appear_at": 0.5
+            },
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 1.0
+            }
+          ],
+          "routes": [],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Colombia",
+            "Panama"
+          ]
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b015",
+      "family": "footage",
+      "intent": "Archival footage of a US warship of the era at sea.",
+      "must_show": [
+        "early 1900s warship"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "USS Nashville 1903 gunboat",
+        "US Navy gunboat 1900s archival film"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b015",
+      "family": "still",
+      "intent": "Photograph of Panama City in 1903 or the USS Nashville.",
+      "must_show": [
+        "warship or Panama City"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "USS Nashville gunboat photograph",
+        "Panama City 1903 photograph"
+      ],
+      "overlay": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "November 3, 1903",
+          "subtitle": "Panama declares independence",
+          "position": "upper_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b015",
+      "family": "motion",
+      "intent": "Map with Panama shaded as a new nation.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            8.5,
+            -80.0
+          ],
+          "zoom": 5.5,
+          "zoom_end": null,
+          "title": "Panama, independent",
+          "markers": [
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 0.5
+            }
+          ],
+          "routes": [],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b015",
+      "family": "motion",
+      "intent": "Number card for independence.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Separation of Panama from Colombia, Wikipedia",
+        "payload": {
+          "number": "1903",
+          "label": "Panama independence",
+          "sublabel": "November 3",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b016",
+      "family": "footage",
+      "intent": "Archival footage of officials signing a treaty or a period government office.",
+      "must_show": [
+        "signing or officials"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "treaty signing 1903 archival",
+        "Hay Bunau-Varilla Treaty"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b016",
+      "family": "still",
+      "intent": "Photograph of Philippe Bunau-Varilla or the treaty document.",
+      "must_show": [
+        "Bunau-Varilla or treaty"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Philippe Bunau-Varilla portrait",
+        "Hay Bunau-Varilla Treaty document"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Philippe Bunau-Varilla",
+          "subtitle": "Signed for Panama",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b016",
+      "family": "motion",
+      "intent": "Isthmus map showing the Canal Zone band along the canal route.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth. Zone width per Hay-Bunau-Varilla Treaty, Wikipedia",
+        "payload": {
+          "center": [
+            9.15,
+            -79.72
+          ],
+          "zoom": 7.6,
+          "zoom_end": 8.4,
+          "title": "The Canal Zone, about 10 miles wide",
+          "markers": [
+            {
+              "lat": 9.359,
+              "lon": -79.901,
+              "label": "Colon",
+              "appear_at": 0.3
+            },
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 0.6
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  9.272,
+                  -79.921
+                ],
+                [
+                  9.17,
+                  -79.84
+                ],
+                [
+                  9.115,
+                  -79.695
+                ],
+                [
+                  9.05,
+                  -79.65
+                ],
+                [
+                  9.017,
+                  -79.612
+                ],
+                [
+                  8.997,
+                  -79.592
+                ],
+                [
+                  8.95,
+                  -79.565
+                ],
+                [
+                  8.983,
+                  -79.517
+                ]
+              ],
+              "reveal_start": 1.0,
+              "reveal_end": 5.0,
+              "label": "Panama Canal",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [
+            {
+              "lat": 9.12,
+              "lon": -79.75,
+              "text": "Canal Zone",
+              "size": "large"
+            }
+          ],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b016",
+      "family": "motion",
+      "intent": "Number card for the zone width.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Hay-Bunau-Varilla Treaty, Wikipedia",
+        "payload": {
+          "number": "10",
+          "label": "miles wide",
+          "sublabel": "the Canal Zone",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b017",
+      "family": "footage",
+      "intent": "Archival footage of US officials arriving in Panama to take over the French works in 1904.",
+      "must_show": [
+        "officials",
+        "works"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal 1904 American takeover",
+        "Panama Canal Commission 1904"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b017",
+      "family": "still",
+      "intent": "Photograph of French equipment taken over by the Americans.",
+      "must_show": [
+        "machinery"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "French equipment Panama 1904",
+        "Panama Canal 1904 photograph"
+      ],
+      "overlay": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "1904",
+          "subtitle": "The Americans take over",
+          "position": "upper_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b017",
+      "family": "motion",
+      "intent": "Bar chart of the two payments.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "bar_chart",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Hay-Bunau-Varilla Treaty and History of the Panama Canal, Wikipedia",
+        "payload": {
+          "title": "What Washington paid",
+          "labels": [
+            "Panama",
+            "French company"
+          ],
+          "series": [
+            {
+              "name": "",
+              "values": [
+                10,
+                40
+              ]
+            }
+          ],
+          "units": "million dollars",
+          "animate": "grow",
+          "highlight_index": 1
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b017",
+      "family": "motion",
+      "intent": "Number card for the buyout.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia",
+        "payload": {
+          "number": "$40M",
+          "label": "paid to the French company",
+          "sublabel": "1904",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b018",
+      "family": "footage",
+      "intent": "Archival footage of sanitation crews at work in Panama.",
+      "must_show": [
+        "sanitation workers"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal sanitation crew archival",
+        "Gorgas mosquito brigade footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b018",
+      "family": "still",
+      "intent": "Portrait of Dr. William C. Gorgas.",
+      "must_show": [
+        "William Gorgas"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "William C. Gorgas portrait",
+        "William Crawford Gorgas photograph"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Dr. William C. Gorgas",
+          "subtitle": "Chief Sanitary Officer",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b018",
+      "family": "motion",
+      "intent": "Act title card.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "title_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Conquering the Mosquito",
+          "subtitle": "",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b019",
+      "family": "footage",
+      "intent": "Workers spraying oil on standing water or fumigating buildings.",
+      "must_show": [
+        "spraying or fumigation"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "mosquito oiling Panama Canal",
+        "fumigation Panama 1905 archival"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b019",
+      "family": "still",
+      "intent": "Photograph of a sanitation brigade oiling a ditch.",
+      "must_show": [
+        "oiling ditch"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal sanitation oiling ditch photograph",
+        "mosquito brigade Panama"
+      ],
+      "overlay": {
+        "kind": "callout",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Drain. Screen. Fumigate.",
+          "subtitle": "",
+          "position": "lower_right"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b019",
+      "family": "motion",
+      "intent": "Text card listing the methods.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Drain. Screen. Fumigate.",
+          "subtitle": "Block by block, house by house",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b020",
+      "family": "footage",
+      "intent": "Archival footage of a clean, orderly Canal Zone town with screened houses.",
+      "must_show": [
+        "town",
+        "houses"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Canal Zone town 1910 archival",
+        "Panama Canal Zone housing 1910"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b020",
+      "family": "still",
+      "intent": "Photograph of screened Canal Zone houses.",
+      "must_show": [
+        "screened houses"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Canal Zone screened houses photograph",
+        "Culebra Canal Zone town 1910"
+      ],
+      "overlay": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "1906",
+          "subtitle": "Yellow fever eliminated",
+          "position": "upper_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b020",
+      "family": "motion",
+      "intent": "Number card for the end of yellow fever.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: William C. Gorgas, Wikipedia",
+        "payload": {
+          "number": "1906",
+          "label": "yellow fever gone",
+          "sublabel": "from the Canal Zone",
+          "count_up": false
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b021",
+      "family": "footage",
+      "intent": "Archival footage of a train on the Panama Railroad hauling spoil.",
+      "must_show": [
+        "train",
+        "railroad"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Railroad spoil train archival",
+        "Panama Canal dirt train footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b021",
+      "family": "still",
+      "intent": "Portrait of John F. Stevens.",
+      "must_show": [
+        "John Stevens"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "John Frank Stevens portrait",
+        "John F. Stevens engineer photograph"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "John F. Stevens",
+          "subtitle": "Chief Engineer, 1905 to 1907",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b021",
+      "family": "motion",
+      "intent": "Quote card with the line traditionally attributed to Stevens.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Three diseases in Panama: yellow fever, malaria and cold feet.",
+          "subtitle": "Traditionally attributed to John F. Stevens",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b021",
+      "family": "motion",
+      "intent": "Text card on the decision for locks.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "A canal with locks",
+          "subtitle": "Chosen in 1906 over a sea level trench",
+          "position": "center"
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b022",
+      "family": "footage",
+      "intent": "Archival footage of the canal works at full speed around 1910.",
+      "must_show": [
+        "construction activity"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal construction 1910 footage",
+        "Panama Canal building archival film"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b022",
+      "family": "still",
+      "intent": "Portrait of George Washington Goethals.",
+      "must_show": [
+        "George Goethals"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "George Washington Goethals portrait",
+        "Goethals Panama Canal photograph"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "George W. Goethals",
+          "subtitle": "Chief Engineer, 1907 to 1914",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b022",
+      "family": "motion",
+      "intent": "Act title card.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "title_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "The Big Ditch",
+          "subtitle": "1907 to 1914",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b023",
+      "family": "footage",
+      "intent": "Steam shovels loading spoil trains deep in the Culebra Cut.",
+      "must_show": [
+        "steam shovel",
+        "deep cut"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal construction 1913 steam shovel Culebra Cut",
+        "Culebra Cut steam shovel archival film",
+        "Bucyrus steam shovel Panama"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b023",
+      "family": "still",
+      "intent": "Photograph of the Culebra Cut with steam shovels and terraced walls.",
+      "must_show": [
+        "Culebra Cut",
+        "steam shovels"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Culebra Cut 1913 photograph",
+        "Gaillard Cut construction photograph"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Culebra Cut",
+          "subtitle": "Through the Continental Divide",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b023",
+      "family": "motion",
+      "intent": "Isthmus map highlighting the Culebra Cut section of the route.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            9.15,
+            -79.72
+          ],
+          "zoom": 7.6,
+          "zoom_end": 9.0,
+          "title": "The Culebra Cut",
+          "markers": [
+            {
+              "lat": 9.359,
+              "lon": -79.901,
+              "label": "Colon",
+              "appear_at": 0.3
+            },
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 0.6
+            },
+            {
+              "lat": 9.05,
+              "lon": -79.65,
+              "label": "Culebra Cut",
+              "appear_at": 1.2
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  9.272,
+                  -79.921
+                ],
+                [
+                  9.17,
+                  -79.84
+                ],
+                [
+                  9.115,
+                  -79.695
+                ],
+                [
+                  9.05,
+                  -79.65
+                ],
+                [
+                  9.017,
+                  -79.612
+                ],
+                [
+                  8.997,
+                  -79.592
+                ],
+                [
+                  8.95,
+                  -79.565
+                ],
+                [
+                  8.983,
+                  -79.517
+                ]
+              ],
+              "reveal_start": 1.0,
+              "reveal_end": 5.0,
+              "label": "Panama Canal",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b023",
+      "family": "motion",
+      "intent": "Number card for the cut length.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Culebra Cut, Wikipedia",
+        "payload": {
+          "number": "8",
+          "label": "miles through the divide",
+          "sublabel": "nearly",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b024",
+      "family": "footage",
+      "intent": "Archival footage of the Gatun Dam spillway or the lake filling.",
+      "must_show": [
+        "dam or spillway"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Gatun Dam spillway construction archival",
+        "Gatun Lake 1913 footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b024",
+      "family": "still",
+      "intent": "Photograph of the Gatun Dam under construction.",
+      "must_show": [
+        "Gatun Dam"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Gatun Dam construction photograph",
+        "Gatun spillway 1912 photograph"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Gatun Lake",
+          "subtitle": "Largest artificial lake of its time",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b024",
+      "family": "motion",
+      "intent": "Map zoomed on Gatun Lake and the dam.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            9.2,
+            -79.9
+          ],
+          "zoom": 9.0,
+          "zoom_end": 9.4,
+          "title": "Gatun Lake",
+          "markers": [
+            {
+              "lat": 9.2,
+              "lon": -79.9,
+              "label": "Gatun Lake",
+              "appear_at": 0.5
+            },
+            {
+              "lat": 9.27,
+              "lon": -79.93,
+              "label": "Gatun Dam",
+              "appear_at": 1.5
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  9.272,
+                  -79.921
+                ],
+                [
+                  9.17,
+                  -79.84
+                ],
+                [
+                  9.115,
+                  -79.695
+                ]
+              ],
+              "reveal_start": 1.0,
+              "reveal_end": 4.0,
+              "label": "",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b024",
+      "family": "motion",
+      "intent": "Text card for the record.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "The largest artificial lake in the world",
+          "subtitle": "at the time it was built",
+          "position": "center"
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b025",
+      "family": "footage",
+      "intent": "Archival footage of the huge lock chambers under construction, showing their scale against people.",
+      "must_show": [
+        "lock chamber",
+        "workers for scale"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Gatun Locks construction archival film",
+        "Panama Canal locks construction 1912"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b025",
+      "family": "still",
+      "intent": "Photograph of a lock chamber under construction with workers for scale.",
+      "must_show": [
+        "lock walls",
+        "people"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Gatun Locks construction photograph 1912",
+        "Miraflores locks construction photograph"
+      ],
+      "overlay": {
+        "kind": "highlight_box",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "x": 0.2,
+          "y": 0.25,
+          "w": 0.6,
+          "h": 0.5,
+          "label": "110 ft x 1,000 ft"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b025",
+      "family": "motion",
+      "intent": "Number card for the lock size.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Panama Canal locks, Wikipedia",
+        "payload": {
+          "number": "110 x 1,000",
+          "label": "feet, each lock chamber",
+          "sublabel": "width by length",
+          "count_up": false
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b025",
+      "family": "motion",
+      "intent": "Number card for the lift.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Gatun Lake, Wikipedia",
+        "payload": {
+          "number": "85",
+          "label": "feet up to Gatun Lake",
+          "sublabel": "",
+          "count_up": true
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b026",
+      "family": "footage",
+      "intent": "Water rushing through culverts or a lock chamber filling.",
+      "must_show": [
+        "water filling lock"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos"
+      ],
+      "queries": [
+        "Panama Canal lock filling water",
+        "lock chamber water rising"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b026",
+      "family": "still",
+      "intent": "Photograph of lock gates or culverts.",
+      "must_show": [
+        "lock gates"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal lock gates photograph",
+        "miter gates Panama Canal 1914"
+      ],
+      "overlay": {
+        "kind": "callout",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "No pumps",
+          "subtitle": "gravity does the work",
+          "position": "lower_right"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b026",
+      "family": "motion",
+      "intent": "Text card on gravity.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "No pumps. Only gravity.",
+          "subtitle": "Water flows down from Gatun Lake",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b027",
+      "family": "footage",
+      "intent": "Archival footage of the SS Ancon or the first ships passing through the canal in 1914.",
+      "must_show": [
+        "ship in canal"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "SS Ancon 1914 Panama Canal",
+        "Panama Canal opening 1914 footage",
+        "first ship through Panama Canal"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b027",
+      "family": "still",
+      "intent": "Photograph of the SS Ancon in the canal on August 15, 1914.",
+      "must_show": [
+        "SS Ancon"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "SS Ancon Panama Canal 1914 photograph",
+        "Ancon first transit photograph"
+      ],
+      "overlay": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "August 15, 1914",
+          "subtitle": "First official transit",
+          "position": "upper_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b027",
+      "family": "motion",
+      "intent": "Isthmus map with the first transit revealed from Colon to Panama City.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            9.15,
+            -79.72
+          ],
+          "zoom": 7.6,
+          "zoom_end": 7.8,
+          "title": "August 15, 1914: ocean to ocean",
+          "markers": [
+            {
+              "lat": 9.359,
+              "lon": -79.901,
+              "label": "Colon",
+              "appear_at": 0.3
+            },
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 0.6
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  9.272,
+                  -79.921
+                ],
+                [
+                  9.17,
+                  -79.84
+                ],
+                [
+                  9.115,
+                  -79.695
+                ],
+                [
+                  9.05,
+                  -79.65
+                ],
+                [
+                  9.017,
+                  -79.612
+                ],
+                [
+                  8.997,
+                  -79.592
+                ],
+                [
+                  8.95,
+                  -79.565
+                ],
+                [
+                  8.983,
+                  -79.517
+                ]
+              ],
+              "reveal_start": 1.0,
+              "reveal_end": 5.0,
+              "label": "Panama Canal",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b027",
+      "family": "motion",
+      "intent": "Number card for the opening year.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: SS Ancon, Wikipedia",
+        "payload": {
+          "number": "1914",
+          "label": "the canal opens",
+          "sublabel": "August 15",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b028",
+      "family": "footage",
+      "intent": "Archival footage of soldiers marching off to war in August 1914.",
+      "must_show": [
+        "soldiers 1914"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "World War I 1914 troops marching archival",
+        "August 1914 mobilization footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b028",
+      "family": "still",
+      "intent": "Newspaper front page from August 1914 about the war.",
+      "must_show": [
+        "newspaper"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "August 1914 newspaper war headline",
+        "1914 newspaper Germany declares war"
+      ],
+      "overlay": null,
+      "priority": 0.9,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b028",
+      "family": "motion",
+      "intent": "Map of Europe at war in 1914.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            49.0,
+            8.0
+          ],
+          "zoom": 4.0,
+          "zoom_end": null,
+          "title": "Europe, August 1914",
+          "markers": [
+            {
+              "lat": 50.85,
+              "lon": 4.35,
+              "label": "Brussels",
+              "appear_at": 0.5
+            },
+            {
+              "lat": 48.86,
+              "lon": 2.35,
+              "label": "Paris",
+              "appear_at": 0.8
+            },
+            {
+              "lat": 52.52,
+              "lon": 13.4,
+              "label": "Berlin",
+              "appear_at": 1.1
+            }
+          ],
+          "routes": [],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "France",
+            "Germany",
+            "Belgium"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b029",
+      "family": "footage",
+      "intent": "Archival footage of the finished canal with ships in the locks.",
+      "must_show": [
+        "finished canal"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal 1915 ships locks archival",
+        "completed Panama Canal footage"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b029",
+      "family": "still",
+      "intent": "Photograph of the completed Miraflores or Gatun locks.",
+      "must_show": [
+        "locks"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Miraflores locks 1914 photograph",
+        "Gatun locks completed photograph"
+      ],
+      "overlay": {
+        "kind": "callout",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "About $375 million",
+          "subtitle": "",
+          "position": "lower_right"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b029",
+      "family": "motion",
+      "intent": "Act title card.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "title_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "The Price and the Legacy",
+          "subtitle": "",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b029",
+      "family": "motion",
+      "intent": "Number card for the US cost.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia",
+        "payload": {
+          "number": "$375M",
+          "label": "US construction cost",
+          "sublabel": "approximate",
+          "count_up": true
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b029",
+      "family": "motion",
+      "intent": "Bar chart of deaths by era.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "bar_chart",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: History of the Panama Canal, Wikipedia (estimates; records are incomplete)",
+        "payload": {
+          "title": "Deaths during construction",
+          "labels": [
+            "French era, 1881 to 1889",
+            "American era, 1904 to 1914"
+          ],
+          "series": [
+            {
+              "name": "",
+              "values": [
+                22000,
+                5600
+              ]
+            }
+          ],
+          "units": "deaths",
+          "animate": "grow",
+          "highlight_index": 0
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b030",
+      "family": "footage",
+      "intent": "Archival footage of West Indian laborers at work on the canal.",
+      "must_show": [
+        "Black Caribbean workers"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "West Indian laborers Panama Canal archival",
+        "Barbadian workers Panama Canal"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b030",
+      "family": "still",
+      "intent": "Photograph of Caribbean workers at the canal.",
+      "must_show": [
+        "workers"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "West Indian workers Panama Canal photograph",
+        "silver roll workers Panama"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Silver roll workers",
+          "subtitle": "Many came from Barbados",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b030",
+      "family": "motion",
+      "intent": "Map showing workers travelling from Barbados to Colon.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            11.5,
+            -70.0
+          ],
+          "zoom": 4.3,
+          "zoom_end": null,
+          "title": "From the Caribbean to the canal",
+          "markers": [
+            {
+              "lat": 13.1,
+              "lon": -59.6,
+              "label": "Barbados",
+              "appear_at": 0.5
+            },
+            {
+              "lat": 9.359,
+              "lon": -79.901,
+              "label": "Colon",
+              "appear_at": 1.0
+            }
+          ],
+          "routes": [],
+          "arrows": [
+            {
+              "start": [
+                13.1,
+                -59.6
+              ],
+              "end": [
+                9.359,
+                -79.901
+              ],
+              "appear_at": 1.2,
+              "label": ""
+            }
+          ],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b031",
+      "family": "footage",
+      "intent": "Archival footage of the 1977 treaty signing in Washington.",
+      "must_show": [
+        "signing ceremony"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos"
+      ],
+      "queries": [
+        "Torrijos Carter treaty signing 1977 footage",
+        "Panama Canal treaty 1977"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b031",
+      "family": "still",
+      "intent": "Photograph of Jimmy Carter and Omar Torrijos shaking hands.",
+      "must_show": [
+        "Carter and Torrijos"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos"
+      ],
+      "queries": [
+        "Carter Torrijos handshake 1977 photograph",
+        "Torrijos Carter Treaties signing"
+      ],
+      "overlay": {
+        "kind": "lower_third",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "Jimmy Carter and Omar Torrijos",
+          "subtitle": "Treaties signed, 1977",
+          "position": "lower_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b031",
+      "family": "motion",
+      "intent": "Number card for the treaties.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Torrijos-Carter Treaties, Wikipedia",
+        "payload": {
+          "number": "1977",
+          "label": "Torrijos-Carter Treaties",
+          "sublabel": "September 7",
+          "count_up": false
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b032",
+      "family": "footage",
+      "intent": "Panamanian flag raised over the canal, or crowds celebrating the handover.",
+      "must_show": [
+        "Panama flag"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "unrelated canals such as Suez or Kiel",
+        "on screen presenters"
+      ],
+      "queries": [
+        "Panama Canal handover December 31 1999",
+        "Panama flag canal ceremony"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b032",
+      "family": "still",
+      "intent": "Photograph of the Panama flag over the canal administration building.",
+      "must_show": [
+        "Panama flag"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "unrelated canals such as Suez or Kiel",
+        "on screen presenters"
+      ],
+      "queries": [
+        "Panama flag Panama Canal 1999",
+        "Panama Canal Administration Building flag"
+      ],
+      "overlay": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "December 31, 1999",
+          "subtitle": "Panama takes control",
+          "position": "upper_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b032",
+      "family": "motion",
+      "intent": "Map with Panama shaded for the handover.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth",
+        "payload": {
+          "center": [
+            9.15,
+            -79.72
+          ],
+          "zoom": 7.6,
+          "zoom_end": 8.4,
+          "title": "The canal belongs to Panama",
+          "markers": [
+            {
+              "lat": 9.359,
+              "lon": -79.901,
+              "label": "Colon",
+              "appear_at": 0.3
+            },
+            {
+              "lat": 8.983,
+              "lon": -79.517,
+              "label": "Panama City",
+              "appear_at": 0.6
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  9.272,
+                  -79.921
+                ],
+                [
+                  9.17,
+                  -79.84
+                ],
+                [
+                  9.115,
+                  -79.695
+                ],
+                [
+                  9.05,
+                  -79.65
+                ],
+                [
+                  9.017,
+                  -79.612
+                ],
+                [
+                  8.997,
+                  -79.592
+                ],
+                [
+                  8.95,
+                  -79.565
+                ],
+                [
+                  8.983,
+                  -79.517
+                ]
+              ],
+              "reveal_start": 1.0,
+              "reveal_end": 5.0,
+              "label": "Panama Canal",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b032",
+      "family": "motion",
+      "intent": "Number card for the handover.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Torrijos-Carter Treaties, Wikipedia",
+        "payload": {
+          "number": "1999",
+          "label": "Panama takes full control",
+          "sublabel": "December 31, at noon",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b033",
+      "family": "footage",
+      "intent": "A giant modern container ship moving through the new Agua Clara or Cocoli locks.",
+      "must_show": [
+        "large modern ship",
+        "new locks"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "on screen presenters"
+      ],
+      "queries": [
+        "Panama Canal expansion Neopanamax ship Agua Clara locks",
+        "Cocoli locks container ship"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b033",
+      "family": "still",
+      "intent": "Photograph of the expanded locks with a large ship.",
+      "must_show": [
+        "new locks"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos"
+      ],
+      "queries": [
+        "Agua Clara locks photograph",
+        "Panama Canal expansion 2016 ship"
+      ],
+      "overlay": {
+        "kind": "text_overlay",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "transparent",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "2016",
+          "subtitle": "Expanded locks open",
+          "position": "upper_left"
+        }
+      },
+      "priority": 0.9,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b033",
+      "family": "motion",
+      "intent": "Bar chart of lock widths, old versus new.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "bar_chart",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Panama Canal locks and Panama Canal expansion project, Wikipedia",
+        "payload": {
+          "title": "Lock chamber width",
+          "labels": [
+            "Original locks, 1914",
+            "New locks, 2016"
+          ],
+          "series": [
+            {
+              "name": "",
+              "values": [
+                110,
+                180
+              ]
+            }
+          ],
+          "units": "feet",
+          "animate": "grow",
+          "highlight_index": 1
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b033",
+      "family": "motion",
+      "intent": "Number card for the expansion.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "number_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Source: Panama Canal expansion project, Wikipedia",
+        "payload": {
+          "number": "2016",
+          "label": "larger locks open",
+          "sublabel": "June 26",
+          "count_up": false
+        }
+      },
+      "priority": 0.8,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b034",
+      "family": "footage",
+      "intent": "A ship gliding through the canal at golden hour, a calm closing image.",
+      "must_show": [
+        "ship in canal"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos",
+        "on screen presenters"
+      ],
+      "queries": [
+        "Panama Canal ship sunset",
+        "Panama Canal transit aerial"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b034",
+      "family": "still",
+      "intent": "Wide photograph of the canal with ships in transit today.",
+      "must_show": [
+        "canal with ships"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos"
+      ],
+      "queries": [
+        "Panama Canal Miraflores locks ships",
+        "Panama Canal ships transit photograph"
+      ],
+      "overlay": null,
+      "priority": 0.9,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b034",
+      "family": "motion",
+      "intent": "Callback map: the two sea routes again.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "map",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "Map data: Natural Earth. Distances approximate, commonly cited figures",
+        "payload": {
+          "center": [
+            -5.0,
+            -88.0
+          ],
+          "zoom": 1.9,
+          "zoom_end": null,
+          "title": "New York to San Francisco by sea",
+          "markers": [
+            {
+              "lat": 40.713,
+              "lon": -74.006,
+              "label": "New York",
+              "appear_at": 0.2
+            },
+            {
+              "lat": 37.775,
+              "lon": -122.419,
+              "label": "San Francisco",
+              "appear_at": 0.2
+            },
+            {
+              "lat": -55.98,
+              "lon": -67.27,
+              "label": "Cape Horn",
+              "appear_at": 2.0
+            }
+          ],
+          "routes": [
+            {
+              "points": [
+                [
+                  40.713,
+                  -74.006
+                ],
+                [
+                  35.0,
+                  -73.5
+                ],
+                [
+                  20.0,
+                  -58.0
+                ],
+                [
+                  5.0,
+                  -36.0
+                ],
+                [
+                  -8.0,
+                  -33.8
+                ],
+                [
+                  -23.5,
+                  -41.0
+                ],
+                [
+                  -35.5,
+                  -53.0
+                ],
+                [
+                  -52.0,
+                  -65.5
+                ],
+                [
+                  -55.98,
+                  -67.27
+                ],
+                [
+                  -53.5,
+                  -76.0
+                ],
+                [
+                  -40.0,
+                  -75.5
+                ],
+                [
+                  -20.0,
+                  -72.5
+                ],
+                [
+                  -5.0,
+                  -82.5
+                ],
+                [
+                  10.0,
+                  -91.0
+                ],
+                [
+                  23.0,
+                  -110.0
+                ],
+                [
+                  33.0,
+                  -119.5
+                ],
+                [
+                  37.775,
+                  -122.419
+                ]
+              ],
+              "reveal_start": 0.5,
+              "reveal_end": 4.5,
+              "label": "Around Cape Horn: about 13,000 miles",
+              "dashed": true
+            },
+            {
+              "points": [
+                [
+                  40.713,
+                  -74.006
+                ],
+                [
+                  35.0,
+                  -74.5
+                ],
+                [
+                  25.0,
+                  -75.5
+                ],
+                [
+                  20.0,
+                  -73.8
+                ],
+                [
+                  12.0,
+                  -78.5
+                ],
+                [
+                  9.359,
+                  -79.901
+                ],
+                [
+                  8.983,
+                  -79.517
+                ],
+                [
+                  7.5,
+                  -80.5
+                ],
+                [
+                  8.0,
+                  -84.0
+                ],
+                [
+                  13.0,
+                  -95.0
+                ],
+                [
+                  23.0,
+                  -110.0
+                ],
+                [
+                  33.0,
+                  -119.5
+                ],
+                [
+                  37.775,
+                  -122.419
+                ]
+              ],
+              "reveal_start": 4.5,
+              "reveal_end": 7.0,
+              "label": "Through Panama: about 5,200 miles",
+              "dashed": false
+            }
+          ],
+          "arrows": [],
+          "labels": [],
+          "shaded_regions": [
+            "Panama"
+          ]
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    },
+    {
+      "beat_id": "b035",
+      "family": "footage",
+      "intent": "A final quiet shot of the canal or the sea.",
+      "must_show": [
+        "canal or ocean"
+      ],
+      "must_avoid": [
+        "watermarks or channel logos"
+      ],
+      "queries": [
+        "Panama Canal sunset ship",
+        "Pacific entrance Panama Canal Bridge of the Americas"
+      ],
+      "overlay": null,
+      "priority": 1.0,
+      "opening_safe": true,
+      "motion": null
+    },
+    {
+      "beat_id": "b035",
+      "family": "still",
+      "intent": "Historic photograph of the canal under construction, as an end card background.",
+      "must_show": [
+        "canal construction"
+      ],
+      "must_avoid": [
+        "modern container ships",
+        "modern tourists or cruise ships",
+        "watermarks or channel logos",
+        "color footage from after 1950"
+      ],
+      "queries": [
+        "Panama Canal construction 1913 photograph",
+        "Culebra Cut 1913"
+      ],
+      "overlay": null,
+      "priority": 0.9,
+      "opening_safe": false,
+      "motion": null
+    },
+    {
+      "beat_id": "b035",
+      "family": "motion",
+      "intent": "End title card.",
+      "must_show": [],
+      "must_avoid": [],
+      "queries": [],
+      "motion": {
+        "kind": "title_card",
+        "duration": 8.0,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "background": "solid",
+        "style": {
+          "font": "Inter",
+          "palette": "documentary_warm"
+        },
+        "source_note": "",
+        "payload": {
+          "title": "The Panama Canal",
+          "subtitle": "1881 to today",
+          "position": "center"
+        }
+      },
+      "priority": 1.0,
+      "opening_safe": true,
+      "overlay": null
+    }
+  ]
+}

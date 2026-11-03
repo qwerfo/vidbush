@@ -1,0 +1,17 @@
+{
+  "name": "vidbush-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Optional Remotion renderer for Vidbush MotionSpec JSON (the built-in Python renderer is the default).",
+  "type": "module",
+  "scripts": {
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.535",
+    "@remotion/renderer": "4.0.535",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.535"
+  }
+}

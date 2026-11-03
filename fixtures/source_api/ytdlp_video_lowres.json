@@ -1,0 +1,20 @@
+{
+  "id": "bbbbbbbbbb2",
+  "title": "Panama Canal Documentary",
+  "channel": "History Films",
+  "duration": 2700.0,
+  "width": 640,
+  "height": 480,
+  "formats": [
+    {
+      "format_id": "18",
+      "height": 360,
+      "vcodec": "avc1"
+    },
+    {
+      "format_id": "135",
+      "height": 480,
+      "vcodec": "avc1"
+    }
+  ]
+}

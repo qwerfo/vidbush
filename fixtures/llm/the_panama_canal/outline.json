@@ -1,0 +1,115 @@
+{
+  "format": "documentary",
+  "title": "The Panama Canal: The Shortcut That Cost a Fortune",
+  "sections": [
+    {
+      "id": "sec01",
+      "title": "Ocean to Ocean",
+      "purpose": "hook",
+      "summary": "Open on the voyage the canal shortened and the price it cost.",
+      "target_words": 83,
+      "fact_ids": [
+        "f40",
+        "f38",
+        "f01",
+        "f07",
+        "f36"
+      ],
+      "item_number": null
+    },
+    {
+      "id": "sec02",
+      "title": "The French Dream",
+      "purpose": "setup",
+      "summary": "Centuries of ambition, then de Lesseps arrives in 1881 with a sea level plan.",
+      "target_words": 85,
+      "fact_ids": [
+        "f02",
+        "f04",
+        "f05"
+      ],
+      "item_number": null
+    },
+    {
+      "id": "sec03",
+      "title": "Death in the Jungle",
+      "purpose": "act",
+      "summary": "Disease and landslides break the French effort; bankruptcy in 1889.",
+      "target_words": 67,
+      "fact_ids": [
+        "f06",
+        "f19",
+        "f26",
+        "f08",
+        "f07"
+      ],
+      "item_number": null
+    },
+    {
+      "id": "sec04",
+      "title": "A Nation Is Born",
+      "purpose": "turn",
+      "summary": "Colombia says no, Panama breaks away, and the United States gets its Canal Zone.",
+      "target_words": 74,
+      "fact_ids": [
+        "f09",
+        "f10",
+        "f11",
+        "f12",
+        "f13",
+        "f15"
+      ],
+      "item_number": null
+    },
+    {
+      "id": "sec05",
+      "title": "Conquering the Mosquito",
+      "purpose": "act",
+      "summary": "Gorgas makes the zone livable; Stevens builds the base and the case for locks.",
+      "target_words": 69,
+      "fact_ids": [
+        "f17",
+        "f18",
+        "f20",
+        "f21"
+      ],
+      "item_number": null
+    },
+    {
+      "id": "sec06",
+      "title": "The Big Ditch",
+      "purpose": "climax",
+      "summary": "Goethals drives the Culebra Cut, Gatun Dam and the locks to the 1914 opening.",
+      "target_words": 130,
+      "fact_ids": [
+        "f23",
+        "f25",
+        "f26",
+        "f28",
+        "f30",
+        "f29",
+        "f32",
+        "f38",
+        "f39"
+      ],
+      "item_number": null
+    },
+    {
+      "id": "sec07",
+      "title": "The Price and the Legacy",
+      "purpose": "outro",
+      "summary": "Counting the cost, the workers who paid it, the handover and the canal today.",
+      "target_words": 118,
+      "fact_ids": [
+        "f37",
+        "f36",
+        "f34",
+        "f35",
+        "f41",
+        "f43",
+        "f44"
+      ],
+      "item_number": null
+    }
+  ]
+}

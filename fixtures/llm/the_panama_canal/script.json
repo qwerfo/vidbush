@@ -1,0 +1,344 @@
+{
+  "title": "The Panama Canal: The Shortcut That Cost a Fortune",
+  "format": "documentary",
+  "scenes": [
+    {
+      "id": "s01",
+      "title": "Ocean to Ocean",
+      "purpose": "hook",
+      "beats": [
+        {
+          "id": "b001",
+          "text": "In 1914, a ship sailing from New York to San Francisco no longer had to fight its way around the stormy tip of South America.",
+          "facts_used": [
+            "f40",
+            "f38"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b002",
+          "text": "A voyage of about 13,000 miles had suddenly shrunk to roughly 5,200.",
+          "facts_used": [
+            "f40"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b003",
+          "text": "The shortcut was a channel about 51 miles long, carved through jungle, rock and swamp.",
+          "facts_used": [
+            "f01"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b004",
+          "text": "It cost two nations a fortune. And it cost tens of thousands of workers their lives.",
+          "facts_used": [
+            "f07",
+            "f36"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b005",
+          "text": "This is the story of the Panama Canal, and of the people who built it.",
+          "facts_used": [],
+          "emphasis": "normal"
+        }
+      ],
+      "item_number": null
+    },
+    {
+      "id": "s02",
+      "title": "The French Dream",
+      "purpose": "setup",
+      "beats": [
+        {
+          "id": "b006",
+          "text": "The dream of a canal across Panama was centuries old. In 1534, King Charles the Fifth of Spain ordered a survey of the isthmus.",
+          "facts_used": [
+            "f02"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b007",
+          "text": "In 1881, France made the first serious attempt, led by Ferdinand de Lesseps, the celebrated builder of the Suez Canal.",
+          "facts_used": [
+            "f04"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b008",
+          "text": "De Lesseps wanted a canal at sea level, just like Suez, with no locks at all.",
+          "facts_used": [
+            "f05"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b009",
+          "text": "But Panama was not a flat Egyptian desert. It was a spine of mountains wrapped in rain forest and soaked by months of tropical rain.",
+          "facts_used": [],
+          "emphasis": "normal"
+        }
+      ],
+      "item_number": null
+    },
+    {
+      "id": "s03",
+      "title": "Death in the Jungle",
+      "purpose": "act",
+      "beats": [
+        {
+          "id": "b010",
+          "text": "Yellow fever and malaria swept through the work camps. Few people yet understood that mosquitoes carried both diseases.",
+          "facts_used": [
+            "f06",
+            "f19"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b011",
+          "text": "Landslides buried the diggings almost as fast as the crews could clear them.",
+          "facts_used": [
+            "f26"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b012",
+          "text": "By 1889, the French company was bankrupt, and its collapse grew into one of the great scandals of the age.",
+          "facts_used": [
+            "f08"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b013",
+          "text": "Historians estimate that about 22,000 workers died during the French years, most of them from disease.",
+          "facts_used": [
+            "f07"
+          ],
+          "emphasis": "high"
+        }
+      ],
+      "item_number": null
+    },
+    {
+      "id": "s04",
+      "title": "A Nation Is Born",
+      "purpose": "turn",
+      "beats": [
+        {
+          "id": "b014",
+          "text": "The United States wanted to finish the job. But in 1903, Colombia, which then ruled Panama, rejected the American offer.",
+          "facts_used": [
+            "f09"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b015",
+          "text": "On November 3, 1903, Panama declared its independence, and American warships made sure Colombia could not stop it.",
+          "facts_used": [
+            "f10",
+            "f11"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b016",
+          "text": "Within weeks, a new treaty handed the United States control of a zone about ten miles wide across the isthmus.",
+          "facts_used": [
+            "f12"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b017",
+          "text": "Washington paid Panama 10 million dollars, and bought out the French company for 40 million more.",
+          "facts_used": [
+            "f13",
+            "f15"
+          ],
+          "emphasis": "normal"
+        }
+      ],
+      "item_number": null
+    },
+    {
+      "id": "s05",
+      "title": "Conquering the Mosquito",
+      "purpose": "act",
+      "beats": [
+        {
+          "id": "b018",
+          "text": "Before the Americans could dig, someone had to keep the workers alive. That job fell to Dr. William Gorgas.",
+          "facts_used": [
+            "f17"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b019",
+          "text": "His crews drained swamps, oiled standing water, screened windows and fumigated houses, block by block.",
+          "facts_used": [
+            "f17"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b020",
+          "text": "By 1906, yellow fever had been wiped out of the Canal Zone, and malaria was in steady retreat.",
+          "facts_used": [
+            "f18"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b021",
+          "text": "Meanwhile, chief engineer John Stevens rebuilt the railroad and persuaded Washington to build a canal with locks.",
+          "facts_used": [
+            "f20",
+            "f21"
+          ],
+          "emphasis": "normal"
+        }
+      ],
+      "item_number": null
+    },
+    {
+      "id": "s06",
+      "title": "The Big Ditch",
+      "purpose": "climax",
+      "beats": [
+        {
+          "id": "b022",
+          "text": "In 1907, Army engineer George Goethals took command, and he drove the job to the finish.",
+          "facts_used": [
+            "f23"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b023",
+          "text": "At the Culebra Cut, steam shovels chewed through nearly eight miles of the Continental Divide, while landslides kept pouring back in.",
+          "facts_used": [
+            "f25",
+            "f26"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b024",
+          "text": "On the Chagres River, the Gatun Dam created Gatun Lake, the largest artificial lake in the world at the time.",
+          "facts_used": [
+            "f28"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b025",
+          "text": "Giant locks, 110 feet wide and 1,000 feet long, would lift ships 85 feet up to the lake and lower them back to the sea.",
+          "facts_used": [
+            "f30",
+            "f29"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b026",
+          "text": "The locks used no pumps at all. Gravity alone moved millions of gallons of water down from the lake.",
+          "facts_used": [
+            "f32"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b027",
+          "text": "On August 15, 1914, the steamship Ancon made the first official passage from ocean to ocean.",
+          "facts_used": [
+            "f38"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b028",
+          "text": "The world barely noticed. In Europe, the First World War had just begun.",
+          "facts_used": [
+            "f39"
+          ],
+          "emphasis": "normal"
+        }
+      ],
+      "item_number": null
+    },
+    {
+      "id": "s07",
+      "title": "The Price and the Legacy",
+      "purpose": "outro",
+      "beats": [
+        {
+          "id": "b029",
+          "text": "The American effort cost about 375 million dollars. Official records count roughly 5,600 deaths in the American years.",
+          "facts_used": [
+            "f37",
+            "f36"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b030",
+          "text": "Much of the hardest labor fell to workers from the Caribbean, many from Barbados, who were paid less and housed apart.",
+          "facts_used": [
+            "f34",
+            "f35"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b031",
+          "text": "In 1977, President Jimmy Carter and General Omar Torrijos signed treaties to return the canal.",
+          "facts_used": [
+            "f41"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b032",
+          "text": "At noon on December 31, 1999, the canal finally belonged to Panama.",
+          "facts_used": [
+            "f43"
+          ],
+          "emphasis": "high"
+        },
+        {
+          "id": "b033",
+          "text": "In 2016, a new set of larger locks opened, built for the giant ships of a new century.",
+          "facts_used": [
+            "f44"
+          ],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b034",
+          "text": "More than a century later, the shortcut that cost so much still carries ships between the seas every day.",
+          "facts_used": [],
+          "emphasis": "normal"
+        },
+        {
+          "id": "b035",
+          "text": "If you enjoyed this story, subscribe for more of the history that shaped our world.",
+          "facts_used": [],
+          "emphasis": "low"
+        }
+      ],
+      "item_number": null
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "responseHeader": {
+    "status": 0,
+    "QTime": 12,
+    "params": {
+      "query": "(panama canal construction) AND mediatype:(movies)",
+      "rows": "5"
+    }
+  },
+  "response": {
+    "numFound": 2,
+    "start": 0,
+    "docs": [
+      {
+        "identifier": "PanamaCanal1913",
+        "title": "Panama Canal Construction (1913)",
+        "creator": "Edison Manufacturing Company",
+        "licenseurl": "http://creativecommons.org/publicdomain/mark/1.0/",
+        "date": "1913-01-01T00:00:00Z"
+      },
+      {
+        "identifier": "canal_newsreel_1914",
+        "title": [
+          "The Big Ditch newsreel"
+        ],
+        "creator": [
+          "Pathe News",
+          "Unknown"
+        ],
+        "date": "1914-08-15T00:00:00Z"
+      },
+      {
+        "title": "missing identifier is skipped"
+      }
+    ]
+  }
+}

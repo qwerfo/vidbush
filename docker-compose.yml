@@ -1,0 +1,19 @@
+services:
+  vidbush:
+    build: .
+    image: vidbush:latest
+    container_name: vidbush
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      VIDBUSH_ROOT: /app
+    volumes:
+      - ./output:/app/output
+      - ./data:/app/data
+      - ./config/brands:/app/config/brands
+      - ./config/style_profiles:/app/config/style_profiles
+      - ./music:/app/music
+    restart: unless-stopped

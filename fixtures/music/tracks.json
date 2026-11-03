@@ -1,0 +1,38 @@
+{
+  "harbor_light.ogg": {
+    "title": "Harbor Light",
+    "mood": "calm",
+    "energy": 0.25,
+    "bpm": 68,
+    "duration_s": 112.94,
+    "loop": true,
+    "licence": "CC0-1.0"
+  },
+  "undertow.ogg": {
+    "title": "Undertow",
+    "mood": "tense",
+    "energy": 0.6,
+    "bpm": 76,
+    "duration_s": 101.05,
+    "loop": true,
+    "licence": "CC0-1.0"
+  },
+  "first_light.ogg": {
+    "title": "First Light",
+    "mood": "uplifting",
+    "energy": 0.75,
+    "bpm": 84,
+    "duration_s": 137.14,
+    "loop": true,
+    "licence": "CC0-1.0"
+  },
+  "deep_archive.ogg": {
+    "title": "Deep Archive",
+    "mood": "mysterious",
+    "energy": 0.4,
+    "bpm": 60,
+    "duration_s": 96.0,
+    "loop": true,
+    "licence": "CC0-1.0"
+  }
+}

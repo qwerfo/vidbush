@@ -1,0 +1,8 @@
+The audio tracks in this folder (*.ogg) were generated procedurally by fixtures/music/compose.py
+for the Vidbush project. No samples or third party recordings were used.
+
+They are dedicated to the public domain under CC0 1.0 Universal:
+https://creativecommons.org/publicdomain/zero/1.0/
+
+You may copy, modify, distribute and use them, including commercially and on monetized YouTube
+videos, without asking permission and without attribution.

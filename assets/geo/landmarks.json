@@ -1,0 +1,1402 @@
+[
+ {
+  "name": "Panama Canal",
+  "lat": 9.12,
+  "lon": -79.75,
+  "kind": "canal",
+  "country": "Panama",
+  "aliases": [
+   "Canal de Panama"
+  ]
+ },
+ {
+  "name": "Gatun Lake",
+  "lat": 9.2,
+  "lon": -79.88,
+  "kind": "lake",
+  "country": "Panama",
+  "aliases": [
+   "Lake Gatun",
+   "Gatún Lake"
+  ]
+ },
+ {
+  "name": "Gatun Locks",
+  "lat": 9.272,
+  "lon": -79.922,
+  "kind": "locks",
+  "country": "Panama",
+  "aliases": [
+   "Gatún Locks"
+  ]
+ },
+ {
+  "name": "Gatun Dam",
+  "lat": 9.265,
+  "lon": -79.932,
+  "kind": "dam",
+  "country": "Panama",
+  "aliases": [
+   "Gatún Dam"
+  ]
+ },
+ {
+  "name": "Culebra Cut",
+  "lat": 9.05,
+  "lon": -79.66,
+  "kind": "canal",
+  "country": "Panama",
+  "aliases": [
+   "Gaillard Cut"
+  ]
+ },
+ {
+  "name": "Miraflores Locks",
+  "lat": 8.997,
+  "lon": -79.591,
+  "kind": "locks",
+  "country": "Panama",
+  "aliases": [
+   "Miraflores"
+  ]
+ },
+ {
+  "name": "Pedro Miguel Locks",
+  "lat": 9.019,
+  "lon": -79.613,
+  "kind": "locks",
+  "country": "Panama",
+  "aliases": [
+   "Pedro Miguel"
+  ]
+ },
+ {
+  "name": "Agua Clara Locks",
+  "lat": 9.29,
+  "lon": -79.92,
+  "kind": "locks",
+  "country": "Panama",
+  "aliases": []
+ },
+ {
+  "name": "Cocoli Locks",
+  "lat": 8.97,
+  "lon": -79.6,
+  "kind": "locks",
+  "country": "Panama",
+  "aliases": []
+ },
+ {
+  "name": "Colon",
+  "lat": 9.359,
+  "lon": -79.901,
+  "kind": "city",
+  "country": "Panama",
+  "aliases": [
+   "Colón",
+   "Aspinwall"
+  ]
+ },
+ {
+  "name": "Balboa",
+  "lat": 8.955,
+  "lon": -79.566,
+  "kind": "port",
+  "country": "Panama",
+  "aliases": [
+   "Port of Balboa"
+  ]
+ },
+ {
+  "name": "Gamboa",
+  "lat": 9.118,
+  "lon": -79.694,
+  "kind": "town",
+  "country": "Panama",
+  "aliases": []
+ },
+ {
+  "name": "Limon Bay",
+  "lat": 9.37,
+  "lon": -79.92,
+  "kind": "bay",
+  "country": "Panama",
+  "aliases": [
+   "Limón Bay"
+  ]
+ },
+ {
+  "name": "Chagres River",
+  "lat": 9.25,
+  "lon": -79.96,
+  "kind": "river",
+  "country": "Panama",
+  "aliases": [
+   "Chagres",
+   "Río Chagres"
+  ]
+ },
+ {
+  "name": "Panama Railroad",
+  "lat": 9.17,
+  "lon": -79.8,
+  "kind": "railroad",
+  "country": "Panama",
+  "aliases": [
+   "Panama Railway",
+   "Panama Canal Railway"
+  ]
+ },
+ {
+  "name": "Panama Viejo",
+  "lat": 9.006,
+  "lon": -79.485,
+  "kind": "ruins",
+  "country": "Panama",
+  "aliases": [
+   "Old Panama"
+  ]
+ },
+ {
+  "name": "Isthmus of Panama",
+  "lat": 9.1,
+  "lon": -79.7,
+  "kind": "isthmus",
+  "country": "Panama",
+  "aliases": [
+   "Panama Isthmus"
+  ]
+ },
+ {
+  "name": "Gulf of Panama",
+  "lat": 8.0,
+  "lon": -79.0,
+  "kind": "gulf",
+  "country": "Panama",
+  "aliases": [
+   "Bay of Panama"
+  ]
+ },
+ {
+  "name": "Barro Colorado Island",
+  "lat": 9.155,
+  "lon": -79.846,
+  "kind": "island",
+  "country": "Panama",
+  "aliases": []
+ },
+ {
+  "name": "Darien Gap",
+  "lat": 8.0,
+  "lon": -77.5,
+  "kind": "region",
+  "country": "Panama",
+  "aliases": [
+   "Darién Gap",
+   "Darien"
+  ]
+ },
+ {
+  "name": "Lake Nicaragua",
+  "lat": 11.6,
+  "lon": -85.4,
+  "kind": "lake",
+  "country": "Nicaragua",
+  "aliases": []
+ },
+ {
+  "name": "Cape Horn",
+  "lat": -55.98,
+  "lon": -67.27,
+  "kind": "cape",
+  "country": "Chile",
+  "aliases": [
+   "Cabo de Hornos"
+  ]
+ },
+ {
+  "name": "Strait of Magellan",
+  "lat": -53.47,
+  "lon": -70.78,
+  "kind": "strait",
+  "country": "Chile",
+  "aliases": [
+   "Magellan Strait"
+  ]
+ },
+ {
+  "name": "Drake Passage",
+  "lat": -58.0,
+  "lon": -65.0,
+  "kind": "strait",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Hoover Dam",
+  "lat": 36.016,
+  "lon": -114.737,
+  "kind": "dam",
+  "country": "United States of America",
+  "aliases": [
+   "Boulder Dam"
+  ]
+ },
+ {
+  "name": "Black Canyon",
+  "lat": 35.98,
+  "lon": -114.73,
+  "kind": "canyon",
+  "country": "United States of America",
+  "aliases": [
+   "Black Canyon of the Colorado"
+  ]
+ },
+ {
+  "name": "Lake Mead",
+  "lat": 36.25,
+  "lon": -114.39,
+  "kind": "lake",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Colorado River",
+  "lat": 36.1,
+  "lon": -112.09,
+  "kind": "river",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Boulder City",
+  "lat": 35.978,
+  "lon": -114.832,
+  "kind": "city",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Grand Coulee Dam",
+  "lat": 47.957,
+  "lon": -118.982,
+  "kind": "dam",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Norris Dam",
+  "lat": 36.224,
+  "lon": -84.092,
+  "kind": "dam",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Erie Canal",
+  "lat": 43.1,
+  "lon": -76.2,
+  "kind": "canal",
+  "country": "United States of America",
+  "aliases": [
+   "Grand Canal of New York"
+  ]
+ },
+ {
+  "name": "Lockport",
+  "lat": 43.17,
+  "lon": -78.69,
+  "kind": "town",
+  "country": "United States of America",
+  "aliases": [
+   "Lockport Locks"
+  ]
+ },
+ {
+  "name": "Lake Erie",
+  "lat": 42.2,
+  "lon": -81.2,
+  "kind": "lake",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Lake Ontario",
+  "lat": 43.7,
+  "lon": -77.9,
+  "kind": "lake",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Lake Michigan",
+  "lat": 44.0,
+  "lon": -87.0,
+  "kind": "lake",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Lake Superior",
+  "lat": 47.7,
+  "lon": -87.5,
+  "kind": "lake",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Lake Huron",
+  "lat": 44.8,
+  "lon": -82.4,
+  "kind": "lake",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Hudson River",
+  "lat": 41.7,
+  "lon": -73.95,
+  "kind": "river",
+  "country": "United States of America",
+  "aliases": [
+   "the Hudson"
+  ]
+ },
+ {
+  "name": "Albany",
+  "lat": 42.6526,
+  "lon": -73.7562,
+  "kind": "city",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Buffalo",
+  "lat": 42.8864,
+  "lon": -78.8784,
+  "kind": "city",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Niagara Falls",
+  "lat": 43.0828,
+  "lon": -79.0742,
+  "kind": "waterfall",
+  "country": "United States of America",
+  "aliases": [
+   "Niagara"
+  ]
+ },
+ {
+  "name": "Mississippi River",
+  "lat": 32.35,
+  "lon": -90.9,
+  "kind": "river",
+  "country": "United States of America",
+  "aliases": [
+   "the Mississippi"
+  ]
+ },
+ {
+  "name": "Missouri River",
+  "lat": 38.8,
+  "lon": -90.12,
+  "kind": "river",
+  "country": "United States of America",
+  "aliases": [
+   "the Missouri"
+  ]
+ },
+ {
+  "name": "Chesapeake Bay",
+  "lat": 37.8,
+  "lon": -76.1,
+  "kind": "bay",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Gulf of Mexico",
+  "lat": 25.0,
+  "lon": -90.0,
+  "kind": "sea",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Caribbean Sea",
+  "lat": 15.0,
+  "lon": -75.0,
+  "kind": "sea",
+  "country": "",
+  "aliases": [
+   "the Caribbean"
+  ]
+ },
+ {
+  "name": "Atlantic Ocean",
+  "lat": 25.0,
+  "lon": -45.0,
+  "kind": "ocean",
+  "country": "",
+  "aliases": [
+   "Atlantic",
+   "the Atlantic"
+  ]
+ },
+ {
+  "name": "Pacific Ocean",
+  "lat": 0.0,
+  "lon": -150.0,
+  "kind": "ocean",
+  "country": "",
+  "aliases": [
+   "Pacific",
+   "the Pacific"
+  ]
+ },
+ {
+  "name": "Indian Ocean",
+  "lat": -20.0,
+  "lon": 80.0,
+  "kind": "ocean",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Bering Strait",
+  "lat": 65.75,
+  "lon": -168.75,
+  "kind": "strait",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Suez Canal",
+  "lat": 30.58,
+  "lon": 32.27,
+  "kind": "canal",
+  "country": "Egypt",
+  "aliases": []
+ },
+ {
+  "name": "Port Said",
+  "lat": 31.26,
+  "lon": 32.3,
+  "kind": "port",
+  "country": "Egypt",
+  "aliases": []
+ },
+ {
+  "name": "Kiel Canal",
+  "lat": 54.13,
+  "lon": 9.38,
+  "kind": "canal",
+  "country": "Germany",
+  "aliases": []
+ },
+ {
+  "name": "Corinth Canal",
+  "lat": 37.93,
+  "lon": 22.98,
+  "kind": "canal",
+  "country": "Greece",
+  "aliases": []
+ },
+ {
+  "name": "Strait of Gibraltar",
+  "lat": 35.97,
+  "lon": -5.6,
+  "kind": "strait",
+  "country": "",
+  "aliases": [
+   "Gibraltar Strait"
+  ]
+ },
+ {
+  "name": "Bosphorus",
+  "lat": 41.12,
+  "lon": 29.07,
+  "kind": "strait",
+  "country": "Turkey",
+  "aliases": [
+   "Bosporus"
+  ]
+ },
+ {
+  "name": "English Channel",
+  "lat": 50.2,
+  "lon": -1.0,
+  "kind": "strait",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Golden Gate Bridge",
+  "lat": 37.8199,
+  "lon": -122.4783,
+  "kind": "bridge",
+  "country": "United States of America",
+  "aliases": [
+   "Golden Gate"
+  ]
+ },
+ {
+  "name": "Alcatraz",
+  "lat": 37.8267,
+  "lon": -122.423,
+  "kind": "island",
+  "country": "United States of America",
+  "aliases": [
+   "Alcatraz Island"
+  ]
+ },
+ {
+  "name": "Brooklyn Bridge",
+  "lat": 40.7061,
+  "lon": -73.9969,
+  "kind": "bridge",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Empire State Building",
+  "lat": 40.7484,
+  "lon": -73.9857,
+  "kind": "building",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Statue of Liberty",
+  "lat": 40.6892,
+  "lon": -74.0445,
+  "kind": "monument",
+  "country": "United States of America",
+  "aliases": [
+   "Lady Liberty"
+  ]
+ },
+ {
+  "name": "Ellis Island",
+  "lat": 40.6995,
+  "lon": -74.0396,
+  "kind": "island",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Washington, D.C.",
+  "lat": 38.9072,
+  "lon": -77.0369,
+  "kind": "city",
+  "country": "United States of America",
+  "aliases": [
+   "Washington D.C.",
+   "Washington DC",
+   "District of Columbia"
+  ]
+ },
+ {
+  "name": "White House",
+  "lat": 38.8977,
+  "lon": -77.0365,
+  "kind": "building",
+  "country": "United States of America",
+  "aliases": [
+   "the White House"
+  ]
+ },
+ {
+  "name": "United States Capitol",
+  "lat": 38.8899,
+  "lon": -77.0091,
+  "kind": "building",
+  "country": "United States of America",
+  "aliases": [
+   "U.S. Capitol",
+   "Capitol Building",
+   "the Capitol"
+  ]
+ },
+ {
+  "name": "Lincoln Memorial",
+  "lat": 38.8893,
+  "lon": -77.0502,
+  "kind": "monument",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Pentagon",
+  "lat": 38.8719,
+  "lon": -77.0563,
+  "kind": "building",
+  "country": "United States of America",
+  "aliases": [
+   "the Pentagon"
+  ]
+ },
+ {
+  "name": "Independence Hall",
+  "lat": 39.9489,
+  "lon": -75.15,
+  "kind": "building",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Liberty Bell",
+  "lat": 39.9496,
+  "lon": -75.1503,
+  "kind": "monument",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Mount Rushmore",
+  "lat": 43.8791,
+  "lon": -103.4591,
+  "kind": "monument",
+  "country": "United States of America",
+  "aliases": [
+   "Mount Rushmore National Memorial"
+  ]
+ },
+ {
+  "name": "Grand Canyon",
+  "lat": 36.1069,
+  "lon": -112.1129,
+  "kind": "canyon",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Yellowstone",
+  "lat": 44.428,
+  "lon": -110.5885,
+  "kind": "park",
+  "country": "United States of America",
+  "aliases": [
+   "Yellowstone National Park"
+  ]
+ },
+ {
+  "name": "Old Faithful",
+  "lat": 44.4605,
+  "lon": -110.8281,
+  "kind": "geyser",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Yosemite",
+  "lat": 37.8651,
+  "lon": -119.5383,
+  "kind": "park",
+  "country": "United States of America",
+  "aliases": [
+   "Yosemite Valley",
+   "Yosemite National Park"
+  ]
+ },
+ {
+  "name": "Death Valley",
+  "lat": 36.5054,
+  "lon": -117.0794,
+  "kind": "valley",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Pikes Peak",
+  "lat": 38.8409,
+  "lon": -105.0423,
+  "kind": "mountain",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Mount St. Helens",
+  "lat": 46.1912,
+  "lon": -122.1944,
+  "kind": "volcano",
+  "country": "United States of America",
+  "aliases": [
+   "Mount Saint Helens"
+  ]
+ },
+ {
+  "name": "Everglades",
+  "lat": 25.2866,
+  "lon": -80.8987,
+  "kind": "wetland",
+  "country": "United States of America",
+  "aliases": [
+   "the Everglades"
+  ]
+ },
+ {
+  "name": "Pearl Harbor",
+  "lat": 21.364,
+  "lon": -157.95,
+  "kind": "harbor",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Kitty Hawk",
+  "lat": 36.0646,
+  "lon": -75.7057,
+  "kind": "town",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Kill Devil Hills",
+  "lat": 36.014,
+  "lon": -75.668,
+  "kind": "hill",
+  "country": "United States of America",
+  "aliases": [
+   "Wright Brothers National Memorial"
+  ]
+ },
+ {
+  "name": "Cape Canaveral",
+  "lat": 28.3922,
+  "lon": -80.6077,
+  "kind": "cape",
+  "country": "United States of America",
+  "aliases": [
+   "Cape Kennedy"
+  ]
+ },
+ {
+  "name": "Kennedy Space Center",
+  "lat": 28.5729,
+  "lon": -80.649,
+  "kind": "spaceport",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Houston",
+  "lat": 29.7604,
+  "lon": -95.3698,
+  "kind": "city",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Johnson Space Center",
+  "lat": 29.5593,
+  "lon": -95.09,
+  "kind": "spaceport",
+  "country": "United States of America",
+  "aliases": [
+   "Mission Control"
+  ]
+ },
+ {
+  "name": "Gettysburg",
+  "lat": 39.8309,
+  "lon": -77.2311,
+  "kind": "battlefield",
+  "country": "United States of America",
+  "aliases": [
+   "Gettysburg Battlefield"
+  ]
+ },
+ {
+  "name": "Antietam",
+  "lat": 39.4734,
+  "lon": -77.7447,
+  "kind": "battlefield",
+  "country": "United States of America",
+  "aliases": [
+   "Sharpsburg"
+  ]
+ },
+ {
+  "name": "Fort Sumter",
+  "lat": 32.7523,
+  "lon": -79.8747,
+  "kind": "fort",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Appomattox Court House",
+  "lat": 37.3772,
+  "lon": -78.7966,
+  "kind": "town",
+  "country": "United States of America",
+  "aliases": [
+   "Appomattox"
+  ]
+ },
+ {
+  "name": "Alamo",
+  "lat": 29.426,
+  "lon": -98.4861,
+  "kind": "fort",
+  "country": "United States of America",
+  "aliases": [
+   "The Alamo",
+   "Alamo Mission"
+  ]
+ },
+ {
+  "name": "Plymouth Rock",
+  "lat": 41.9584,
+  "lon": -70.662,
+  "kind": "monument",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Jamestown",
+  "lat": 37.209,
+  "lon": -76.775,
+  "kind": "settlement",
+  "country": "United States of America",
+  "aliases": [
+   "Jamestown Settlement"
+  ]
+ },
+ {
+  "name": "Yorktown",
+  "lat": 37.2388,
+  "lon": -76.5097,
+  "kind": "battlefield",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Valley Forge",
+  "lat": 40.097,
+  "lon": -75.44,
+  "kind": "camp",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Lexington",
+  "lat": 42.4473,
+  "lon": -71.2245,
+  "kind": "town",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Bunker Hill",
+  "lat": 42.3763,
+  "lon": -71.0607,
+  "kind": "battlefield",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Little Bighorn",
+  "lat": 45.5647,
+  "lon": -107.429,
+  "kind": "battlefield",
+  "country": "United States of America",
+  "aliases": [
+   "Little Bighorn Battlefield"
+  ]
+ },
+ {
+  "name": "Wounded Knee",
+  "lat": 43.1424,
+  "lon": -102.3654,
+  "kind": "site",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Independence Rock",
+  "lat": 42.4936,
+  "lon": -107.1317,
+  "kind": "landmark",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Sutter's Mill",
+  "lat": 38.8034,
+  "lon": -120.8936,
+  "kind": "site",
+  "country": "United States of America",
+  "aliases": [
+   "Sutters Mill",
+   "Coloma"
+  ]
+ },
+ {
+  "name": "Promontory Summit",
+  "lat": 41.618,
+  "lon": -112.551,
+  "kind": "site",
+  "country": "United States of America",
+  "aliases": [
+   "Promontory",
+   "Golden Spike"
+  ]
+ },
+ {
+  "name": "Route 66 Chicago",
+  "lat": 41.8796,
+  "lon": -87.6237,
+  "kind": "route",
+  "country": "United States of America",
+  "aliases": [
+   "Route 66 start"
+  ]
+ },
+ {
+  "name": "Route 66 Santa Monica",
+  "lat": 34.0094,
+  "lon": -118.4973,
+  "kind": "route",
+  "country": "United States of America",
+  "aliases": [
+   "Route 66 end",
+   "Santa Monica Pier"
+  ]
+ },
+ {
+  "name": "Los Alamos",
+  "lat": 35.88,
+  "lon": -106.3031,
+  "kind": "town",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Trinity Site",
+  "lat": 33.6773,
+  "lon": -106.4754,
+  "kind": "site",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Three Mile Island",
+  "lat": 40.153,
+  "lon": -76.7247,
+  "kind": "site",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "California",
+  "lat": 37.2,
+  "lon": -119.5,
+  "kind": "region",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Texas",
+  "lat": 31.0,
+  "lon": -99.3,
+  "kind": "region",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Florida",
+  "lat": 28.6,
+  "lon": -82.4,
+  "kind": "region",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Alaska",
+  "lat": 64.0,
+  "lon": -152.0,
+  "kind": "region",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Hawaii",
+  "lat": 20.8,
+  "lon": -156.3,
+  "kind": "region",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Nevada",
+  "lat": 39.3,
+  "lon": -116.6,
+  "kind": "region",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Arizona",
+  "lat": 34.3,
+  "lon": -111.7,
+  "kind": "region",
+  "country": "United States of America",
+  "aliases": []
+ },
+ {
+  "name": "Dawson City",
+  "lat": 64.06,
+  "lon": -139.43,
+  "kind": "town",
+  "country": "Canada",
+  "aliases": [
+   "Klondike"
+  ]
+ },
+ {
+  "name": "Eiffel Tower",
+  "lat": 48.8584,
+  "lon": 2.2945,
+  "kind": "building",
+  "country": "France",
+  "aliases": []
+ },
+ {
+  "name": "Normandy beaches",
+  "lat": 49.37,
+  "lon": -0.88,
+  "kind": "beach",
+  "country": "France",
+  "aliases": [
+   "Normandy",
+   "D-Day beaches"
+  ]
+ },
+ {
+  "name": "Omaha Beach",
+  "lat": 49.369,
+  "lon": -0.871,
+  "kind": "beach",
+  "country": "France",
+  "aliases": []
+ },
+ {
+  "name": "Utah Beach",
+  "lat": 49.415,
+  "lon": -1.175,
+  "kind": "beach",
+  "country": "France",
+  "aliases": []
+ },
+ {
+  "name": "Gold Beach",
+  "lat": 49.34,
+  "lon": -0.56,
+  "kind": "beach",
+  "country": "France",
+  "aliases": []
+ },
+ {
+  "name": "Juno Beach",
+  "lat": 49.335,
+  "lon": -0.42,
+  "kind": "beach",
+  "country": "France",
+  "aliases": []
+ },
+ {
+  "name": "Sword Beach",
+  "lat": 49.29,
+  "lon": -0.3,
+  "kind": "beach",
+  "country": "France",
+  "aliases": []
+ },
+ {
+  "name": "Dunkirk",
+  "lat": 51.0343,
+  "lon": 2.3768,
+  "kind": "town",
+  "country": "France",
+  "aliases": [
+   "Dunkerque"
+  ]
+ },
+ {
+  "name": "Verdun",
+  "lat": 49.1597,
+  "lon": 5.3844,
+  "kind": "battlefield",
+  "country": "France",
+  "aliases": []
+ },
+ {
+  "name": "Somme",
+  "lat": 50.0,
+  "lon": 2.7,
+  "kind": "battlefield",
+  "country": "France",
+  "aliases": [
+   "the Somme"
+  ]
+ },
+ {
+  "name": "Bastogne",
+  "lat": 50.0,
+  "lon": 5.7158,
+  "kind": "town",
+  "country": "Belgium",
+  "aliases": []
+ },
+ {
+  "name": "Big Ben",
+  "lat": 51.5007,
+  "lon": -0.1246,
+  "kind": "building",
+  "country": "United Kingdom",
+  "aliases": []
+ },
+ {
+  "name": "Tower of London",
+  "lat": 51.5081,
+  "lon": -0.0759,
+  "kind": "building",
+  "country": "United Kingdom",
+  "aliases": []
+ },
+ {
+  "name": "Stonehenge",
+  "lat": 51.1789,
+  "lon": -1.8262,
+  "kind": "monument",
+  "country": "United Kingdom",
+  "aliases": []
+ },
+ {
+  "name": "Colosseum",
+  "lat": 41.8902,
+  "lon": 12.4922,
+  "kind": "building",
+  "country": "Italy",
+  "aliases": []
+ },
+ {
+  "name": "Brandenburg Gate",
+  "lat": 52.5163,
+  "lon": 13.3777,
+  "kind": "monument",
+  "country": "Germany",
+  "aliases": []
+ },
+ {
+  "name": "Berlin Wall",
+  "lat": 52.5351,
+  "lon": 13.3903,
+  "kind": "monument",
+  "country": "Germany",
+  "aliases": []
+ },
+ {
+  "name": "Auschwitz",
+  "lat": 50.0274,
+  "lon": 19.2036,
+  "kind": "site",
+  "country": "Poland",
+  "aliases": []
+ },
+ {
+  "name": "Kremlin",
+  "lat": 55.752,
+  "lon": 37.6175,
+  "kind": "building",
+  "country": "Russia",
+  "aliases": [
+   "the Kremlin"
+  ]
+ },
+ {
+  "name": "Stalingrad",
+  "lat": 48.708,
+  "lon": 44.5133,
+  "kind": "city",
+  "country": "Russia",
+  "aliases": [
+   "Volgograd"
+  ]
+ },
+ {
+  "name": "Chernobyl",
+  "lat": 51.389,
+  "lon": 30.099,
+  "kind": "site",
+  "country": "Ukraine",
+  "aliases": []
+ },
+ {
+  "name": "Pyramids of Giza",
+  "lat": 29.9792,
+  "lon": 31.1342,
+  "kind": "monument",
+  "country": "Egypt",
+  "aliases": [
+   "Great Pyramid",
+   "Great Pyramid of Giza",
+   "Giza"
+  ]
+ },
+ {
+  "name": "Great Wall of China",
+  "lat": 40.4319,
+  "lon": 116.5704,
+  "kind": "monument",
+  "country": "China",
+  "aliases": [
+   "Great Wall"
+  ]
+ },
+ {
+  "name": "Taj Mahal",
+  "lat": 27.1751,
+  "lon": 78.0421,
+  "kind": "monument",
+  "country": "India",
+  "aliases": []
+ },
+ {
+  "name": "Machu Picchu",
+  "lat": -13.1631,
+  "lon": -72.545,
+  "kind": "ruins",
+  "country": "Peru",
+  "aliases": []
+ },
+ {
+  "name": "Midway Atoll",
+  "lat": 28.2072,
+  "lon": -177.3735,
+  "kind": "island",
+  "country": "United States of America",
+  "aliases": [
+   "Midway",
+   "Midway Island"
+  ]
+ },
+ {
+  "name": "Iwo Jima",
+  "lat": 24.7804,
+  "lon": 141.3227,
+  "kind": "island",
+  "country": "Japan",
+  "aliases": []
+ },
+ {
+  "name": "Okinawa",
+  "lat": 26.3344,
+  "lon": 127.8,
+  "kind": "island",
+  "country": "Japan",
+  "aliases": []
+ },
+ {
+  "name": "Hiroshima",
+  "lat": 34.3853,
+  "lon": 132.4553,
+  "kind": "city",
+  "country": "Japan",
+  "aliases": []
+ },
+ {
+  "name": "Nagasaki",
+  "lat": 32.7503,
+  "lon": 129.8777,
+  "kind": "city",
+  "country": "Japan",
+  "aliases": []
+ },
+ {
+  "name": "Bikini Atoll",
+  "lat": 11.5833,
+  "lon": 165.3833,
+  "kind": "island",
+  "country": "Marshall Islands",
+  "aliases": []
+ },
+ {
+  "name": "South America",
+  "lat": -15.0,
+  "lon": -60.0,
+  "kind": "continent",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "North America",
+  "lat": 45.0,
+  "lon": -100.0,
+  "kind": "continent",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Central America",
+  "lat": 13.0,
+  "lon": -86.0,
+  "kind": "region",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Latin America",
+  "lat": -5.0,
+  "lon": -65.0,
+  "kind": "region",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Europe",
+  "lat": 50.0,
+  "lon": 15.0,
+  "kind": "continent",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Africa",
+  "lat": 5.0,
+  "lon": 20.0,
+  "kind": "continent",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Asia",
+  "lat": 40.0,
+  "lon": 90.0,
+  "kind": "continent",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Middle East",
+  "lat": 29.0,
+  "lon": 45.0,
+  "kind": "region",
+  "country": "",
+  "aliases": []
+ },
+ {
+  "name": "Titanic wreck",
+  "lat": 41.7325,
+  "lon": -49.9469,
+  "kind": "site",
+  "country": "",
+  "aliases": [
+   "wreck of the Titanic"
+  ]
+ }
+]

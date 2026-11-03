@@ -1,0 +1,23 @@
+{
+  "total": 2,
+  "totalHits": 2,
+  "hits": [
+    {
+      "id": 195893,
+      "pageURL": "https://pixabay.com/photos/ship-canal-lock-water-195893/",
+      "type": "photo",
+      "tags": "ship, canal, lock",
+      "previewURL": "https://cdn.pixabay.com/photo/2013/10/15/ship-195893_150.jpg",
+      "largeImageURL": "https://pixabay.com/get/ship-195893_1280.jpg",
+      "imageWidth": 4000,
+      "imageHeight": 2250,
+      "user": "Hans",
+      "user_id": 2
+    },
+    {
+      "id": 2,
+      "pageURL": "https://pixabay.com/photos/empty-2/",
+      "tags": ""
+    }
+  ]
+}

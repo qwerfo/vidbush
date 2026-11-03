@@ -1,0 +1,747 @@
+{
+  "topic": "The Panama Canal",
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "The Panama Canal is an artificial waterway about 51 miles (82 km) long that crosses the Isthmus of Panama and links the Atlantic and Pacific Oceans.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal",
+      "source_title": "Panama Canal",
+      "confidence": 0.95,
+      "date": "",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 51,
+          "unit": "miles",
+          "label": "length of the canal"
+        }
+      ]
+    },
+    {
+      "id": "f02",
+      "claim": "Spain's King Charles V ordered a survey for a route across the Isthmus of Panama in 1534.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.8,
+      "date": "1534",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f03",
+      "claim": "The Panama Railroad, completed across the isthmus in 1855, was the first railroad to link the Atlantic and Pacific.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_Railway",
+      "source_title": "Panama Canal Railway",
+      "confidence": 0.85,
+      "date": "1855",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f04",
+      "claim": "France began building a canal across Panama in 1881 under Ferdinand de Lesseps, who had built the Suez Canal.",
+      "source_url": "https://en.wikipedia.org/wiki/Ferdinand_de_Lesseps",
+      "source_title": "Ferdinand de Lesseps",
+      "confidence": 0.95,
+      "date": "1881",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f05",
+      "claim": "De Lesseps planned a sea level canal like Suez, without locks.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.9,
+      "date": "1880s",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f06",
+      "claim": "Yellow fever and malaria, spread by mosquitoes, killed huge numbers of workers during the French effort.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.9,
+      "date": "1881 to 1889",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f07",
+      "claim": "An estimated 22,000 workers died during the French construction era, most of them from disease (an estimate; records are incomplete).",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.75,
+      "date": "1881 to 1889",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 22000,
+          "unit": "deaths",
+          "label": "estimated deaths in the French era (approximate)"
+        }
+      ]
+    },
+    {
+      "id": "f08",
+      "claim": "The French canal company went bankrupt in 1889, wiping out the savings of many investors and setting off a major political scandal in France.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.9,
+      "date": "1889",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f09",
+      "claim": "In 1903 the Colombian Senate refused to ratify the Hay-Herran Treaty, which would have let the United States build the canal.",
+      "source_url": "https://en.wikipedia.org/wiki/Hay%E2%80%93Herr%C3%A1n_Treaty",
+      "source_title": "Hay-Herran Treaty",
+      "confidence": 0.9,
+      "date": "1903",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f10",
+      "claim": "Panama declared its independence from Colombia on November 3, 1903, with the backing of the United States.",
+      "source_url": "https://en.wikipedia.org/wiki/Separation_of_Panama_from_Colombia",
+      "source_title": "Separation of Panama from Colombia",
+      "confidence": 0.95,
+      "date": "November 3, 1903",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f11",
+      "claim": "US warships, including the USS Nashville, helped prevent Colombian troops from putting down the Panamanian independence movement.",
+      "source_url": "https://en.wikipedia.org/wiki/Separation_of_Panama_from_Colombia",
+      "source_title": "Separation of Panama from Colombia",
+      "confidence": 0.85,
+      "date": "November 1903",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f12",
+      "claim": "The Hay-Bunau-Varilla Treaty, signed on November 18, 1903, gave the United States control of a Canal Zone about 10 miles wide across the isthmus.",
+      "source_url": "https://en.wikipedia.org/wiki/Hay%E2%80%93Bunau-Varilla_Treaty",
+      "source_title": "Hay-Bunau-Varilla Treaty",
+      "confidence": 0.9,
+      "date": "November 18, 1903",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 10,
+          "unit": "miles",
+          "label": "width of the Canal Zone"
+        }
+      ]
+    },
+    {
+      "id": "f13",
+      "claim": "Under the treaty the United States paid Panama 10 million dollars and agreed to an annual payment of 250,000 dollars.",
+      "source_url": "https://en.wikipedia.org/wiki/Hay%E2%80%93Bunau-Varilla_Treaty",
+      "source_title": "Hay-Bunau-Varilla Treaty",
+      "confidence": 0.85,
+      "date": "1903",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 10000000,
+          "unit": "USD",
+          "label": "payment to Panama"
+        },
+        {
+          "value": 250000,
+          "unit": "USD",
+          "label": "annual payment"
+        }
+      ]
+    },
+    {
+      "id": "f14",
+      "claim": "Philippe Bunau-Varilla, a French engineer who had worked on the French canal, signed the treaty on behalf of Panama.",
+      "source_url": "https://en.wikipedia.org/wiki/Hay%E2%80%93Bunau-Varilla_Treaty",
+      "source_title": "Hay-Bunau-Varilla Treaty",
+      "confidence": 0.9,
+      "date": "1903",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f15",
+      "claim": "The United States bought the French company's equipment, excavations and rights for 40 million dollars.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.9,
+      "date": "1904",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 40000000,
+          "unit": "USD",
+          "label": "paid to the French company"
+        }
+      ]
+    },
+    {
+      "id": "f16",
+      "claim": "The United States formally took over the canal works on May 4, 1904.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.9,
+      "date": "May 4, 1904",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f17",
+      "claim": "Dr. William C. Gorgas led a sanitation campaign that drained and oiled standing water, screened buildings and fumigated houses to kill mosquitoes.",
+      "source_url": "https://en.wikipedia.org/wiki/William_C._Gorgas",
+      "source_title": "William C. Gorgas",
+      "confidence": 0.9,
+      "date": "1904 to 1906",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f18",
+      "claim": "Yellow fever was eliminated from the Canal Zone by 1906, and malaria cases fell sharply.",
+      "source_url": "https://en.wikipedia.org/wiki/William_C._Gorgas",
+      "source_title": "William C. Gorgas",
+      "confidence": 0.85,
+      "date": "1906",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f19",
+      "claim": "Walter Reed's commission in Cuba confirmed in 1900 that mosquitoes transmit yellow fever, as Carlos Finlay had proposed.",
+      "source_url": "https://en.wikipedia.org/wiki/Yellow_fever",
+      "source_title": "Yellow fever",
+      "confidence": 0.85,
+      "date": "1900",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f20",
+      "claim": "Chief engineer John F. Stevens, who served from 1905 to 1907, rebuilt the Panama Railroad, built housing and argued for a canal with locks.",
+      "source_url": "https://en.wikipedia.org/wiki/John_Frank_Stevens",
+      "source_title": "John Frank Stevens",
+      "confidence": 0.9,
+      "date": "1905 to 1907",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f21",
+      "claim": "In 1906 the United States settled on a lock canal instead of a sea level canal.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.85,
+      "date": "1906",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f22",
+      "claim": "President Theodore Roosevelt visited the canal works in November 1906, the first trip abroad by a sitting US president.",
+      "source_url": "https://en.wikipedia.org/wiki/Theodore_Roosevelt",
+      "source_title": "Theodore Roosevelt",
+      "confidence": 0.9,
+      "date": "November 1906",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f23",
+      "claim": "Army engineer George Washington Goethals became chief engineer in 1907 and led the project to completion.",
+      "source_url": "https://en.wikipedia.org/wiki/George_Washington_Goethals",
+      "source_title": "George Washington Goethals",
+      "confidence": 0.95,
+      "date": "1907 to 1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f24",
+      "claim": "Stevens is often quoted as saying there were three diseases in Panama: yellow fever, malaria and cold feet (attribution traditional).",
+      "source_url": "https://en.wikipedia.org/wiki/John_Frank_Stevens",
+      "source_title": "John Frank Stevens",
+      "confidence": 0.6,
+      "date": "1905",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f25",
+      "claim": "The Culebra Cut, later renamed the Gaillard Cut, carries the canal through the Continental Divide for nearly 8 miles.",
+      "source_url": "https://en.wikipedia.org/wiki/Culebra_Cut",
+      "source_title": "Culebra Cut",
+      "confidence": 0.9,
+      "date": "1907 to 1913",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 8,
+          "unit": "miles",
+          "label": "length of the Culebra Cut (approximate)"
+        }
+      ]
+    },
+    {
+      "id": "f26",
+      "claim": "Repeated landslides poured millions of cubic yards of earth back into the Culebra Cut during construction.",
+      "source_url": "https://en.wikipedia.org/wiki/Culebra_Cut",
+      "source_title": "Culebra Cut",
+      "confidence": 0.85,
+      "date": "1907 to 1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f27",
+      "claim": "The cut was renamed for David du Bose Gaillard, the engineer who led its excavation and died in 1913.",
+      "source_url": "https://en.wikipedia.org/wiki/Culebra_Cut",
+      "source_title": "Culebra Cut",
+      "confidence": 0.9,
+      "date": "1913",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f28",
+      "claim": "The Gatun Dam on the Chagres River created Gatun Lake, at the time the largest artificial lake in the world.",
+      "source_url": "https://en.wikipedia.org/wiki/Gatun_Lake",
+      "source_title": "Gatun Lake",
+      "confidence": 0.9,
+      "date": "1913",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f29",
+      "claim": "Gatun Lake lies about 85 feet (26 m) above sea level, and the locks lift ships up to it and back down.",
+      "source_url": "https://en.wikipedia.org/wiki/Gatun_Lake",
+      "source_title": "Gatun Lake",
+      "confidence": 0.9,
+      "date": "1914",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 85,
+          "unit": "feet",
+          "label": "height of Gatun Lake above sea level"
+        }
+      ]
+    },
+    {
+      "id": "f30",
+      "claim": "The original lock chambers are 110 feet wide and 1,000 feet long.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_locks",
+      "source_title": "Panama Canal locks",
+      "confidence": 0.95,
+      "date": "1914",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 110,
+          "unit": "feet",
+          "label": "lock chamber width"
+        },
+        {
+          "value": 1000,
+          "unit": "feet",
+          "label": "lock chamber length"
+        }
+      ]
+    },
+    {
+      "id": "f31",
+      "claim": "The canal has three sets of original locks: Gatun on the Atlantic side, and Pedro Miguel and Miraflores on the Pacific side.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_locks",
+      "source_title": "Panama Canal locks",
+      "confidence": 0.95,
+      "date": "1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f32",
+      "claim": "The locks are filled and emptied by gravity, using water from Gatun Lake, with no pumps.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_locks",
+      "source_title": "Panama Canal locks",
+      "confidence": 0.9,
+      "date": "1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f33",
+      "claim": "Electric locomotives, nicknamed mules, run on tracks beside the locks to keep ships centered.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_locks",
+      "source_title": "Panama Canal locks",
+      "confidence": 0.9,
+      "date": "1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f34",
+      "claim": "Tens of thousands of laborers came from the Caribbean, especially Barbados, to work on the canal.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.85,
+      "date": "1904 to 1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f35",
+      "claim": "Canal workers were paid under a segregated system: the gold roll mostly for white Americans and the silver roll mostly for Caribbean and other non-white workers.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_Zone",
+      "source_title": "Panama Canal Zone",
+      "confidence": 0.85,
+      "date": "1904 to 1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f36",
+      "claim": "About 5,600 workers died during the American construction era, according to US records (approximate).",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.8,
+      "date": "1904 to 1914",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 5600,
+          "unit": "deaths",
+          "label": "deaths in the US era (approximate)"
+        }
+      ]
+    },
+    {
+      "id": "f37",
+      "claim": "The American construction cost about 375 million dollars, including the payments to France and Panama.",
+      "source_url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "source_title": "History of the Panama Canal",
+      "confidence": 0.85,
+      "date": "1904 to 1914",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 375000000,
+          "unit": "USD",
+          "label": "US construction cost (approximate)"
+        }
+      ]
+    },
+    {
+      "id": "f38",
+      "claim": "The canal opened on August 15, 1914, when the steamship SS Ancon made the first official transit.",
+      "source_url": "https://en.wikipedia.org/wiki/SS_Ancon_(1902)",
+      "source_title": "SS Ancon (1902)",
+      "confidence": 0.95,
+      "date": "August 15, 1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f39",
+      "claim": "The opening drew little attention because World War I had broken out in Europe weeks earlier.",
+      "source_url": "https://en.wikipedia.org/wiki/World_War_I",
+      "source_title": "World War I",
+      "confidence": 0.85,
+      "date": "August 1914",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f40",
+      "claim": "The canal shortened the sea voyage from New York to San Francisco from about 13,000 miles around Cape Horn to about 5,200 miles (commonly cited approximate figures; published figures vary).",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal",
+      "source_title": "Panama Canal",
+      "confidence": 0.7,
+      "date": "1914",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 13000,
+          "unit": "miles",
+          "label": "New York to San Francisco around Cape Horn (approximate)"
+        },
+        {
+          "value": 5200,
+          "unit": "miles",
+          "label": "New York to San Francisco through the canal (approximate)"
+        }
+      ]
+    },
+    {
+      "id": "f41",
+      "claim": "The Torrijos-Carter Treaties, signed on September 7, 1977, by President Jimmy Carter and General Omar Torrijos, set the canal's return to Panama.",
+      "source_url": "https://en.wikipedia.org/wiki/Torrijos%E2%80%93Carter_Treaties",
+      "source_title": "Torrijos-Carter Treaties",
+      "confidence": 0.95,
+      "date": "September 7, 1977",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f42",
+      "claim": "The Panama Canal Zone was dissolved on October 1, 1979.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_Zone",
+      "source_title": "Panama Canal Zone",
+      "confidence": 0.9,
+      "date": "October 1, 1979",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f43",
+      "claim": "Panama took full control of the canal at noon on December 31, 1999.",
+      "source_url": "https://en.wikipedia.org/wiki/Torrijos%E2%80%93Carter_Treaties",
+      "source_title": "Torrijos-Carter Treaties",
+      "confidence": 0.95,
+      "date": "December 31, 1999",
+      "status": "unverified",
+      "numbers": []
+    },
+    {
+      "id": "f44",
+      "claim": "An expansion with a third, larger set of locks opened on June 26, 2016, at a cost of about 5.25 billion dollars.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_expansion_project",
+      "source_title": "Panama Canal expansion project",
+      "confidence": 0.85,
+      "date": "June 26, 2016",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 5250000000,
+          "unit": "USD",
+          "label": "expansion cost (approximate)"
+        }
+      ]
+    },
+    {
+      "id": "f45",
+      "claim": "The new locks are about 180 feet (55 m) wide and 1,400 feet (427 m) long.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal_expansion_project",
+      "source_title": "Panama Canal expansion project",
+      "confidence": 0.9,
+      "date": "2016",
+      "status": "unverified",
+      "numbers": [
+        {
+          "value": 180,
+          "unit": "feet",
+          "label": "new lock width"
+        },
+        {
+          "value": 1400,
+          "unit": "feet",
+          "label": "new lock length"
+        }
+      ]
+    },
+    {
+      "id": "f46",
+      "claim": "In 1994 the American Society of Civil Engineers named the Panama Canal one of the seven wonders of the modern world.",
+      "source_url": "https://en.wikipedia.org/wiki/Panama_Canal",
+      "source_title": "Panama Canal",
+      "confidence": 0.85,
+      "date": "1994",
+      "status": "unverified",
+      "numbers": []
+    }
+  ],
+  "anchors": [
+    {
+      "kind": "place",
+      "name": "Colon",
+      "detail": "Atlantic entrance of the canal",
+      "lat": 9.359,
+      "lon": -79.901,
+      "fact_ids": [
+        "f01",
+        "f31"
+      ]
+    },
+    {
+      "kind": "place",
+      "name": "Panama City",
+      "detail": "Pacific entrance of the canal",
+      "lat": 8.983,
+      "lon": -79.517,
+      "fact_ids": [
+        "f01",
+        "f31"
+      ]
+    },
+    {
+      "kind": "place",
+      "name": "Culebra Cut",
+      "detail": "cut through the Continental Divide",
+      "lat": 9.05,
+      "lon": -79.65,
+      "fact_ids": [
+        "f25",
+        "f26",
+        "f27"
+      ]
+    },
+    {
+      "kind": "place",
+      "name": "Gatun Lake",
+      "detail": "artificial lake formed by the Gatun Dam",
+      "lat": 9.2,
+      "lon": -79.9,
+      "fact_ids": [
+        "f28",
+        "f29"
+      ]
+    },
+    {
+      "kind": "place",
+      "name": "Cape Horn",
+      "detail": "the long way around before the canal",
+      "lat": -55.98,
+      "lon": -67.27,
+      "fact_ids": [
+        "f40"
+      ]
+    },
+    {
+      "kind": "person",
+      "name": "Ferdinand de Lesseps",
+      "detail": "led the French attempt",
+      "fact_ids": [
+        "f04",
+        "f05"
+      ]
+    },
+    {
+      "kind": "person",
+      "name": "William C. Gorgas",
+      "detail": "chief sanitary officer",
+      "fact_ids": [
+        "f17",
+        "f18"
+      ]
+    },
+    {
+      "kind": "person",
+      "name": "George Washington Goethals",
+      "detail": "chief engineer 1907 to 1914",
+      "fact_ids": [
+        "f23"
+      ]
+    },
+    {
+      "kind": "object",
+      "name": "Gatun Locks",
+      "detail": "lock chambers 110 by 1,000 feet",
+      "lat": 9.272,
+      "lon": -79.921,
+      "fact_ids": [
+        "f30",
+        "f31"
+      ]
+    },
+    {
+      "kind": "event",
+      "name": "SS Ancon first transit",
+      "detail": "August 15, 1914",
+      "fact_ids": [
+        "f38"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://en.wikipedia.org/wiki/Panama_Canal",
+      "title": "Panama Canal"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/History_of_the_Panama_Canal",
+      "title": "History of the Panama Canal"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Panama_Canal_Railway",
+      "title": "Panama Canal Railway"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Ferdinand_de_Lesseps",
+      "title": "Ferdinand de Lesseps"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Hay%E2%80%93Herr%C3%A1n_Treaty",
+      "title": "Hay-Herran Treaty"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Separation_of_Panama_from_Colombia",
+      "title": "Separation of Panama from Colombia"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Hay%E2%80%93Bunau-Varilla_Treaty",
+      "title": "Hay-Bunau-Varilla Treaty"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/William_C._Gorgas",
+      "title": "William C. Gorgas"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Yellow_fever",
+      "title": "Yellow fever"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/John_Frank_Stevens",
+      "title": "John Frank Stevens"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Theodore_Roosevelt",
+      "title": "Theodore Roosevelt"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/George_Washington_Goethals",
+      "title": "George Washington Goethals"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Culebra_Cut",
+      "title": "Culebra Cut"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Gatun_Lake",
+      "title": "Gatun Lake"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Panama_Canal_locks",
+      "title": "Panama Canal locks"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Panama_Canal_Zone",
+      "title": "Panama Canal Zone"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/SS_Ancon_(1902)",
+      "title": "SS Ancon (1902)"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/World_War_I",
+      "title": "World War I"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Torrijos%E2%80%93Carter_Treaties",
+      "title": "Torrijos-Carter Treaties"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Panama_Canal_expansion_project",
+      "title": "Panama Canal expansion project"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "pagination": {
+    "current": 1,
+    "total": 1
+  },
+  "results": [
+    {
+      "id": "http://www.loc.gov/item/2016800001/",
+      "url": "https://www.loc.gov/item/2016800001/",
+      "title": "Panama Canal, Gatun Locks under construction",
+      "contributor": [
+        "Underwood & Underwood"
+      ],
+      "date": "1912",
+      "rights": "No known restrictions on publication.",
+      "image_url": [
+        "https://tile.loc.gov/storage-services/service/pnp/cph/3a00000/3a00001_150px.jpg#h=150&w=196",
+        "https://tile.loc.gov/storage-services/service/pnp/cph/3a00000/3a00001v.jpg#h=1024&w=1340"
+      ],
+      "original_format": [
+        "photo, print, drawing"
+      ]
+    },
+    {
+      "id": "http://www.loc.gov/item/2016800002/",
+      "url": "https://www.loc.gov/item/2016800002/",
+      "title": "Steam shovel in Culebra Cut",
+      "contributor": [],
+      "date": "1910",
+      "rights": "Rights status not evaluated. For general information see Copyright and Other Restrictions.",
+      "image_url": [
+        "https://tile.loc.gov/storage-services/service/pnp/cph/3a00000/3a00002v.jpg#h=800&w=1000"
+      ]
+    },
+    {
+      "id": "http://www.loc.gov/item/nothumb/",
+      "url": "https://www.loc.gov/item/nothumb/",
+      "title": "Item without images",
+      "image_url": []
+    }
+  ]
+}

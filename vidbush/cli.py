@@ -128,6 +128,13 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> int:
     return 0 if report.get("ok") else 1
 
 
+def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
+    from .acceptance import check_project
+    res = check_project(settings, args.project, min_minutes=args.min_minutes)
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vidbush", description="Long-form faceless video production")
     p.add_argument("--offline", action="store_true", help="never use the network; mock every seat")
@@ -169,11 +176,14 @@ def build_parser() -> argparse.ArgumentParser:
     rv.add_argument("--dry-run", action="store_true")
     rv.add_argument("--quiet", action="store_true")
     sub.add_parser("doctor", help="check ffmpeg, yt-dlp, fonts, seats")
+    ck = sub.add_parser("check", help="verify a finished project against the acceptance checks")
+    ck.add_argument("project")
+    ck.add_argument("--min-minutes", type=float, default=3.0)
     return p
 
 
 COMMANDS = {"demo": cmd_demo, "run": cmd_run, "resume": cmd_resume, "serve": cmd_serve,
-            "learn-style": cmd_learn, "swap": cmd_swap, "revise": cmd_revise, "doctor": cmd_doctor}
+            "learn-style": cmd_learn, "swap": cmd_swap, "revise": cmd_revise, "doctor": cmd_doctor, "check": cmd_check}
 
 
 def main(argv: Optional[list[str]] = None) -> int:

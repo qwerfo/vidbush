@@ -1,0 +1,75 @@
+{
+  "page": 1,
+  "per_page": 5,
+  "total_results": 2,
+  "url": "https://www.pexels.com/search/videos/cargo%20ship/",
+  "videos": [
+    {
+      "id": 857195,
+      "width": 3840,
+      "height": 2160,
+      "duration": 18,
+      "url": "https://www.pexels.com/video/cargo-ship-in-a-canal-lock-857195/",
+      "image": "https://images.pexels.com/videos/857195/free-video-857195.jpg",
+      "user": {
+        "id": 1,
+        "name": "Kelly Lacy",
+        "url": "https://www.pexels.com/@kelly"
+      },
+      "video_files": [
+        {
+          "id": 1,
+          "quality": "sd",
+          "file_type": "video/mp4",
+          "width": 640,
+          "height": 360,
+          "link": "https://videos.pexels.com/video-files/857195/857195-sd_640_360_25fps.mp4"
+        },
+        {
+          "id": 2,
+          "quality": "hd",
+          "file_type": "video/mp4",
+          "width": 1280,
+          "height": 720,
+          "link": "https://videos.pexels.com/video-files/857195/857195-hd_1280_720_25fps.mp4"
+        },
+        {
+          "id": 3,
+          "quality": "hd",
+          "file_type": "video/mp4",
+          "width": 1920,
+          "height": 1080,
+          "link": "https://videos.pexels.com/video-files/857195/857195-hd_1920_1080_25fps.mp4"
+        },
+        {
+          "id": 4,
+          "quality": "uhd",
+          "file_type": "video/mp4",
+          "width": 3840,
+          "height": 2160,
+          "link": "https://videos.pexels.com/video-files/857195/857195-uhd_3840_2160_25fps.mp4"
+        }
+      ]
+    },
+    {
+      "id": 999,
+      "width": 640,
+      "height": 360,
+      "duration": 9,
+      "url": "https://www.pexels.com/video/low-res-999/",
+      "user": {
+        "name": "Someone"
+      },
+      "video_files": [
+        {
+          "id": 9,
+          "quality": "sd",
+          "file_type": "video/mp4",
+          "width": 640,
+          "height": 360,
+          "link": "https://videos.pexels.com/video-files/999/sd.mp4"
+        }
+      ]
+    }
+  ]
+}

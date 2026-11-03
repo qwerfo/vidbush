@@ -1,0 +1,45 @@
+{
+  "collection": {
+    "version": "1.0",
+    "href": "https://images-api.nasa.gov/search?q=panama%20canal",
+    "items": [
+      {
+        "href": "https://images-assets.nasa.gov/image/iss040e081011/collection.json",
+        "data": [
+          {
+            "nasa_id": "iss040e081011",
+            "title": "Panama Canal from the International Space Station",
+            "center": "JSC",
+            "media_type": "image",
+            "date_created": "2014-07-28T00:00:00Z",
+            "description": "The Panama Canal seen at night.",
+            "photographer": "",
+            "keywords": [
+              "Panama",
+              "ISS"
+            ]
+          }
+        ],
+        "links": [
+          {
+            "href": "https://images-assets.nasa.gov/image/iss040e081011/iss040e081011~thumb.jpg",
+            "rel": "preview",
+            "render": "image"
+          }
+        ]
+      },
+      {
+        "href": "https://images-assets.nasa.gov/video/panama_flyover/collection.json",
+        "data": [
+          {
+            "nasa_id": "panama_flyover",
+            "title": "Central America flyover",
+            "center": "GSFC",
+            "media_type": "video",
+            "secondary_creator": "NASA Goddard"
+          }
+        ]
+      }
+    ]
+  }
+}

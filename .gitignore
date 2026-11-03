@@ -6,7 +6,6 @@ data/
 output/
 !output/.gitkeep
 ui/node_modules/
-ui/dist/
 renderer/node_modules/
 renderer/out/
 *.egg-info/

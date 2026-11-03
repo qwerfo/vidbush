@@ -58,18 +58,25 @@ def image_stats(path: str | Path) -> dict[str, float]:
 
 
 def mock_vision_score(images: list[str], intent: str) -> CallResult:
-    """Deterministic 0..100 score from image statistics plus a stable hash jitter."""
+    """Deterministic 0..100 score from image statistics plus a small stable hash jitter.
+
+    quality = exposure (mean luminance near 0.40) blended with large scale tonal structure (std of a
+    16x9 thumbnail), so a composed picture or a graded gradient placeholder scores about 72 to 92 while
+    flat, noisy or badly exposed frames land in the mid 60s and fail a 70 threshold. The bundled sample
+    library scores mostly 65 to 92 with roughly one in ten below 70.
+    """
     if not images:
         return CallResult(value={"score": 0, "reason": "no keyframes", "rejects": []}, provider=MOCK_SPEC, mock=True)
-    scores = []
+    qualities = []
     for p in images:
         st = image_stats(p)
-        exposure = 1.0 - min(1.0, abs(st["brightness"] - 0.45) * 2.2)
-        base = 52 + 18 * exposure + 40 * min(st["contrast"], 0.3) + 25 * min(st["colourful"], 0.4) + 60 * min(st["edges"], 0.15)
-        scores.append(base)
+        exposure = 1.0 - min(1.0, abs(st["brightness"] - 0.40) * 2.0)
+        thumb = Image.open(p).convert("L").resize((16, 9), Image.BILINEAR)
+        structure = min(float(np.asarray(thumb, dtype=np.float32).std()) / 255.0, 0.18) / 0.18
+        qualities.append(0.45 * exposure + 0.55 * structure)
     h = int(hashlib.md5((intent + "|" + "|".join(Path(p).name for p in images)).encode()).hexdigest()[:6], 16)
-    score = max(0.0, min(99.0, sum(scores) / len(scores) + (h % 17) - 6))
-    reason = f"mock score from image statistics (exposure, contrast, detail) for: {intent[:60]}"
+    score = max(0.0, min(99.0, 61.0 + 28.0 * sum(qualities) / len(qualities) + (h % 7) - 3))
+    reason = f"mock score from image statistics (exposure, tonal structure) for: {intent[:60]}"
     return CallResult(value={"score": round(score, 1), "reason": reason, "rejects": []}, provider=MOCK_SPEC, mock=True)
 
 

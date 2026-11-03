@@ -1,0 +1,47 @@
+{
+  "batchcomplete": "",
+  "query": {
+    "pages": {
+      "70001": {
+        "pageid": 70001,
+        "ns": 6,
+        "title": "File:Panama Canal ship transit 1915.webm",
+        "index": 1,
+        "imageinfo": [
+          {
+            "url": "https://upload.wikimedia.org/wikipedia/commons/1/12/Panama_Canal_ship_transit_1915.webm",
+            "descriptionurl": "https://commons.wikimedia.org/wiki/File:Panama_Canal_ship_transit_1915.webm",
+            "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Panama_Canal_ship_transit_1915.webm/1920px--Panama_Canal_ship_transit_1915.webm.jpg",
+            "width": 1440,
+            "height": 1080,
+            "mime": "video/webm",
+            "duration": 94.5,
+            "extmetadata": {
+              "LicenseShortName": {
+                "value": "Public domain"
+              },
+              "Artist": {
+                "value": "Unknown author"
+              }
+            }
+          }
+        ]
+      },
+      "70002": {
+        "pageid": 70002,
+        "ns": 6,
+        "title": "File:Locks diagram.png",
+        "index": 2,
+        "imageinfo": [
+          {
+            "url": "https://upload.wikimedia.org/x.png",
+            "width": 500,
+            "height": 500,
+            "mime": "image/png",
+            "extmetadata": {}
+          }
+        ]
+      }
+    }
+  }
+}

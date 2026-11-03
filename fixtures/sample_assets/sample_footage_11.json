@@ -1,0 +1,20 @@
+{
+  "title": "Survey map contours",
+  "tags": [
+    "map",
+    "survey",
+    "terrain",
+    "isthmus",
+    "history",
+    "archival",
+    "route"
+  ],
+  "licence": "CC0 (Vidbush generated fixture)",
+  "author": "Vidbush fixtures",
+  "source_url": "",
+  "era": "1880s",
+  "description": "Topographic contour lines drift slowly across a parchment surface.",
+  "duration": 12,
+  "width": 1920,
+  "height": 1080
+}

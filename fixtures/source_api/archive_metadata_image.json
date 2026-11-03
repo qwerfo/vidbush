@@ -1,0 +1,31 @@
+{
+  "metadata": {
+    "identifier": "gatun_locks_photo",
+    "title": "Gatun Locks",
+    "creator": "US Army Signal Corps",
+    "possible-copyright-status": "NOT_IN_COPYRIGHT"
+  },
+  "files": [
+    {
+      "name": "gatun_locks_photo_thumb.jpg",
+      "format": "JPEG Thumb",
+      "size": "9000",
+      "width": "160",
+      "height": "120"
+    },
+    {
+      "name": "gatun_locks_photo.jpg",
+      "format": "JPEG",
+      "size": "3100000",
+      "width": "3200",
+      "height": "2400"
+    },
+    {
+      "name": "gatun_locks_small.jpg",
+      "format": "JPEG",
+      "size": "300000",
+      "width": "800",
+      "height": "600"
+    }
+  ]
+}
