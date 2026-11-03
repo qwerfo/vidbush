@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "CostEntry": {
+      "properties": {
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "stage": {
+          "default": "",
+          "title": "Stage",
+          "type": "string"
+        },
+        "units": {
+          "default": 0.0,
+          "title": "Units",
+          "type": "number"
+        },
+        "unit_kind": {
+          "default": "",
+          "title": "Unit Kind",
+          "type": "string"
+        },
+        "cost_usd": {
+          "default": 0.0,
+          "title": "Cost Usd",
+          "type": "number"
+        },
+        "mock": {
+          "default": false,
+          "title": "Mock",
+          "type": "boolean"
+        },
+        "ok": {
+          "default": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "latency_s": {
+          "default": 0.0,
+          "title": "Latency S",
+          "type": "number"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "provider"
+      ],
+      "title": "CostEntry",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/CostEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    },
+    "total_usd": {
+      "default": 0.0,
+      "title": "Total Usd",
+      "type": "number"
+    },
+    "per_minute_usd": {
+      "default": 0.0,
+      "title": "Per Minute Usd",
+      "type": "number"
+    },
+    "mock_calls": {
+      "default": 0,
+      "title": "Mock Calls",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "title": "CostReport",
+  "type": "object"
+}

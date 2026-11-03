@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "QAShot": {
+      "properties": {
+        "shot_id": {
+          "title": "Shot Id",
+          "type": "string"
+        },
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Score"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "attempts": {
+          "default": 0,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "post_render_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Post Render Score"
+        }
+      },
+      "required": [
+        "shot_id",
+        "index",
+        "start",
+        "end",
+        "type",
+        "score"
+      ],
+      "title": "QAShot",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "threshold": {
+      "title": "Threshold",
+      "type": "number"
+    },
+    "shots": {
+      "items": {
+        "$ref": "#/$defs/QAShot"
+      },
+      "title": "Shots",
+      "type": "array"
+    },
+    "pct_above_threshold": {
+      "title": "Pct Above Threshold",
+      "type": "number"
+    },
+    "pct_no_match_accepted": {
+      "title": "Pct No Match Accepted",
+      "type": "number"
+    },
+    "mix_target": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Mix Target",
+      "type": "object"
+    },
+    "mix_achieved": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Mix Achieved",
+      "type": "object"
+    },
+    "pacing": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "type": "number"
+        },
+        "type": "object"
+      },
+      "title": "Pacing",
+      "type": "object"
+    },
+    "caption_coverage": {
+      "title": "Caption Coverage",
+      "type": "number"
+    },
+    "caption_word_match": {
+      "title": "Caption Word Match",
+      "type": "number"
+    },
+    "attribution_count": {
+      "title": "Attribution Count",
+      "type": "integer"
+    },
+    "mock_used": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Mock Used",
+      "type": "array"
+    },
+    "nc_nd_assets": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Nc Nd Assets",
+      "type": "array"
+    },
+    "notes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "threshold",
+    "shots",
+    "pct_above_threshold",
+    "pct_no_match_accepted",
+    "mix_target",
+    "mix_achieved",
+    "pacing",
+    "caption_coverage",
+    "caption_word_match",
+    "attribution_count"
+  ],
+  "title": "QAReport",
+  "type": "object"
+}

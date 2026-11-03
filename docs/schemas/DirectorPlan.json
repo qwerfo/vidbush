@@ -1,0 +1,188 @@
+{
+  "$defs": {
+    "MotionKind": {
+      "enum": [
+        "map",
+        "bar_chart",
+        "line_chart",
+        "number_card",
+        "title_card",
+        "lower_third",
+        "callout",
+        "highlight_box",
+        "text_overlay",
+        "arrow",
+        "recap_grid"
+      ],
+      "title": "MotionKind",
+      "type": "string"
+    },
+    "MotionSpec": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/MotionKind"
+        },
+        "duration": {
+          "title": "Duration",
+          "type": "number"
+        },
+        "width": {
+          "default": 1920,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "default": 1080,
+          "title": "Height",
+          "type": "integer"
+        },
+        "fps": {
+          "default": 30,
+          "title": "Fps",
+          "type": "integer"
+        },
+        "background": {
+          "default": "solid",
+          "enum": [
+            "transparent",
+            "solid",
+            "footage_behind"
+          ],
+          "title": "Background",
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleTokens"
+        },
+        "source_note": {
+          "default": "",
+          "title": "Source Note",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "duration"
+      ],
+      "title": "MotionSpec",
+      "type": "object"
+    },
+    "StyleTokens": {
+      "properties": {
+        "font": {
+          "default": "Inter",
+          "title": "Font",
+          "type": "string"
+        },
+        "palette": {
+          "default": "documentary_warm",
+          "title": "Palette",
+          "type": "string"
+        }
+      },
+      "title": "StyleTokens",
+      "type": "object"
+    },
+    "VisualIdea": {
+      "description": "Director output per beat, before slot assignment.\n\nfamily picks which slot types it can fill: footage -> footage/footage_overlay,\nstill -> image/image_overlay/ai_image, motion -> motion_graphic.",
+      "properties": {
+        "beat_id": {
+          "title": "Beat Id",
+          "type": "string"
+        },
+        "family": {
+          "enum": [
+            "footage",
+            "still",
+            "motion"
+          ],
+          "title": "Family",
+          "type": "string"
+        },
+        "intent": {
+          "title": "Intent",
+          "type": "string"
+        },
+        "must_show": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Must Show",
+          "type": "array"
+        },
+        "must_avoid": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Must Avoid",
+          "type": "array"
+        },
+        "queries": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Queries",
+          "type": "array"
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MotionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "overlay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MotionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "priority": {
+          "default": 1.0,
+          "title": "Priority",
+          "type": "number"
+        },
+        "opening_safe": {
+          "default": true,
+          "title": "Opening Safe",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "beat_id",
+        "family",
+        "intent"
+      ],
+      "title": "VisualIdea",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "ideas": {
+      "items": {
+        "$ref": "#/$defs/VisualIdea"
+      },
+      "title": "Ideas",
+      "type": "array"
+    }
+  },
+  "required": [
+    "ideas"
+  ],
+  "title": "DirectorPlan",
+  "type": "object"
+}

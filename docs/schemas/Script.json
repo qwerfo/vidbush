@@ -1,0 +1,129 @@
+{
+  "$defs": {
+    "Beat": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "facts_used": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Facts Used",
+          "type": "array"
+        },
+        "emphasis": {
+          "$ref": "#/$defs/Emphasis",
+          "default": "normal"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "title": "Beat",
+      "type": "object"
+    },
+    "Emphasis": {
+      "enum": [
+        "low",
+        "normal",
+        "high"
+      ],
+      "title": "Emphasis",
+      "type": "string"
+    },
+    "Scene": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "purpose": {
+          "$ref": "#/$defs/ScenePurpose"
+        },
+        "beats": {
+          "items": {
+            "$ref": "#/$defs/Beat"
+          },
+          "title": "Beats",
+          "type": "array"
+        },
+        "item_number": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Item Number"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "purpose",
+        "beats"
+      ],
+      "title": "Scene",
+      "type": "object"
+    },
+    "ScenePurpose": {
+      "enum": [
+        "hook",
+        "setup",
+        "act",
+        "item",
+        "turn",
+        "climax",
+        "resolution",
+        "outro"
+      ],
+      "title": "ScenePurpose",
+      "type": "string"
+    },
+    "VideoFormat": {
+      "enum": [
+        "documentary",
+        "top10"
+      ],
+      "title": "VideoFormat",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+    },
+    "format": {
+      "$ref": "#/$defs/VideoFormat",
+      "default": "documentary"
+    },
+    "scenes": {
+      "items": {
+        "$ref": "#/$defs/Scene"
+      },
+      "title": "Scenes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "scenes"
+  ],
+  "title": "Script",
+  "type": "object"
+}

@@ -1,0 +1,498 @@
+{
+  "$defs": {
+    "Candidate": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceKind"
+        },
+        "url": {
+          "default": "",
+          "title": "Url",
+          "type": "string"
+        },
+        "local_path": {
+          "default": "",
+          "title": "Local Path",
+          "type": "string"
+        },
+        "media": {
+          "default": "image",
+          "enum": [
+            "video",
+            "image"
+          ],
+          "title": "Media",
+          "type": "string"
+        },
+        "in_point": {
+          "default": 0.0,
+          "title": "In Point",
+          "type": "number"
+        },
+        "out_point": {
+          "default": 0.0,
+          "title": "Out Point",
+          "type": "number"
+        },
+        "width": {
+          "default": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "default": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "licence": {
+          "default": "unknown",
+          "title": "Licence",
+          "type": "string"
+        },
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "attribution": {
+          "default": "",
+          "title": "Attribution",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "keyframes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keyframes",
+          "type": "array"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "judge_reason": {
+          "default": "",
+          "title": "Judge Reason",
+          "type": "string"
+        },
+        "reject_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reject Reason"
+        },
+        "flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "crop": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Crop"
+        }
+      },
+      "required": [
+        "id",
+        "source"
+      ],
+      "title": "Candidate",
+      "type": "object"
+    },
+    "MotionKind": {
+      "enum": [
+        "map",
+        "bar_chart",
+        "line_chart",
+        "number_card",
+        "title_card",
+        "lower_third",
+        "callout",
+        "highlight_box",
+        "text_overlay",
+        "arrow",
+        "recap_grid"
+      ],
+      "title": "MotionKind",
+      "type": "string"
+    },
+    "MotionSpec": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/MotionKind"
+        },
+        "duration": {
+          "title": "Duration",
+          "type": "number"
+        },
+        "width": {
+          "default": 1920,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "default": 1080,
+          "title": "Height",
+          "type": "integer"
+        },
+        "fps": {
+          "default": 30,
+          "title": "Fps",
+          "type": "integer"
+        },
+        "background": {
+          "default": "solid",
+          "enum": [
+            "transparent",
+            "solid",
+            "footage_behind"
+          ],
+          "title": "Background",
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleTokens"
+        },
+        "source_note": {
+          "default": "",
+          "title": "Source Note",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "duration"
+      ],
+      "title": "MotionSpec",
+      "type": "object"
+    },
+    "Shot": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "index": {
+          "default": 0,
+          "title": "Index",
+          "type": "integer"
+        },
+        "beat_id": {
+          "title": "Beat Id",
+          "type": "string"
+        },
+        "scene_id": {
+          "default": "",
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "duration": {
+          "title": "Duration",
+          "type": "number"
+        },
+        "type": {
+          "$ref": "#/$defs/ShotType"
+        },
+        "intent": {
+          "title": "Intent",
+          "type": "string"
+        },
+        "must_show": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Must Show",
+          "type": "array"
+        },
+        "must_avoid": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Must Avoid",
+          "type": "array"
+        },
+        "queries": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Queries",
+          "type": "array"
+        },
+        "overlay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MotionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MotionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ai_prompt": {
+          "default": "",
+          "title": "Ai Prompt",
+          "type": "string"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "selected": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selected"
+        },
+        "judge_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Judge Score"
+        },
+        "judge_notes": {
+          "default": "",
+          "title": "Judge Notes",
+          "type": "string"
+        },
+        "attempts": {
+          "default": 0,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "framing": {
+          "default": "full",
+          "enum": [
+            "full",
+            "tight",
+            "detail"
+          ],
+          "title": "Framing",
+          "type": "string"
+        },
+        "transition_in": {
+          "default": "cut",
+          "enum": [
+            "cut",
+            "fade"
+          ],
+          "title": "Transition In",
+          "type": "string"
+        },
+        "overlay_path": {
+          "default": "",
+          "title": "Overlay Path",
+          "type": "string"
+        },
+        "kenburns": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kenburns"
+        },
+        "render_segment_path": {
+          "default": "",
+          "title": "Render Segment Path",
+          "type": "string"
+        },
+        "render_hash": {
+          "default": "",
+          "title": "Render Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "beat_id",
+        "start",
+        "end",
+        "duration",
+        "type",
+        "intent"
+      ],
+      "title": "Shot",
+      "type": "object"
+    },
+    "ShotType": {
+      "enum": [
+        "footage",
+        "footage_overlay",
+        "image",
+        "image_overlay",
+        "ai_image",
+        "ai_video",
+        "motion_graphic"
+      ],
+      "title": "ShotType",
+      "type": "string"
+    },
+    "SourceKind": {
+      "enum": [
+        "youtube",
+        "wikimedia",
+        "archive",
+        "loc",
+        "nasa",
+        "pexels",
+        "pixabay",
+        "local",
+        "ai_image",
+        "ai_video",
+        "upload",
+        "motion"
+      ],
+      "title": "SourceKind",
+      "type": "string"
+    },
+    "StyleTokens": {
+      "properties": {
+        "font": {
+          "default": "Inter",
+          "title": "Font",
+          "type": "string"
+        },
+        "palette": {
+          "default": "documentary_warm",
+          "title": "Palette",
+          "type": "string"
+        }
+      },
+      "title": "StyleTokens",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "fps": {
+      "default": 30,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "width": {
+      "default": 1920,
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "default": 1080,
+      "title": "Height",
+      "type": "integer"
+    },
+    "duration": {
+      "title": "Duration",
+      "type": "number"
+    },
+    "shots": {
+      "items": {
+        "$ref": "#/$defs/Shot"
+      },
+      "title": "Shots",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "duration",
+    "shots"
+  ],
+  "title": "ShotList",
+  "type": "object"
+}

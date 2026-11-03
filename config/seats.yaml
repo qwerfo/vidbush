@@ -1,0 +1,46 @@
+# Roles to providers. The code asks for a role; the first configured provider
+# that works is used. Fallback moves only the failed request.
+# A role with no configured provider runs in mock mode (marked in every report).
+# Models are placeholders: set them to whatever is best and cheapest this month.
+# Use model_env to read the model name from .env instead of hardcoding it here.
+
+roles:
+  researcher:
+    - {provider: primary_llm, model_env: LLM_PRIMARY_MODEL, model: "your-strong-model"}
+    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+  writer:
+    - {provider: primary_llm, model_env: LLM_WRITER_MODEL, model: "your-best-writing-model"}
+    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+  director:
+    - {provider: primary_llm, model_env: LLM_PRIMARY_MODEL, model: "your-strong-model"}
+    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+  editor:
+    - {provider: primary_llm, model_env: LLM_CHEAP_MODEL, model: "your-cheap-fast-model"}
+    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+  judge:
+    - {provider: vision_llm, model_env: VISION_MODEL, model: "your-vision-model"}
+  vision:
+    - {provider: vision_llm, model_env: VISION_MODEL, model: "your-vision-model"}
+  cheap_classifier:
+    - {provider: vision_llm, model_env: VISION_CHEAP_MODEL, model: "your-cheap-vision-model"}
+  image:
+    - {provider: image_primary, model_env: IMAGE_MODEL, model: "your-image-model"}
+    - {provider: image_fallback, model_env: IMAGE_FALLBACK_MODEL, model: "your-fallback-image-model"}
+  video:
+    - {provider: video_primary, model_env: VIDEO_MODEL, model: "your-image-to-video-model"}
+  tts:
+    - {provider: elevenlabs, model: "auto"}
+  search:
+    - {provider: web_search, model: ""}
+
+providers:
+  primary_llm:    {type: openai_compat, base_url_env: LLM_PRIMARY_BASE_URL, key_env: LLM_PRIMARY_API_KEY}
+  fallback_llm:   {type: openai_compat, base_url_env: LLM_FALLBACK_BASE_URL, key_env: LLM_FALLBACK_API_KEY}
+  vision_llm:     {type: openai_compat, base_url_env: VISION_BASE_URL, key_env: VISION_API_KEY}
+  image_primary:  {type: openai_compat, base_url_env: IMAGE_BASE_URL, key_env: IMAGE_API_KEY,
+                   options: {cost_per_image: 0.02}}
+  image_fallback: {type: openai_compat, base_url_env: IMAGE_FALLBACK_BASE_URL, key_env: IMAGE_FALLBACK_API_KEY,
+                   options: {cost_per_image: 0.02}}
+  video_primary:  {type: fal, base_url_env: VIDEO_BASE_URL, key_env: VIDEO_API_KEY}
+  elevenlabs:     {type: elevenlabs, base_url_env: ELEVENLABS_BASE_URL, key_env: ELEVENLABS_API_KEY}
+  web_search:     {type: tavily, key_env: SEARCH_API_KEY}   # set type to tavily, serper or brave

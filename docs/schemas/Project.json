@@ -1,0 +1,291 @@
+{
+  "$defs": {
+    "Brief": {
+      "properties": {
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "target_minutes": {
+          "default": 8.0,
+          "title": "Target Minutes",
+          "type": "number"
+        },
+        "format": {
+          "$ref": "#/$defs/VideoFormat",
+          "default": "documentary"
+        },
+        "audience": {
+          "default": "",
+          "title": "Audience",
+          "type": "string"
+        },
+        "angle": {
+          "default": "",
+          "title": "Angle",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "title": "Brief",
+      "type": "object"
+    },
+    "InputMode": {
+      "enum": [
+        "brief",
+        "script",
+        "voiceover"
+      ],
+      "title": "InputMode",
+      "type": "string"
+    },
+    "ProjectPaths": {
+      "properties": {
+        "root": {
+          "title": "Root",
+          "type": "string"
+        },
+        "work": {
+          "title": "Work",
+          "type": "string"
+        },
+        "sources": {
+          "title": "Sources",
+          "type": "string"
+        },
+        "segments": {
+          "title": "Segments",
+          "type": "string"
+        },
+        "thumbnails": {
+          "title": "Thumbnails",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "work",
+        "sources",
+        "segments",
+        "thumbnails"
+      ],
+      "title": "ProjectPaths",
+      "type": "object"
+    },
+    "StageRecord": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/StageStatus",
+          "default": "pending"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "attempts": {
+          "default": 0,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "outputs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Outputs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "StageRecord",
+      "type": "object"
+    },
+    "StageStatus": {
+      "enum": [
+        "pending",
+        "running",
+        "done",
+        "failed",
+        "skipped"
+      ],
+      "title": "StageStatus",
+      "type": "string"
+    },
+    "VideoFormat": {
+      "enum": [
+        "documentary",
+        "top10"
+      ],
+      "title": "VideoFormat",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "number"
+    },
+    "brand_id": {
+      "default": "default",
+      "title": "Brand Id",
+      "type": "string"
+    },
+    "input_mode": {
+      "$ref": "#/$defs/InputMode"
+    },
+    "format": {
+      "$ref": "#/$defs/VideoFormat",
+      "default": "documentary"
+    },
+    "target_minutes": {
+      "default": 8.0,
+      "title": "Target Minutes",
+      "type": "number"
+    },
+    "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+    },
+    "brief": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Brief"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "script_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Script Path"
+    },
+    "voiceover_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Voiceover Path"
+    },
+    "status": {
+      "default": "created",
+      "enum": [
+        "created",
+        "running",
+        "done",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "current_stage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Stage"
+    },
+    "stages": {
+      "additionalProperties": {
+        "$ref": "#/$defs/StageRecord"
+      },
+      "title": "Stages",
+      "type": "object"
+    },
+    "paths": {
+      "$ref": "#/$defs/ProjectPaths"
+    },
+    "style_profile_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Style Profile Id"
+    },
+    "seed": {
+      "default": 0,
+      "title": "Seed",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "input_mode",
+    "paths"
+  ],
+  "title": "Project",
+  "type": "object"
+}

@@ -1,0 +1,345 @@
+{
+  "$defs": {
+    "CaptionStyle": {
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "font": {
+          "default": "Inter",
+          "title": "Font",
+          "type": "string"
+        },
+        "weight": {
+          "default": "ExtraBold",
+          "enum": [
+            "Regular",
+            "Medium",
+            "SemiBold",
+            "Bold",
+            "ExtraBold",
+            "Black"
+          ],
+          "title": "Weight",
+          "type": "string"
+        },
+        "size": {
+          "default": 64,
+          "title": "Size",
+          "type": "integer"
+        },
+        "color": {
+          "default": "#FFFFFF",
+          "title": "Color",
+          "type": "string"
+        },
+        "outline_color": {
+          "default": "#000000",
+          "title": "Outline Color",
+          "type": "string"
+        },
+        "outline": {
+          "default": 4,
+          "title": "Outline",
+          "type": "integer"
+        },
+        "shadow": {
+          "default": 0,
+          "title": "Shadow",
+          "type": "integer"
+        },
+        "highlight_color": {
+          "default": "#FFD84A",
+          "title": "Highlight Color",
+          "type": "string"
+        },
+        "uppercase": {
+          "default": false,
+          "title": "Uppercase",
+          "type": "boolean"
+        },
+        "min_words": {
+          "default": 3,
+          "title": "Min Words",
+          "type": "integer"
+        },
+        "max_words": {
+          "default": 5,
+          "title": "Max Words",
+          "type": "integer"
+        },
+        "position": {
+          "const": "bottom_band",
+          "default": "bottom_band",
+          "title": "Position",
+          "type": "string"
+        },
+        "band_height": {
+          "default": 0.5,
+          "title": "Band Height",
+          "type": "number"
+        }
+      },
+      "title": "CaptionStyle",
+      "type": "object"
+    },
+    "ColourGrade": {
+      "properties": {
+        "lut_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lut Path"
+        }
+      },
+      "title": "ColourGrade",
+      "type": "object"
+    },
+    "Letterbox": {
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "ratio": {
+          "default": 2.39,
+          "title": "Ratio",
+          "type": "number"
+        }
+      },
+      "title": "Letterbox",
+      "type": "object"
+    },
+    "MotionStyle": {
+      "properties": {
+        "ken_burns_intensity": {
+          "default": 0.12,
+          "title": "Ken Burns Intensity",
+          "type": "number"
+        },
+        "depthflow": {
+          "default": false,
+          "title": "Depthflow",
+          "type": "boolean"
+        }
+      },
+      "title": "MotionStyle",
+      "type": "object"
+    },
+    "MusicStyle": {
+      "properties": {
+        "ducking_depth_db": {
+          "default": 12.0,
+          "title": "Ducking Depth Db",
+          "type": "number"
+        },
+        "attack_ms": {
+          "default": 80.0,
+          "title": "Attack Ms",
+          "type": "number"
+        },
+        "release_ms": {
+          "default": 600.0,
+          "title": "Release Ms",
+          "type": "number"
+        },
+        "bed_gain_db": {
+          "default": -18.0,
+          "title": "Bed Gain Db",
+          "type": "number"
+        },
+        "scene_crossfade_s": {
+          "default": 1.5,
+          "title": "Scene Crossfade S",
+          "type": "number"
+        }
+      },
+      "title": "MusicStyle",
+      "type": "object"
+    },
+    "PacingProfile": {
+      "properties": {
+        "footage": {
+          "$ref": "#/$defs/TypePacing",
+          "default": {
+            "min": 3.0,
+            "max": 7.0,
+            "mean": 4.8
+          }
+        },
+        "footage_overlay": {
+          "$ref": "#/$defs/TypePacing",
+          "default": {
+            "min": 3.0,
+            "max": 7.0,
+            "mean": 5.0
+          }
+        },
+        "image": {
+          "$ref": "#/$defs/TypePacing",
+          "default": {
+            "min": 4.0,
+            "max": 8.0,
+            "mean": 5.5
+          }
+        },
+        "image_overlay": {
+          "$ref": "#/$defs/TypePacing",
+          "default": {
+            "min": 4.0,
+            "max": 8.0,
+            "mean": 5.8
+          }
+        },
+        "ai_image": {
+          "$ref": "#/$defs/TypePacing",
+          "default": {
+            "min": 4.0,
+            "max": 8.0,
+            "mean": 5.5
+          }
+        },
+        "ai_video": {
+          "$ref": "#/$defs/TypePacing",
+          "default": {
+            "min": 3.0,
+            "max": 6.0,
+            "mean": 4.5
+          }
+        },
+        "motion_graphic": {
+          "$ref": "#/$defs/TypePacing",
+          "default": {
+            "min": 6.0,
+            "max": 15.0,
+            "mean": 8.5
+          }
+        },
+        "hook_seconds": {
+          "default": 60.0,
+          "title": "Hook Seconds",
+          "type": "number"
+        },
+        "hook_multiplier": {
+          "default": 0.7,
+          "title": "Hook Multiplier",
+          "type": "number"
+        },
+        "jitter": {
+          "default": 0.25,
+          "title": "Jitter",
+          "type": "number"
+        }
+      },
+      "title": "PacingProfile",
+      "type": "object"
+    },
+    "Transitions": {
+      "properties": {
+        "cut_probability": {
+          "default": 0.9,
+          "title": "Cut Probability",
+          "type": "number"
+        },
+        "crossfade_duration": {
+          "default": 0.4,
+          "title": "Crossfade Duration",
+          "type": "number"
+        }
+      },
+      "title": "Transitions",
+      "type": "object"
+    },
+    "TypePacing": {
+      "properties": {
+        "min": {
+          "title": "Min",
+          "type": "number"
+        },
+        "max": {
+          "title": "Max",
+          "type": "number"
+        },
+        "mean": {
+          "title": "Mean",
+          "type": "number"
+        }
+      },
+      "required": [
+        "min",
+        "max",
+        "mean"
+      ],
+      "title": "TypePacing",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "default": "",
+      "title": "Name",
+      "type": "string"
+    },
+    "visual_mix": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Visual Mix",
+      "type": "object"
+    },
+    "pacing": {
+      "$ref": "#/$defs/PacingProfile"
+    },
+    "captions": {
+      "$ref": "#/$defs/CaptionStyle"
+    },
+    "letterbox": {
+      "$ref": "#/$defs/Letterbox"
+    },
+    "transitions": {
+      "$ref": "#/$defs/Transitions"
+    },
+    "colour": {
+      "$ref": "#/$defs/ColourGrade"
+    },
+    "music": {
+      "$ref": "#/$defs/MusicStyle"
+    },
+    "motion": {
+      "$ref": "#/$defs/MotionStyle"
+    },
+    "palette": {
+      "default": "documentary_warm",
+      "title": "Palette",
+      "type": "string"
+    },
+    "top10": {
+      "default": false,
+      "title": "Top10",
+      "type": "boolean"
+    },
+    "provenance": {
+      "additionalProperties": true,
+      "title": "Provenance",
+      "type": "object"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "StyleProfile",
+  "type": "object"
+}

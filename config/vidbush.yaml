@@ -1,0 +1,44 @@
+# Vidbush application settings. Keys and URLs live in .env, never here.
+output_folder: output
+data_folder: data
+source_cache_folder: data/source_cache
+music_folder: fixtures/music
+offline: false          # true = never touch the network, every seat runs mock
+
+sources:
+  # order is the search order; disabled sources are skipped
+  enabled: [local, youtube, wikimedia, archive, loc, nasa, pexels, pixabay]
+  allow_youtube: true
+  flag_nc_nd: true      # CC NC / ND assets are allowed but flagged in qa_report
+  blocklist: []         # domains never used, e.g. [example.com, badstock.net]
+  max_candidates: 8
+  youtube_max_height: 1080
+  youtube_min_height: 720
+  local_library: fixtures/sample_assets   # your own footage folder, see docs/HANDOFF.md
+  timeout_s: 20
+
+judge:
+  threshold: 70
+  max_attempts: 3
+  post_render_every_s: 3
+
+cost:
+  image_ceiling_usd: 0.05
+  image_warn_usd: 0.03
+  llm_per_1k_tokens_usd: 0.002   # estimate used only when a provider returns no cost
+  vision_per_image_usd: 0.002
+  tts_per_1k_chars_usd: 0.18
+  image_per_image_usd: 0.02
+  video_per_second_usd: 0.05
+
+render:
+  renderer: python      # python (built in) or remotion (needs node + chromium, see renderer/README.md)
+  preset: veryfast
+  crf: 20
+  workers: 3
+  width: 1920
+  height: 1080
+  fps: 30
+  target_lufs: -14
+  true_peak: -1
+  narration_lufs: -16

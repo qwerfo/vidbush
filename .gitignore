@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+output/
+!output/.gitkeep
+ui/node_modules/
+ui/dist/
+renderer/node_modules/
+renderer/out/
+*.egg-info/
+.venv/

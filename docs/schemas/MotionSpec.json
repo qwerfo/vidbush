@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "MotionKind": {
+      "enum": [
+        "map",
+        "bar_chart",
+        "line_chart",
+        "number_card",
+        "title_card",
+        "lower_third",
+        "callout",
+        "highlight_box",
+        "text_overlay",
+        "arrow",
+        "recap_grid"
+      ],
+      "title": "MotionKind",
+      "type": "string"
+    },
+    "StyleTokens": {
+      "properties": {
+        "font": {
+          "default": "Inter",
+          "title": "Font",
+          "type": "string"
+        },
+        "palette": {
+          "default": "documentary_warm",
+          "title": "Palette",
+          "type": "string"
+        }
+      },
+      "title": "StyleTokens",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "kind": {
+      "$ref": "#/$defs/MotionKind"
+    },
+    "duration": {
+      "title": "Duration",
+      "type": "number"
+    },
+    "width": {
+      "default": 1920,
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "default": 1080,
+      "title": "Height",
+      "type": "integer"
+    },
+    "fps": {
+      "default": 30,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "background": {
+      "default": "solid",
+      "enum": [
+        "transparent",
+        "solid",
+        "footage_behind"
+      ],
+      "title": "Background",
+      "type": "string"
+    },
+    "style": {
+      "$ref": "#/$defs/StyleTokens"
+    },
+    "source_note": {
+      "default": "",
+      "title": "Source Note",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    }
+  },
+  "required": [
+    "kind",
+    "duration"
+  ],
+  "title": "MotionSpec",
+  "type": "object"
+}

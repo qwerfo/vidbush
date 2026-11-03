@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "EditOpName": {
+      "enum": [
+        "swap_shot",
+        "upload_shot",
+        "regenerate_ai",
+        "set_duration",
+        "split_shot",
+        "merge_shots",
+        "change_type",
+        "set_overlay",
+        "remove_overlay",
+        "reorder",
+        "retime_section",
+        "change_music",
+        "set_caption_style",
+        "rewrite_beat"
+      ],
+      "title": "EditOpName",
+      "type": "string"
+    }
+  },
+  "description": "One structured edit. args keys by op:\nswap_shot: shot_id, candidate_id\nupload_shot: shot_id, path\nregenerate_ai: shot_id, prompt_delta\nset_duration: shot_id, seconds\nsplit_shot: shot_id, at (seconds into shot)\nmerge_shots: a, b\nchange_type: shot_id, type\nset_overlay: shot_id, motion_spec\nremove_overlay: shot_id\nreorder: shot_id, new_index\nretime_section: scene_id or range [start_s, end_s], factor\nchange_music: track\nset_caption_style: delta (dict of CaptionStyle fields)\nrewrite_beat: beat_id, instruction",
+  "properties": {
+    "op": {
+      "$ref": "#/$defs/EditOpName"
+    },
+    "args": {
+      "additionalProperties": true,
+      "title": "Args",
+      "type": "object"
+    },
+    "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "op"
+  ],
+  "title": "EditOp",
+  "type": "object"
+}

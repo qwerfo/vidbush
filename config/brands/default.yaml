@@ -1,0 +1,10 @@
+id: default
+name: Default brand
+voice: {provider: elevenlabs, voice_id: "", model: auto, stability: 0.45, similarity: 0.8}
+style_profile_id: documentary_default
+music_folder: fixtures/music
+intro_path: null
+outro_path: null
+blocklist: []
+niche_notes: "Long-form documentary for an older US audience. Calm, clear, authoritative narration. No hype."
+language: en

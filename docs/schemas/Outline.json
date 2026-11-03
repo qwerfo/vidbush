@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "OutlineSection": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "purpose": {
+          "$ref": "#/$defs/ScenePurpose"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "target_words": {
+          "title": "Target Words",
+          "type": "integer"
+        },
+        "fact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fact Ids",
+          "type": "array"
+        },
+        "item_number": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Item Number"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "purpose",
+        "summary",
+        "target_words"
+      ],
+      "title": "OutlineSection",
+      "type": "object"
+    },
+    "ScenePurpose": {
+      "enum": [
+        "hook",
+        "setup",
+        "act",
+        "item",
+        "turn",
+        "climax",
+        "resolution",
+        "outro"
+      ],
+      "title": "ScenePurpose",
+      "type": "string"
+    },
+    "VideoFormat": {
+      "enum": [
+        "documentary",
+        "top10"
+      ],
+      "title": "VideoFormat",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "format": {
+      "$ref": "#/$defs/VideoFormat"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/OutlineSection"
+      },
+      "title": "Sections",
+      "type": "array"
+    }
+  },
+  "required": [
+    "format",
+    "title",
+    "sections"
+  ],
+  "title": "Outline",
+  "type": "object"
+}

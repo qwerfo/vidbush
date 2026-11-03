@@ -1,0 +1,105 @@
+{
+  "$defs": {
+    "VoiceConfig": {
+      "properties": {
+        "provider": {
+          "default": "elevenlabs",
+          "title": "Provider",
+          "type": "string"
+        },
+        "voice_id": {
+          "default": "",
+          "title": "Voice Id",
+          "type": "string"
+        },
+        "model": {
+          "default": "auto",
+          "title": "Model",
+          "type": "string"
+        },
+        "stability": {
+          "default": 0.45,
+          "title": "Stability",
+          "type": "number"
+        },
+        "similarity": {
+          "default": 0.8,
+          "title": "Similarity",
+          "type": "number"
+        }
+      },
+      "title": "VoiceConfig",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "default": "",
+      "title": "Name",
+      "type": "string"
+    },
+    "voice": {
+      "$ref": "#/$defs/VoiceConfig"
+    },
+    "style_profile_id": {
+      "default": "documentary_default",
+      "title": "Style Profile Id",
+      "type": "string"
+    },
+    "music_folder": {
+      "default": "fixtures/music",
+      "title": "Music Folder",
+      "type": "string"
+    },
+    "intro_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Intro Path"
+    },
+    "outro_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Outro Path"
+    },
+    "blocklist": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Blocklist",
+      "type": "array"
+    },
+    "niche_notes": {
+      "default": "",
+      "title": "Niche Notes",
+      "type": "string"
+    },
+    "language": {
+      "default": "en",
+      "title": "Language",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "title": "Brand",
+  "type": "object"
+}

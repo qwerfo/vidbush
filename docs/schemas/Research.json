@@ -1,0 +1,157 @@
+{
+  "$defs": {
+    "FactCard": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "claim": {
+          "title": "Claim",
+          "type": "string"
+        },
+        "source_url": {
+          "default": "",
+          "title": "Source Url",
+          "type": "string"
+        },
+        "source_title": {
+          "default": "",
+          "title": "Source Title",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 0.7,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "date": {
+          "default": "",
+          "title": "Date",
+          "type": "string"
+        },
+        "status": {
+          "default": "unverified",
+          "enum": [
+            "verified",
+            "unverified",
+            "contradicted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "numbers": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Numbers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "claim"
+      ],
+      "title": "FactCard",
+      "type": "object"
+    },
+    "VisualAnchor": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "place",
+            "date",
+            "object",
+            "person",
+            "event",
+            "number"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "lat": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lat"
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lon"
+        },
+        "fact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fact Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "VisualAnchor",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "topic": {
+      "title": "Topic",
+      "type": "string"
+    },
+    "facts": {
+      "items": {
+        "$ref": "#/$defs/FactCard"
+      },
+      "title": "Facts",
+      "type": "array"
+    },
+    "anchors": {
+      "items": {
+        "$ref": "#/$defs/VisualAnchor"
+      },
+      "title": "Anchors",
+      "type": "array"
+    },
+    "sources": {
+      "items": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "topic"
+  ],
+  "title": "Research",
+  "type": "object"
+}

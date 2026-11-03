@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "Word": {
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "start": {
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "title": "End",
+          "type": "number"
+        },
+        "beat_id": {
+          "default": "",
+          "title": "Beat Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "start",
+        "end"
+      ],
+      "title": "Word",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "audio_path": {
+      "title": "Audio Path",
+      "type": "string"
+    },
+    "duration": {
+      "title": "Duration",
+      "type": "number"
+    },
+    "words": {
+      "items": {
+        "$ref": "#/$defs/Word"
+      },
+      "title": "Words",
+      "type": "array"
+    },
+    "provider": {
+      "default": "mock",
+      "title": "Provider",
+      "type": "string"
+    },
+    "aligned_by": {
+      "default": "estimate",
+      "enum": [
+        "provider",
+        "whisper",
+        "silence",
+        "estimate"
+      ],
+      "title": "Aligned By",
+      "type": "string"
+    },
+    "beat_spans": {
+      "additionalProperties": {
+        "items": {
+          "type": "number"
+        },
+        "type": "array"
+      },
+      "title": "Beat Spans",
+      "type": "object"
+    }
+  },
+  "required": [
+    "audio_path",
+    "duration",
+    "words"
+  ],
+  "title": "Narration",
+  "type": "object"
+}
