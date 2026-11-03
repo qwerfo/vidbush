@@ -30,7 +30,7 @@ RUN case "$(dpkg --print-architecture)" in \
 WORKDIR /app
 COPY pyproject.toml ./
 COPY vidbush ./vidbush
-RUN pip install ".[whisper]"
+RUN pip install -e ".[whisper]"
 
 COPY config ./config
 COPY assets ./assets
