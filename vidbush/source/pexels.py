@@ -89,7 +89,8 @@ class PexelsAdapter(BaseAdapter):
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         ext = ".mp4" if raw.media == "video" else ".jpg"
-        src = cached_download(raw.download_url, ext, settings)
+        cap = base.SECTION_OVER_BYTES if raw.media == "video" else base.MAX_IMAGE_BYTES
+        src = cached_download(raw.download_url, ext, settings, max_bytes=cap)
         dst = link_into(src, out_dir, f"pexels_{base.url_hash(raw.download_url)}{ext}")
         spans = stock_spans(raw.duration, shot) if raw.media == "video" else None
         return make_candidates(raw, dst, shot, settings, spans=spans)

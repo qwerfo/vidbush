@@ -11,15 +11,34 @@ import shutil
 import time
 import traceback
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from ..config import Settings
 from ..models import (STAGES, Brief, InputMode, Project, ProjectPaths, StageRecord, StageStatus,
                       VideoFormat)
-from ..util import read_model, write_json
+from ..util import read_json, write_json
+from . import lock
 from .context import StageContext, build_context
+from .paths import read_rebased, stored_root
 
 StageFn = Callable[[StageContext], list[str]]
+
+# stage -> stages whose outputs it reads; a stage that reruns forces every stage downstream of it
+STAGE_INPUTS: dict[str, tuple[str, ...]] = {
+    "intake": (),
+    "research": ("intake",),
+    "outline": ("research",),
+    "script": ("intake", "outline"),
+    "narration": ("script",),
+    "shotlist": ("script", "narration", "research"),
+    "sourcing": ("shotlist",),
+    "judge": ("sourcing",),
+    "visuals": ("judge",),
+    "motion": ("visuals",),
+    "mix": ("script", "narration", "shotlist"),
+    "assembly": ("motion", "mix"),
+    "packaging": ("assembly",),
+}
 
 
 class InjectedFailure(RuntimeError):
@@ -45,6 +64,7 @@ def create_project(settings: Settings, project_id: str, mode: InputMode, brand_i
                    fresh: bool = True, seed: Optional[int] = None) -> Project:
     """Create output/<id>/ and project.json. fresh=True wipes an existing project of that id."""
     root = project_dir(settings, project_id)
+    lock.check_free(root, project_id)
     if fresh and root.exists():
         shutil.rmtree(root)
     paths = make_paths(root)
@@ -52,6 +72,9 @@ def create_project(settings: Settings, project_id: str, mode: InputMode, brand_i
     inputs.mkdir(exist_ok=True)
     sp = _copy_input(script_path, inputs)
     vp = _copy_input(voiceover_path, inputs)
+    if brief is not None and (fmt or target_minutes):  # CLI or form overrides beat the brief front matter
+        brief = brief.model_copy(update={"format": fmt or brief.format,
+                                         "target_minutes": target_minutes or brief.target_minutes})
     fmt = fmt or (brief.format if brief else VideoFormat.documentary)
     proj = Project(id=project_id, brand_id=brand_id, input_mode=mode, format=fmt,
                    target_minutes=target_minutes or (brief.target_minutes if brief else 8.0),
@@ -75,7 +98,14 @@ def _copy_input(path: Optional[str], inputs: Path) -> Optional[str]:
 
 
 def load_project(settings: Settings, project_id: str) -> Project:
-    return read_model(project_dir(settings, project_id) / "project.json", Project)
+    """project.json with every stored path rebased onto the current project root (moved projects)."""
+    root = project_dir(settings, project_id)
+    pj = root / "project.json"
+    old = stored_root(pj)
+    project = read_rebased(pj, Project, project_id, root, [old] if old else [])
+    fresh = make_paths(root) if root.exists() else project.paths
+    project.paths = fresh
+    return project
 
 
 def stage_applies(project: Project, stage: str) -> bool:
@@ -91,12 +121,19 @@ def _outputs_exist(rec: StageRecord) -> bool:
 def run_project(settings: Settings, project_id: str, stages: Optional[dict[str, StageFn]] = None,
                 force: Iterable[str] = (), until: Optional[str] = None, echo: bool = True,
                 on_progress: Optional[Callable[[Project], None]] = None) -> Project:
-    """Run every pending stage in order. Done stages with outputs on disk are skipped."""
+    """Run every pending stage in order under the project lock. Done stages with outputs on disk are
+    skipped; a stage that runs forces every stage downstream of it (STAGE_INPUTS)."""
+    root = project_dir(settings, project_id)
+    with lock.project_lock(root, project_id, owner=f"run_project {project_id}"):
+        return _run_locked(settings, project_id, stages, set(force), until, echo, on_progress)
+
+
+def _run_locked(settings: Settings, project_id: str, stages: Optional[dict[str, StageFn]], force: set[str],
+                until: Optional[str], echo: bool, on_progress: Optional[Callable[[Project], None]]) -> Project:
     from .stages import STAGE_FUNCS
     funcs = stages or STAGE_FUNCS
     project = load_project(settings, project_id)
     ctx = build_context(settings, project, echo=echo)
-    force = set(force)
     project.status = "running"
     ctx.save_project()
     for name in STAGES:
@@ -107,16 +144,40 @@ def run_project(settings: Settings, project_id: str, stages: Optional[dict[str, 
         if rec.status == StageStatus.done and name not in force and _outputs_exist(rec):
             ctx.log.info("stage skipped (done)", stage=name)
             continue
+        lock.touch(ctx.root)
         _run_stage(ctx, name, funcs[name], rec, on_progress)
+        force |= downstream(name)
         if until and name == until:
             break
     if not until or until == STAGES[-1]:
-        project.status = "done"
+        project.status = final_status(ctx)
         project.current_stage = None
     ctx.save_project()
     if on_progress:
         on_progress(project)
     return project
+
+
+def downstream(stage: str) -> set[str]:
+    """Every stage that reads, directly or not, the outputs of stage."""
+    out: set[str] = set()
+    for name in STAGES[STAGES.index(stage) + 1:]:
+        if any(dep == stage or dep in out for dep in STAGE_INPUTS.get(name, ())):
+            out.add(name)
+    return out
+
+
+def final_status(ctx: StageContext) -> str:
+    """done, or needs_review when real seats exist but QA reports that some role used mock."""
+    qa = ctx.out_path("qa_report.json")
+    if ctx.settings.offline or not qa.exists():
+        return "done"
+    try:
+        mock_used = read_json(qa).get("mock_used") or []
+    except (OSError, ValueError, AttributeError):
+        return "done"
+    real = any(v.get("real") for v in ctx.seats.status().values())
+    return "needs_review" if mock_used and real else "done"
 
 
 def _run_stage(ctx: StageContext, name: str, fn: StageFn, rec: StageRecord,
@@ -149,12 +210,28 @@ def _run_stage(ctx: StageContext, name: str, fn: StageFn, rec: StageRecord,
 
 def invalidate_from(settings: Settings, project_id: str, stage: str) -> Project:
     """Mark a stage and everything after it pending (used by edits)."""
+    return mark_pending(settings, project_id, STAGES[STAGES.index(stage):])
+
+
+def mark_pending(settings: Settings, project_id: str, stages: Iterable[str]) -> Project:
+    """Mark the given stages and every stage downstream of them pending in project.json.
+
+    Edits call this so a render that fails part way, followed by resume, still reruns them.
+    """
     project = load_project(settings, project_id)
-    hit = False
-    for name in STAGES:
-        if name == stage:
-            hit = True
-        if hit and project.stages.get(name) and project.stages[name].status != StageStatus.skipped:
-            project.stages[name].status = StageStatus.pending
+    names: set[str] = set()
+    for st in stages:
+        names |= {st} | downstream(st)
+    for name in names:
+        rec = project.stages.get(name)
+        if rec and rec.status != StageStatus.skipped:
+            rec.status = StageStatus.pending
     write_json(Path(project.paths.root) / "project.json", project)
     return project
+
+
+def read_work_model(settings: Settings, project_id: str, name: str, model: type) -> Any:
+    """Read output/<id>/work/<name> with stored project paths rebased onto the current root."""
+    root = project_dir(settings, project_id)
+    old = stored_root(root / "project.json")
+    return read_rebased(root / "work" / name, model, project_id, root, [old] if old else [])

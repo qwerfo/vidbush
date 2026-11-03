@@ -8,9 +8,12 @@ from pathlib import Path
 
 import pytest
 
+import numpy as np
+
 from test_render_helpers import build_shotlist, count_frames, make_bumper, make_wav, write_captions
-from vidbush.render.assemble import assemble
-from vidbush.util import ffprobe, read_json
+from vidbush.audio.loudness import normalize, read_audio
+from vidbush.render.assemble import assemble, verify
+from vidbush.util import NullLogger, ToolError, ffprobe, read_json
 
 
 @pytest.fixture
@@ -64,8 +67,23 @@ def _loudness(path: Path) -> float:
     return float(json.loads(re.findall(r"\{[^{}]*\}", cp.stderr)[-1])["input_i"])
 
 
+def _master_mix(ctx, seconds: float) -> None:
+    """mix.wav as the mix stage leaves it: already at -14 LUFS."""
+    raw = make_wav(ctx.work / "mix_raw.wav", seconds)
+    normalize(raw, ctx.work / "mix.wav", -14.0, -1.0, 48000, 2, exact_samples=round(seconds * 48000))
+
+
+def _srt_starts(path: Path) -> list[float]:
+    out = []
+    for m in re.finditer(r"(\d\d):(\d\d):(\d\d),(\d{3}) -->", path.read_text(encoding="utf-8")):
+        h, mi, se, ms = (int(g) for g in m.groups())
+        out.append(h * 3600 + mi * 60 + se + ms / 1000)
+    return out
+
+
 def test_assemble_with_intro_and_outro(ready_ctx) -> None:
     ctx, shotlist = ready_ctx
+    _master_mix(ctx, shotlist.duration)
     ctx.brand.intro_path = str(make_bumper(ctx.work / "intro.mp4", 1.0))
     ctx.brand.outro_path = str(make_bumper(ctx.work / "outro.mp4", 0.5))
     final, _ = assemble(shotlist, ctx)
@@ -73,8 +91,54 @@ def test_assemble_with_intro_and_outro(ready_ctx) -> None:
     assert report["intro_duration"] == pytest.approx(1.0, abs=0.04)
     assert report["outro_duration"] == pytest.approx(0.5, abs=0.04)
     assert count_frames(final) == 109 + 30 + 15
-    assert report["durations_match"]
+    assert report["durations_match"] and report["frames"] == report["expected_frames"] == 154
     assert _loudness(final) == pytest.approx(-14.0, abs=1.5)
+    starts = _srt_starts(ctx.root / "captions.srt")
+    assert starts and starts[0] >= report["intro_duration"] - 1e-3, "sidecar captions on the final timeline"
+    assert starts[0] == pytest.approx(0.1 + report["intro_duration"], abs=0.002)
+    assert "0:00:01.10" in (ctx.root / "captions.ass").read_text(encoding="utf-8")
+    assert read_json(ctx.work / "captions.json")["lines"][0]["start"] == 0.1, "work captions stay in body time"
+
+
+def test_body_mix_is_not_renormalized_with_a_hot_intro(ready_ctx) -> None:
+    """A mastered intro peaking near 0 dBTP must not push the body into loudnorm gain riding."""
+    ctx, shotlist = ready_ctx
+    _master_mix(ctx, shotlist.duration)
+    hot = ctx.work / "hot_intro.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=640x360:r=30:d=1",
+                    "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=48000:duration=1", "-af", "volume=-0.1dB",
+                    "-pix_fmt", "yuv420p", "-shortest", str(hot)], check=True)
+    ctx.brand.intro_path = str(hot)
+    assemble(shotlist, ctx)
+    body = read_audio(ctx.work / "final_audio.wav")[48000:48000 + round(shotlist.duration * 48000), 0]
+    mix = read_audio(ctx.work / "mix.wav")[:len(body), 0]
+    assert np.allclose(body, mix, atol=2e-3), "body samples pass through untouched"
+    intro = read_audio(ctx.work / "final_audio.wav")[:48000, 0]
+    assert np.abs(intro).max() < 10 ** (-0.9 / 20), "intro limited under the true peak ceiling"
+
+
+def test_intro_with_longer_audio_holds_last_frame(ready_ctx) -> None:
+    """Intro with 1 s of picture and 2 s of sound: picture is held so the body stays in sync."""
+    ctx, shotlist = ready_ctx
+    intro = ctx.work / "long_audio_intro.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=640x360:r=30:d=1",
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+                    "-pix_fmt", "yuv420p", str(intro)], check=True)
+    ctx.brand.intro_path = str(intro)
+    final, _ = assemble(shotlist, ctx)
+    report = read_json(ctx.work / "assembly.json")
+    assert report["intro_duration"] == pytest.approx(2.0, abs=0.04)
+    assert count_frames(final) == 109 + 60 == report["frames"]
+    assert report["durations_match"]
+
+
+def test_verify_raises_on_av_drift(tmp_path) -> None:
+    clip = tmp_path / "drift.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=320x180:r=30:d=1",
+                    "-f", "lavfi", "-i", "sine=duration=2", "-pix_fmt", "yuv420p", "-c:a", "aac", str(clip)],
+                   check=True)
+    with pytest.raises(ToolError):
+        verify(clip, 30, NullLogger())
 
 
 def test_missing_intro_is_skipped(ready_ctx) -> None:

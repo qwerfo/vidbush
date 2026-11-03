@@ -1,4 +1,5 @@
-"""Image generation adapters: OpenAI-compatible images API, fal.ai, Runware.
+"""Image generation adapters: OpenAI-compatible images API, OpenRouter style
+chat image output (options.mode: chat), fal.ai, Runware.
 
 All adapters return a PNG on disk at least 1920x1080 (16:9), upscaled and
 center cropped with Lanczos when the provider returns a smaller frame.
@@ -17,6 +18,14 @@ from .base import CallResult, ProviderSpec, RefusalError, TransportError
 from .http import get_bytes, post_json
 
 SIZES_16x9 = ["1792x1024", "1536x1024", "1344x768", "1024x576", "1024x1024"]
+# per image USD at landscape size by quality; used for gpt-image models instead of the static estimate
+GPT_IMAGE_COST = {
+    "gpt-image-1-mini": {"low": 0.006, "medium": 0.015, "high": 0.052},
+    "gpt-image-1": {"low": 0.016, "medium": 0.063, "high": 0.25},
+}
+# USD per 1M tokens (input, output) for usage based gpt-image cost
+GPT_IMAGE_TOKENS = {"gpt-image-1-mini": (2.0, 8.0), "gpt-image-1": (5.0, 40.0)}
+DEFAULT_GPT_IMAGE_QUALITY = "low"
 
 
 def fit_16x9(raw: bytes, out_path: Path, width: int = 1920, height: int = 1080) -> Path:
@@ -36,24 +45,97 @@ def _cost(spec: ProviderSpec, default: float) -> float:
     return float(spec.options.get("cost_per_image", default))
 
 
+def _gpt_family(model: str) -> str:
+    low = model.lower()
+    if "gpt-image" not in low:
+        return ""
+    return "gpt-image-1-mini" if "mini" in low else "gpt-image-1"
+
+
+def _quality(spec: ProviderSpec) -> str:
+    q = str(spec.options.get("quality") or "")
+    if not q and _gpt_family(spec.model):
+        q = DEFAULT_GPT_IMAGE_QUALITY
+    return q
+
+
+def estimate_cost(spec: ProviderSpec, default: float) -> float:
+    """Pre-call per image estimate. gpt-image models use the quality table, never the static estimate."""
+    fam = _gpt_family(spec.model)
+    if fam:
+        table = GPT_IMAGE_COST[fam]
+        return table.get(_quality(spec), table["high"])
+    return _cost(spec, default)
+
+
+def _actual_cost(spec: ProviderSpec, data: dict[str, Any], default: float) -> float:
+    """Cost from the response: usage.cost, gpt-image token usage, else the estimate."""
+    usage = data.get("usage") or {}
+    if usage.get("cost"):
+        return float(usage["cost"])
+    fam = _gpt_family(spec.model)
+    if fam and usage.get("output_tokens"):
+        pin, pout = GPT_IMAGE_TOKENS[fam]
+        return (float(usage.get("input_tokens") or 0) * pin + float(usage["output_tokens"]) * pout) / 1e6
+    return estimate_cost(spec, default)
+
+
+def _is_size_error(e: Exception) -> bool:
+    low = str(e).lower()
+    return "size" in low or "dimension" in low
+
+
 def generate_openai(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float) -> CallResult:
+    """POST /images/generations, trying 16:9 sizes, then one last request with no size key."""
+    if spec.options.get("mode") == "chat":
+        return generate_chat(spec, prompt, out_path, default_cost)
     url = spec.base_url.rstrip("/") + "/images/generations"
     headers = {"Authorization": f"Bearer {spec.api_key}"}
-    sizes = [spec.options["size"]] if spec.options.get("size") else SIZES_16x9
+    sizes: list[str | None] = [spec.options["size"]] if spec.options.get("size") else list(SIZES_16x9)
+    sizes.append(None)
+    quality = _quality(spec)
     last: Exception | None = None
     for size in sizes:
-        body: dict[str, Any] = {"model": spec.model, "prompt": prompt, "n": 1, "size": size}
+        body: dict[str, Any] = {"model": spec.model, "prompt": prompt, "n": 1}
+        if size:
+            body["size"] = size
+        if quality:
+            body["quality"] = quality
         body.update(spec.options.get("extra_body", {}))
         try:
             data = post_json(url, body, headers, timeout=240)
         except RefusalError as e:
             last = e
-            if "size" in str(e).lower() or "dimension" in str(e).lower():
+            if _is_size_error(e):
                 continue
             raise
         return CallResult(value=_save(data, out_path), provider=spec, mock=False,
-                          cost_usd=_cost(spec, default_cost), units=1, unit_kind="images")
+                          cost_usd=_actual_cost(spec, data, default_cost), units=1, unit_kind="images")
     raise RefusalError(f"no accepted size for {spec.model}: {last}")
+
+
+def generate_chat(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float) -> CallResult:
+    """OpenRouter style: /chat/completions with modalities image+text, image returned as a data URL."""
+    url = spec.base_url.rstrip("/") + "/chat/completions"
+    headers = {"Authorization": f"Bearer {spec.api_key}", "Content-Type": "application/json"}
+    body: dict[str, Any] = {"model": spec.model, "messages": [{"role": "user", "content": prompt}],
+                            "modalities": ["image", "text"],
+                            "image_config": {"aspect_ratio": spec.options.get("aspect_ratio", "16:9")}}
+    body.update(spec.options.get("extra_body", {}))
+    data = post_json(url, body, headers, timeout=240)
+    try:
+        img_url = data["choices"][0]["message"]["images"][0]["image_url"]["url"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise RefusalError(f"no image in chat response: {str(data)[:200]}") from e
+    raw = _decode_image_url(img_url)
+    return CallResult(value=fit_16x9(raw, out_path), provider=spec, mock=False,
+                      cost_usd=_actual_cost(spec, data, default_cost), units=1, unit_kind="images")
+
+
+def _decode_image_url(url: str) -> bytes:
+    if url.startswith("data:"):
+        return base64.b64decode(url.split(",", 1)[1])
+    return get_bytes(url)
 
 
 def _save(data: dict[str, Any], out_path: Path) -> Path:

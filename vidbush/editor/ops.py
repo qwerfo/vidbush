@@ -5,8 +5,12 @@ apply_ops(settings, project_id, ops) -> EditResult loads work/shotlist.json
 in order on a copy of the shot list, keeps it only when the timeline
 invariants hold (see retime.py), saves the shot list, appends every op to
 work/edits.jsonl and writes work/edit_plan.json {"force": [stages]}, the
-stages that must rerun. apply_and_render runs the pipeline with that force
-set; the segment cache means only changed segments re-render.
+stages that must rerun (also marked pending in project.json, so a failed
+render followed by resume still reruns them). apply_and_render runs the
+pipeline with that force set; the segment cache means only changed segments
+re-render. Both hold the project lock (jobs/lock.py). Ops that touch files
+besides the shot list (rewrite_beat) commit them only after the timeline
+checks pass.
 
 Shot references accept an id ("shot_007") or the 1-based number shown to the
 operator (7 or "7"). Force sets: candidate or upload changes rerun assembly
@@ -28,7 +32,7 @@ from pydantic import ValidationError
 from ..config import Settings
 from ..models import (STAGES, CaptionStyle, Candidate, EditOp, EditOpName, EditResult, MotionKind, MotionSpec,
                       Narration, Project, Script, Shot, ShotList, ShotType, SourceKind, StyleTokens, TextPayload)
-from ..util import no_em_dash, read_json, read_model, write_json
+from ..util import media_duration, no_em_dash, read_json, write_json
 from . import retime
 from .retime import MIN_SHOT, TAIL, EditError, resolve_shot
 
@@ -48,9 +52,16 @@ _LEADING = re.compile(r"^(archival |stock |wide |aerial |historical )*(footage|p
 
 @dataclass
 class Outcome:
-    """What one op did: a short message for the operator and the stages it dirties."""
+    """What one op did: a short message for the operator and the stages it dirties.
+
+    total is the new timeline length when the op changed the narration; commit runs once the
+    shot list passes the timeline checks, rollback when it does not.
+    """
     message: str
     force: tuple[str, ...] = ()
+    total: Optional[float] = None
+    commit: Optional[Callable[[], None]] = None
+    rollback: Optional[Callable[[], None]] = None
 
 
 @dataclass
@@ -64,6 +75,7 @@ class EditSession:
     _script: Optional[Script] = None
     _narration: Optional[Narration] = None
     force: set[str] = field(default_factory=set)
+    _lengths: dict[str, float] = field(default_factory=dict)
 
     @property
     def work(self) -> Path:
@@ -79,13 +91,24 @@ class EditSession:
 
     def script(self) -> Script:
         if self._script is None:
-            self._script = read_model(self.work / "script.json", Script)
+            self._script = self.read("script.json", Script)
         return self._script
 
     def narration(self) -> Narration:
         if self._narration is None:
-            self._narration = read_model(self.work / "narration.json", Narration)
+            self._narration = self.read("narration.json", Narration)
         return self._narration
+
+    def read(self, name: str, model: type) -> Any:
+        """A work file with project paths rebased onto the current root (moved projects)."""
+        from ..jobs.pipeline import read_work_model
+        return read_work_model(self.settings, self.project.id, name, model)
+
+    def probe(self, path: str) -> float:
+        """Media file length in seconds, cached for this session."""
+        if path not in self._lengths:
+            self._lengths[path] = media_duration(path)
+        return self._lengths[path]
 
     def log(self, msg: str, **fields: Any) -> None:
         if self._ctx is not None:
@@ -100,8 +123,9 @@ def open_session(settings: Settings, project_id: str) -> EditSession:
     sl_path = work / "shotlist.json"
     if not sl_path.exists():
         raise EditError(f"project {project_id} has no shot list yet: run it up to the shotlist stage first")
-    shotlist = read_model(sl_path, ShotList)
-    sess = EditSession(settings=settings, project=project, shotlist=shotlist, total=shotlist.duration)
+    sess = EditSession(settings=settings, project=project, shotlist=ShotList.model_construct(), total=0.0)
+    sess.shotlist = sess.read("shotlist.json", ShotList)
+    sess.total = sess.shotlist.duration
     if (work / "narration.json").exists():
         sess.total = round(sess.narration().duration + TAIL, 3)
     return sess
@@ -431,6 +455,9 @@ def op_set_duration(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Ou
 
 def op_split_shot(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Outcome:
     shot = resolve_shot(sl, _need(args, "shot_id", "shot"))
+    if shot.type == ShotType.motion_graphic:
+        raise EditError(f"{shot.id} is a motion graphic; splitting it would play its animation twice. "
+                        "Change its type first, or set its duration instead")
     at = _float(_arg(args, "at", "seconds", default=shot.duration / 2), "at")
     if at < MIN_SHOT - 1e-3 or shot.duration - at < MIN_SHOT - 1e-3:
         raise EditError(f"split point {at:.2f} s leaves a piece under {MIN_SHOT} s ({shot.id} lasts "
@@ -647,7 +674,7 @@ def fit_beat_shots(sl: ShotList, beat_id: str, span: list[float], delta: float) 
 
 
 def op_rewrite_beat(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Outcome:
-    from ..audio.narration import renarrate_beat
+    """Re-narrate one beat and refit its shots. Atomic: nothing on disk changes unless the op commits."""
     beat_id = resolve_beat(sess, sl, args)
     instruction = str(_arg(args, "instruction", default="tighten")).strip()
     script, nar = sess.script(), sess.narration()
@@ -655,17 +682,55 @@ def op_rewrite_beat(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Ou
     new_text = rewrite_text(sess, beat_id, instruction)
     if new_text.strip() == beat.text.strip():
         return Outcome(f"beat {beat_id} unchanged (nothing to {instruction})")
-    ctx = sess.ctx()
-    span = list(nar.beat_spans.get(beat_id) or [0.0, 0.0])
-    new_nar = renarrate_beat(nar, script, beat_id, new_text, ctx.brand, ctx.seats, sess.settings, ctx.work, ctx.log)
-    beat.text = new_text
-    sess._narration = new_nar
-    write_json(sess.work / "script.json", script)
-    write_json(sess.work / "narration.json", new_nar)
+    wav = sess.work / "narration" / "narration.wav"
+    backup = _backup(wav)
+    try:
+        new_nar, total = _renarrate_and_fit(sess, sl, beat_id, new_text)
+    except Exception:
+        _restore(backup, wav)
+        raise
+    new_script = script.model_copy(deep=True)
+    next(b for b in new_script.beats() if b.id == beat_id).text = new_text
+
+    def commit() -> None:
+        write_json(sess.work / "script.json", new_script)
+        write_json(sess.work / "narration.json", new_nar)
+        sess._script, sess._narration = new_script, new_nar
+        if backup:
+            backup.unlink(missing_ok=True)
+
     delta = new_nar.duration - nar.duration
-    sess.total = round(new_nar.duration + TAIL, 3)
-    fit_beat_shots(sl, beat_id, span, delta)
-    return Outcome(f"beat {beat_id} rewritten ({delta:+.2f} s): {new_text}", FORCE_REWRITE)
+    return Outcome(f"beat {beat_id} rewritten ({delta:+.2f} s): {new_text}", FORCE_REWRITE, total=total,
+                   commit=commit, rollback=lambda: _restore(backup, wav))
+
+
+def _renarrate_and_fit(sess: EditSession, sl: ShotList, beat_id: str, new_text: str) -> tuple[Narration, float]:
+    """New narration for the beat (narration.wav rewritten) and the shot list refit to it."""
+    from ..audio.narration import renarrate_beat
+    ctx = sess.ctx()
+    nar = sess.narration()
+    span = list(nar.beat_spans.get(beat_id) or [0.0, 0.0])
+    new_nar = renarrate_beat(nar, sess.script(), beat_id, new_text, ctx.brand, ctx.seats, sess.settings, sess.work,
+                             ctx.log)
+    total = round(new_nar.duration + TAIL, 3)
+    fit_beat_shots(sl, beat_id, span, new_nar.duration - nar.duration)
+    retime.finalize(sl, total)
+    retime.check_timeline(sl, total)
+    return new_nar, total
+
+
+def _backup(path: Path) -> Optional[Path]:
+    if not path.exists():
+        return None
+    bak = path.with_name(path.name + ".edit_bak")
+    shutil.copy2(path, bak)
+    return bak
+
+
+def _restore(backup: Optional[Path], path: Path) -> None:
+    """Put the backed up file back (a failed rewrite_beat must not leave new narration on disk)."""
+    if backup and backup.exists():
+        backup.replace(path)
 
 
 # ---------------------------------------------------------------- driver
@@ -690,10 +755,22 @@ def _fingerprints(sl: ShotList) -> dict[str, str]:
 def _apply_one(sess: EditSession, op: EditOp) -> Outcome:
     """Apply one op to a copy of the shot list; commit only when the timeline invariants hold."""
     work = sess.shotlist.model_copy(deep=True)
+    before = {s.id: s.duration for s in work.shots}
     outcome = HANDLERS[op.op](sess, work, dict(op.args))
-    retime.finalize(work, sess.total)
-    retime.check_timeline(work, sess.total)
-    sess.shotlist = work
+    total = outcome.total if outcome.total is not None else sess.total
+    try:
+        retime.finalize(work, total)
+        notes = retime.extend_video_spans(work, before, sess.probe)
+        retime.check_timeline(work, total)
+    except Exception:
+        if outcome.rollback:
+            outcome.rollback()
+        raise
+    if outcome.commit:
+        outcome.commit()
+    if notes:
+        outcome.message += " (" + "; ".join(notes) + ")"
+    sess.shotlist, sess.total = work, total
     sess.force.update(outcome.force)
     return outcome
 
@@ -705,9 +782,32 @@ def _record(sess: EditSession, op: EditOp, status: str, message: str) -> None:
         f.write(line + "\n")
 
 
-def apply_ops(settings: Settings, project_id: str, ops: list[EditOp]) -> EditResult:
-    """Apply ops in order; failed ops are reported in errors and leave the project unchanged."""
-    sess = open_session(settings, project_id)
+def apply_ops(settings: Settings, project_id: str, ops: list[EditOp], job_id: Optional[int] = None) -> EditResult:
+    """Apply ops in order under the project lock; failed ops are reported in errors and change nothing.
+
+    The forced stages are marked pending in project.json, so a render that fails part way and is
+    resumed later still reruns them. job_id (an apply_ops job) is recorded in work/edit_plan.json
+    right after shotlist.json, so a recovered job can tell its ops were already applied.
+    """
+    from ..jobs.lock import project_lock
+    from ..jobs.pipeline import mark_pending, project_dir
+    with project_lock(project_dir(settings, project_id), project_id, owner=f"apply_ops {project_id}"):
+        sess = open_session(settings, project_id)
+        result = _apply_all(sess, ops)
+        force = [s for s in STAGES if s in sess.force] if result.applied else []
+        result.force = force
+        if result.applied:
+            write_json(sess.work / "shotlist.json", sess.shotlist)
+        write_json(sess.work / "edit_plan.json", {"force": force, "applied": result.applied, "errors": result.errors,
+                                                  "dirty_shots": result.dirty_shots, "job_id": job_id,
+                                                  "ts": round(time.time(), 3)})
+        if force:
+            mark_pending(settings, project_id, force)
+    return result
+
+
+def _apply_all(sess: EditSession, ops: list[EditOp]) -> EditResult:
+    """Run every op on the session; fills applied, errors and dirty_shots."""
     before = _fingerprints(sess.shotlist)
     result = EditResult(ops=list(ops))
     for op in ops:
@@ -723,31 +823,38 @@ def apply_ops(settings: Settings, project_id: str, ops: list[EditOp]) -> EditRes
         result.needs_renarration |= op.op == EditOpName.rewrite_beat and bool(out.force)
         _record(sess, op, "applied", out.message)
         sess.log("edit op applied", op=op.op.value, message=out.message)
-    if abs(sess.shotlist.duration - sess.total) > 1e-3:  # narration changed by an op that failed later
-        retime.finalize(sess.shotlist, sess.total)
-        result.applied.append(f"timeline refit to {sess.total:.2f} s")
-    if result.applied:
-        write_json(sess.work / "shotlist.json", sess.shotlist)
+    # no refit here: _apply_one finalizes every committed shot list to sess.total and checks it, so a
+    # failed op can never leave the timeline and the narration out of step
     after = _fingerprints(sess.shotlist)
     result.dirty_shots = [sid for sid, fp in after.items() if before.get(sid) != fp]
-    force = [s for s in STAGES if s in sess.force]
-    write_json(sess.work / "edit_plan.json", {"force": force, "applied": result.applied, "errors": result.errors,
-                                              "dirty_shots": result.dirty_shots, "ts": round(time.time(), 3)})
     return result
 
 
-def read_plan(settings: Settings, project_id: str) -> list[str]:
-    """Stages forced by the last apply_ops (work/edit_plan.json)."""
+def read_plan(settings: Settings, project_id: str) -> dict[str, Any]:
+    """work/edit_plan.json written by the last apply_ops ({} when there is none)."""
     from ..jobs.pipeline import project_dir
     path = project_dir(settings, project_id) / "work" / "edit_plan.json"
-    return list(read_json(path).get("force", [])) if path.exists() else []
+    return read_json(path) if path.exists() else {}
 
 
-def apply_and_render(settings: Settings, project_id: str, ops: list[EditOp], echo: bool = True) -> EditResult:
-    """apply_ops, then rerun the forced stages (cached segments are reused)."""
-    from ..jobs.pipeline import run_project
-    result = apply_ops(settings, project_id, ops)
-    force = read_plan(settings, project_id)
-    if result.applied and force:
-        run_project(settings, project_id, force=force, echo=echo)
+def apply_and_render(settings: Settings, project_id: str, ops: list[EditOp], echo: bool = True,
+                     job_id: Optional[int] = None) -> EditResult:
+    """apply_ops, then rerun the forced stages (cached segments are reused), all under the project lock.
+
+    When job_id is the job recorded by the last apply_ops (a job recovered after a crash), the ops
+    are not applied again: only the render runs, with the saved force set.
+    """
+    from ..jobs.lock import project_lock
+    from ..jobs.pipeline import project_dir, run_project
+    with project_lock(project_dir(settings, project_id), project_id, owner=f"edit {project_id}"):
+        plan = read_plan(settings, project_id)
+        if job_id is not None and plan.get("job_id") == job_id:
+            result = EditResult(ops=list(ops), applied=list(plan.get("applied", [])),
+                                errors=list(plan.get("errors", [])), dirty_shots=list(plan.get("dirty_shots", [])),
+                                force=list(plan.get("force", [])))
+            result.applied.append("recovered: ops were already applied, render only")
+        else:
+            result = apply_ops(settings, project_id, ops, job_id=job_id)
+        if result.force:
+            run_project(settings, project_id, force=result.force, echo=echo)
     return result

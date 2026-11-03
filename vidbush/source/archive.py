@@ -3,8 +3,11 @@
 Search: advancedsearch.php with mediatype movies or image, fields
 identifier, title, creator, licenseurl, date. Fetch: /metadata/<id> picks
 the best mp4 (or jpg), licence from licenseurl, with public domain
-detection from rights fields and well known public domain collections.
-Long films are read as a section with ffmpeg instead of a full download.
+detection from rights fields and a few curated public domain collections
+(news and user upload collections are not among them: their items need an
+explicit licenseurl or rights statement). Long or large films are read as a
+section with ffmpeg instead of a full download. File lengths may be seconds,
+MM:SS or HH:MM:SS.
 """
 from __future__ import annotations
 
@@ -13,15 +16,13 @@ from typing import Any, Optional
 
 from ..config import Settings
 from ..models import Candidate, Shot
-from ..util import clamp
 from . import base
 from .base import BaseAdapter, Media, RawResult, cached_download, link_into, make_candidates
 
 SEARCH = "https://archive.org/advancedsearch.php"
 METADATA = "https://archive.org/metadata/"
 DOWNLOAD = "https://archive.org/download/"
-PD_COLLECTIONS = {"prelinger", "publicdomainmovies", "fedflix", "nasa", "usgovernmentdocuments", "newsandpublicaffairs"}
-FULL_DOWNLOAD_MAX = 150_000_000
+PD_COLLECTIONS = {"prelinger", "publicdomainmovies", "fedflix", "nasa", "usgovernmentdocuments"}
 
 
 def _first(v: Any) -> str:
@@ -66,6 +67,20 @@ def _num(v: Any) -> float:
         return 0.0
 
 
+def parse_length(v: Any) -> float:
+    """Seconds from an Archive length: '93.5', '01:33' or '1:02:03'."""
+    text = str(v or "").strip()
+    if ":" not in text:
+        return _num(text)
+    total = 0.0
+    for part in text.split(":"):
+        p = _num(part)
+        if p == 0.0 and part.strip() not in {"0", "00", "0.0"}:
+            return 0.0
+        total = total * 60 + p
+    return total
+
+
 def pick_file(files: list[dict[str, Any]], media: Media) -> Optional[dict[str, Any]]:
     """Best mp4 (highest resolution, then size) or largest original jpg."""
     if media == "video":
@@ -88,7 +103,7 @@ def resolve(raw: RawResult, meta_doc: dict[str, Any]) -> Optional[RawResult]:
     return raw.model_copy(update={
         "download_url": f"{DOWNLOAD}{ident}/{f['name']}",
         "width": int(_num(f.get("width"))), "height": int(_num(f.get("height"))),
-        "duration": _num(f.get("length")), "licence": detect_licence(meta, raw.licence if raw.licence != "unknown" else ""),
+        "duration": parse_length(f.get("length")), "licence": detect_licence(meta, raw.licence if raw.licence != "unknown" else ""),
         "author": raw.author or _first(meta.get("creator")),
         "extra": {**raw.extra, "size": _num(f.get("size"))},
     })
@@ -113,13 +128,10 @@ class ArchiveAdapter(BaseAdapter):
             return []
         url = full.download_url
         if full.media == "image":
-            src = cached_download(url, ".jpg", settings)
+            src = cached_download(url, ".jpg", settings, max_bytes=base.MAX_IMAGE_BYTES)
             return make_candidates(full, link_into(src, out_dir, f"archive_{base.url_hash(url)}.jpg"), shot, settings)
-        if full.extra.get("size", 0) > FULL_DOWNLOAD_MAX and full.duration > 120:
-            start = clamp(full.duration * 0.1, 0, full.duration - 60)
-            src = base.cached_section(url, start, clamp(shot.duration * 4, 40, 90), settings)
-        else:
-            src = cached_download(url, ".mp4", settings)
+        src = base.cached_video(url, ".mp4", settings, shot.duration, duration=full.duration,
+                                size=full.extra.get("size", 0.0))
         dst = link_into(src, out_dir, f"archive_{base.url_hash(src.name)}.mp4")
         spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=3)
         return make_candidates(full, dst, shot, settings, spans=spans)

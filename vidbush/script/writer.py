@@ -1,11 +1,19 @@
 """Script writer: outline plus research to a beat-level Script.
 
 Short scripts are written in one writer seat call (task "script"). Long
-scripts are written one section per call, passing the previous section's last
-beat for continuity, so a 60 minute script works. Model output is cleaned
-(no em dashes, no stage directions), over-long beats are re-split, and ids
-are renumbered: scenes s01.., beats b001.. in order. When the seat returns
-nothing usable for a section, beats are assembled from the fact claims.
+scripts are written one section per call; each call sees the whole outline
+(titles and summaries), the facts earlier sections already used and the
+previous section's last beat, so acts do not repeat facts or re-introduce
+the topic, and a 60 minute script works. Every prompt carries the brand
+language. Model output is cleaned (no em dashes, no stage directions),
+over-long beats are re-split, and ids are renumbered: scenes s01.., beats
+b001.. in order. When the seat returns nothing usable for a section, beats
+are assembled from the fact claims.
+
+Real mode (seats.is_real("writer")): a script under MIN_LENGTH_RATIO of the
+outline's target words is retried once (whole script, or each short
+section, with a "too short" note); still short raises ScriptTooShort so the
+stage fails. A writer that fails on every real provider raises ProviderError.
 """
 from __future__ import annotations
 
@@ -14,39 +22,106 @@ from typing import Any, Optional
 
 from ..models import (Beat, Brand, Brief, Emphasis, FactCard, Outline, OutlineSection, Research, Scene,
                       ScenePurpose, Script, VideoFormat)
+from ..providers.base import ProviderError
 from ..util import no_em_dash
 from . import prompts
 from .parser import BEAT_MAX_WORDS, clean_narration, make_beat_texts, split_sentences
 
 SINGLE_CALL_MAX_WORDS = 1800  # about 12 minutes; longer scripts are written per section
 SINGLE_CALL_MAX_SECTIONS = 9
+MIN_LENGTH_RATIO = 0.5
+
+
+class ScriptTooShort(RuntimeError):
+    """A real writer produced under MIN_LENGTH_RATIO of the target words after one retry."""
 
 
 def write_script(outline: Outline, research: Research, brief: Brief, brand: Brand, seats: Any) -> Script:
-    """Write the narration script. Never raises on seat failures; falls back per section."""
+    """Write the narration script. Falls back per section on unusable answers; see the module contract."""
     total = sum(s.target_words for s in outline.sections)
     facts = {f.id: f for f in research.facts if f.status != "contradicted"}
     whole = total <= SINGLE_CALL_MAX_WORDS and len(outline.sections) <= SINGLE_CALL_MAX_SECTIONS
+    real = _is_real(seats)
+    title, scenes = _draft(outline, facts, brief, brand, seats, whole, "")
+    if real and script_words(scenes) < MIN_LENGTH_RATIO * total:
+        note = prompts.TOO_SHORT.format(got=script_words(scenes), want=total)
+        if whole:
+            title, scenes = _draft(outline, facts, brief, brand, seats, True, note)
+        else:
+            scenes = _retry_short_sections(outline, scenes, facts, brief, brand, seats)
+        if script_words(scenes) < MIN_LENGTH_RATIO * total:
+            raise ScriptTooShort(f"script has {script_words(scenes)} words for a target of {total} "
+                                 f"(under {int(MIN_LENGTH_RATIO * 100)} percent after one retry)")
+    return renumber(Script(title=no_em_dash(title or outline.title or brief.topic).strip(), format=outline.format,
+                           scenes=scenes))
+
+
+def script_words(scenes: list[Scene]) -> int:
+    return sum(len(b.text.split()) for sc in scenes for b in sc.beats)
+
+
+def _is_real(seats: Any) -> bool:
+    try:
+        return bool(seats.is_real("writer"))
+    except AttributeError:
+        return False
+
+
+def _draft(outline: Outline, facts: dict[str, FactCard], brief: Brief, brand: Brand, seats: Any, whole: bool,
+           note: str) -> tuple[str, list[Scene]]:
+    """One pass over the outline: (title, scenes)."""
     title = outline.title or brief.topic
     raw_scenes: list[Optional[dict]] = [None] * len(outline.sections)
     if whole:
-        data = _ask(seats, brief, brand, outline, outline.sections, facts, "")
+        data = _ask(seats, brief, brand, outline, outline.sections, facts, "", note)
         title = _title(data) or title
         raw_scenes = _match_scenes(data, outline.sections, 0)
     scenes: list[Scene] = []
     for i, sec in enumerate(outline.sections):
         raw = raw_scenes[i]
         if raw is None and not whole:
-            last = scenes[-1].beats[-1].text if scenes and scenes[-1].beats else ""
-            data = _ask(seats, brief, brand, outline, [sec], facts, last)
-            raw = _match_scenes(data, [sec], i)[0]
-        beats = _beats_from_raw(raw, facts) if raw is not None else []
-        if not beats:
-            beats = heuristic_beats(sec, facts, brief, i, len(outline.sections))
-        name = no_em_dash(str(raw.get("title") or sec.title)).strip() if raw is not None else sec.title
-        scenes.append(Scene(id="", title=name, purpose=sec.purpose, beats=beats,
-                            item_number=sec.item_number if outline.format == VideoFormat.top10 else None))
-    return renumber(Script(title=no_em_dash(title).strip(), format=outline.format, scenes=scenes))
+            raw = _ask_section(seats, brief, brand, outline, i, facts, scenes, note)
+        scenes.append(_scene(sec, raw, facts, brief, i, outline))
+    return title, scenes
+
+
+def _ask_section(seats: Any, brief: Brief, brand: Brand, outline: Outline, i: int, facts: dict[str, FactCard],
+                 previous: list[Scene], note: str) -> Optional[dict]:
+    """Per-section request with the whole outline, the facts used so far and the last beat."""
+    last = previous[-1].beats[-1].text if previous and previous[-1].beats else ""
+    used = sorted({f for sc in previous for b in sc.beats for f in b.facts_used})
+    context = prompts.FULL_OUTLINE.format(
+        outline="\n".join(f"{'>> ' if k == i else ''}{s.id} {s.title}: {s.summary}"
+                          for k, s in enumerate(outline.sections)),
+        used=", ".join(used) or "none")
+    extra = "\n".join(x for x in (context, note) if x)
+    data = _ask(seats, brief, brand, outline, [outline.sections[i]], facts, last, extra)
+    return _match_scenes(data, [outline.sections[i]], i)[0]
+
+
+def _scene(sec: OutlineSection, raw: Optional[dict], facts: dict[str, FactCard], brief: Brief, i: int,
+           outline: Outline) -> Scene:
+    beats = _beats_from_raw(raw, facts) if raw is not None else []
+    if not beats:
+        beats = heuristic_beats(sec, facts, brief, i, len(outline.sections))
+    name = no_em_dash(str(raw.get("title") or sec.title)).strip() if raw is not None else sec.title
+    return Scene(id="", title=name, purpose=sec.purpose, beats=beats,
+                 item_number=sec.item_number if outline.format == VideoFormat.top10 else None)
+
+
+def _retry_short_sections(outline: Outline, scenes: list[Scene], facts: dict[str, FactCard], brief: Brief,
+                          brand: Brand, seats: Any) -> list[Scene]:
+    """Rewrite, once, every section under MIN_LENGTH_RATIO of its own target."""
+    out = list(scenes)
+    for i, sec in enumerate(outline.sections):
+        got = sum(len(b.text.split()) for b in out[i].beats)
+        if got >= MIN_LENGTH_RATIO * sec.target_words:
+            continue
+        note = prompts.TOO_SHORT.format(got=got, want=sec.target_words)
+        raw = _ask_section(seats, brief, brand, outline, i, facts, out[:i], note)
+        if raw is not None:
+            out[i] = _scene(sec, raw, facts, brief, i, outline)
+    return out
 
 
 def renumber(script: Script) -> Script:
@@ -63,7 +138,7 @@ def renumber(script: Script) -> Script:
 # ---------------------------------------------------------------- seat
 
 def _ask(seats: Any, brief: Brief, brand: Brand, outline: Outline, sections: list[OutlineSection],
-         facts: dict[str, FactCard], last_beat: str) -> Optional[Any]:
+         facts: dict[str, FactCard], last_beat: str, note: str = "") -> Optional[Any]:
     wanted = {f for s in sections for f in s.fact_ids}
     fact_lines = [f"{fid}: {facts[fid].claim}" for fid in facts if fid in wanted or len(sections) > 1]
     sec_lines = []
@@ -73,13 +148,17 @@ def _ask(seats: Any, brief: Brief, brand: Brand, outline: Outline, sections: lis
                                                      summary=s.summary, words=s.target_words,
                                                      fact_ids=", ".join(s.fact_ids) or "none"))
     continuity = prompts.CONTINUITY.format(last=last_beat) if last_beat else ""
+    continuity = "\n".join(x for x in (continuity, note) if x)
     user = prompts.SCRIPT_USER.format(topic=brief.topic, angle=brief.angle or "none",
                                       audience=brief.audience or "older US viewers", notes=brand.niche_notes or "none",
                                       format=outline.format.value, sections="\n".join(sec_lines),
+                                      language=prompts.language_line(brand.language),
                                       facts="\n".join(fact_lines[:150]) or "none", continuity=continuity)
     try:
         return seats.llm_json("writer", "script", prompts.SCRIPT_SYSTEM, user, stage="script")
-    except Exception:  # seat failures fall back to the heuristic writer
+    except ProviderError:
+        raise  # every real provider failed: the stage fails, resume retries
+    except Exception:  # a malformed answer falls back to the heuristic writer
         return None
 
 

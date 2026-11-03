@@ -57,3 +57,35 @@ def test_text_length_limits() -> None:
     from vidbush.render.thumbnails import heuristic_text, _short
     assert _short("one two three four five") == "" and _short("a very long wordlengthsss here") == ""
     assert 0 < len(heuristic_text("Extraordinarily Underappreciated Transcontinental Engineering")) <= 24
+
+
+def test_arrow_targets_detail_or_is_skipped() -> None:
+    from vidbush.render.thumbnails import arrow_target
+    flat = Image.new("RGB", (1280, 720), (90, 90, 90))
+    assert arrow_target(flat, (0, 500, 400, 720)) is None, "no distinct subject, no arrow"
+    im = flat.copy()
+    detail = np.random.default_rng(1).integers(0, 255, (120, 160, 3), dtype=np.uint8)
+    im.paste(Image.fromarray(detail), (950, 120))
+    x, y = arrow_target(im, (0, 500, 400, 720))
+    assert 900 <= x <= 1160 and 80 <= y <= 290
+
+
+def test_thumbnail_vision_call_asks_for_json(make_ctx) -> None:
+    from vidbush.render import thumbnails as th
+    ctx = make_ctx(mode="brief")
+    shotlist = build_shotlist(ctx.work / "media")
+    for s in shotlist.shots:
+        s.judge_score = None
+        for c in s.candidates:
+            c.score = None
+    calls = []
+    real = ctx.seats.vision_json
+
+    def spy(role, task, system, prompt, images, stage, intent=""):  # noqa: ANN001
+        calls.append((system, prompt))
+        return real(role, task, system, prompt, images, stage, intent)
+
+    ctx.seats.vision_json = spy
+    th.best_frames(shotlist, ctx, 3)
+    assert calls and all("json" in s.lower() and '"score"' in s for s, _ in calls)
+    assert all("Rubric" in p and "JSON" in p for _, p in calls)

@@ -167,14 +167,15 @@ def test_handler_apply_ops_writes_last_edit(client, settings, monkeypatch):
     _create_script(client)
     seen = {}
 
-    def apply_and_render(s, project_id, ops, echo=True):
-        seen.update(project_id=project_id, ops=ops, echo=echo)
+    def apply_and_render(s, project_id, ops, echo=True, job_id=None):
+        seen.update(project_id=project_id, ops=ops, echo=echo, job_id=job_id)
         return EditResult(ops=ops, applied=[o.op.value for o in ops], dirty_shots=["s1"])
     _fake_ops_module(monkeypatch, apply_and_render)
     ops = [{"op": "set_duration", "args": {"shot_id": "s1", "seconds": 5}}]
     jid = runner.enqueue(settings, "p1", "apply_ops", {"ops": ops})
     handle_job(settings, next(j for j in runner.list_jobs(settings, "p1") if j.id == jid))
     assert seen["project_id"] == "p1" and seen["ops"][0].args["seconds"] == 5 and seen["echo"] is False
+    assert seen["job_id"] == jid
     last = json.loads((Path(settings.output_folder) / "p1" / "work" / "last_edit.json").read_text())
     assert last["job_id"] == jid and last["ok"] is True and last["result"]["dirty_shots"] == ["s1"]
     assert client.get("/api/projects/p1").json()["last_edit"]["job_id"] == jid

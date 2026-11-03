@@ -94,7 +94,7 @@ def test_rejected_candidate_never_selected_while_alternative_passes(ctx, monkeyp
         rejects={"sample_image_01.jpg": ["burned in subtitles"]}))
     out = dl.judge_and_select(shotlist([s]), ctx).shots[0]
     assert out.selected == "shot_000_local_2"
-    assert out.candidates[0].reject_reason == "burned in subtitles"
+    assert out.candidates[0].reject_reason == "burned_in_captions"
 
 
 def test_requery_then_ai_conversion_keeps_overlay(ctx, monkeypatch, registry):
@@ -191,7 +191,8 @@ def test_local_rejects_low_res_and_missing_keyframes(ctx, monkeypatch):
 
 
 def test_parse_verdict_shapes():
-    assert parse_verdict({"score": 7.5, "reason": "ok"})[0] == 75.0
+    assert parse_verdict({"score": 7.5, "reason": "ok"})[0] == 7.5  # a poor 0..100 score stays poor
+    assert parse_verdict({"score": 1})[0] == 1.0
     assert parse_verdict({"score": 0.8})[0] == pytest.approx(80.0)
     assert parse_verdict({"score": "88", "rejects": "watermark"})[2] == ["watermark"]
     assert parse_verdict({"reason": "no score"}) is None
@@ -212,3 +213,23 @@ def test_add_candidates_renumbers_and_dedupes():
     added = dl.add_candidates(s, [cand("shot_000", 1, 2), cand("shot_000", 5, 1)])
     assert [c.id for c in added] == ["shot_000_local_2"]
     assert len(s.candidates) == 2
+
+
+def test_reuse_penalised_across_motion_graphics_and_far_apart(ctx, monkeypatch, registry):
+    monkeypatch.setattr(ctx.seats, "vision_json", fake_vision({"sample_image_01.jpg": 90, "sample_image_02.jpg": 87}))
+    shots = [shot(0, cands=[cand("shot_000", 1, 1)]), shot(1, ShotType.motion_graphic),
+             shot(2, cands=[cand("shot_002", 1, 1), cand("shot_002", 2, 2)])]
+    sl = dl.judge_and_select(shotlist(shots), ctx)
+    assert sl.shots[2].selected == "shot_002_local_2"  # the motion graphic no longer resets diversity
+    far = dl._Usage()
+    far.add(cand("x", 1, 1), 0.0)
+    assert far.penalty(cand("y", 1, 1), 300.0) == dl.DIVERSITY_GAP  # reuse costs something anywhere
+    assert far.penalty(cand("y", 1, 1), 30.0) == dl.DIVERSITY_GAP + dl.RECENT_PENALTY
+
+
+def test_reused_video_needs_a_different_segment():
+    usage = dl._Usage()
+    usage.add(cand("a", 1, 1, media="video", url="http://x/v.mp4", in_point=10.0), 0.0)
+    same = cand("b", 1, 1, media="video", url="http://x/v.mp4", in_point=11.0)
+    other = cand("b", 2, 1, media="video", url="http://x/v.mp4", in_point=20.0)
+    assert usage.penalty(same, 200.0) > usage.penalty(other, 200.0)

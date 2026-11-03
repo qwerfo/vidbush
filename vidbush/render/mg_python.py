@@ -599,13 +599,19 @@ def _curve(a: tuple[float, float], b: tuple[float, float], bend: float, n: int =
 ITEM_NUM_RE = re.compile(r"^\s*#?(\d{1,3})[\.\):\s]+(.*)$")
 
 
-def recap_numbers(items: list[str], countdown: bool) -> list[tuple[int, str]]:
-    """(number, label) per item: explicit leading numbers win, else countdown n..1 or 1..n."""
+def recap_numbers(items: list[str], countdown: bool,
+                  numbers: Optional[list[int]] = None) -> list[tuple[int, str]]:
+    """(number, label) per item: payload numbers (when one per item) win, then leading numbers in the
+    labels, else countdown n..1 or 1..n."""
     out = []
     n = len(items)
+    explicit = numbers if numbers and len(numbers) == n else None
     for i, it in enumerate(items):
         m = ITEM_NUM_RE.match(it)
-        if m and m.group(2).strip():
+        if explicit is not None:
+            label = m.group(2).strip() if m and m.group(2).strip() and int(m.group(1)) == explicit[i] else it.strip()
+            out.append((int(explicit[i]), label))
+        elif m and m.group(2).strip():
             out.append((int(m.group(1)), m.group(2).strip()))
         else:
             out.append((n - i if countdown else i + 1, it.strip()))
@@ -618,7 +624,7 @@ class RecapGrid(CompBase):
     def __init__(self, spec: MotionSpec, payload, pal, alpha: bool) -> None:  # noqa: ANN001
         super().__init__(spec, payload, pal, alpha)
         countdown = pal.name == "top10_bold" or "top" in payload.title.lower()
-        items = recap_numbers(payload.items or ["Recap"], countdown)
+        items = recap_numbers(payload.items or ["Recap"], countdown, payload.numbers)
         n = len(items)
         cols = n if n <= 4 else min(5, math.ceil(n / 2)) if n <= 10 else 5
         rows = math.ceil(n / cols)
@@ -632,7 +638,8 @@ class RecapGrid(CompBase):
         cw = (area_w - gap * (cols - 1)) / cols
         ch = min(self.px(300), (area_h - gap * (rows - 1)) / rows)
         y_start = top + (area_h - (ch * rows + gap * (rows - 1))) / 2
-        best = min(nu for nu, _ in items)
+        nums = [nu for nu, _ in items]
+        best = 1 if 1 in nums else min(nums)
         self.cards = []
         for i, (num, label) in enumerate(items):
             r, c = divmod(i, cols)

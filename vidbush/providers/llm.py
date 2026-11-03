@@ -16,29 +16,49 @@ from typing import Any, Optional
 from .base import CallResult, ProviderSpec, RefusalError
 from .http import post_json
 
-_QUIRKS: dict[str, set[str]] = {}
+_QUIRKS: dict[tuple[str, str], set[str]] = {}
 _QLOCK = threading.Lock()
 
+# precise phrases per adjustable request feature; matched only on non policy 400s
 _ADJUSTABLE = {
+    "json_word": ("must contain the word 'json'", 'must contain the word "json"'),
     "response_format": ("response_format", "json_object", "json mode", "json_schema"),
-    "temperature": ("temperature",),
-    "system_role": ("system", "role"),
+    "temperature": ("'temperature'", '"temperature"', "temperature is not supported",
+                    "unsupported parameter: temperature", "only the default (1) value"),
+    "system_role": ("system role", "system message", "system_message", "role 'system'", 'role "system"', "role': 'system'",
+                    "system prompt is not supported", "developer instruction"),
 }
+_PARAM_QUIRK = {"response_format": "response_format", "temperature": "temperature"}
+_POLICY_WORDS = ("safety", "content policy", "content_policy", "flagged", "moderation", "content_filter",
+                 "violat", "prohibited")
+_PARAM_RE = re.compile(r'"param"\s*:\s*"([^"]+)"')
 
 REFUSAL_RE = re.compile(r"^\s*(i can('|no)t|i'm sorry|i am unable|i won't|sorry, i)", re.I)
 
 
-def _quirks(model: str) -> set[str]:
-    with _QLOCK:
-        return set(_QUIRKS.get(model, set()))
+def _qkey(spec: ProviderSpec) -> tuple[str, str]:
+    return (spec.base_url.rstrip("/"), spec.model)
 
 
-def _add_quirk(model: str, q: str) -> None:
+def _quirks(key: tuple[str, str]) -> set[str]:
     with _QLOCK:
-        _QUIRKS.setdefault(model, set()).add(q)
+        return set(_QUIRKS.get(key, set()))
+
+
+def _add_quirk(key: tuple[str, str], q: str) -> None:
+    with _QLOCK:
+        _QUIRKS.setdefault(key, set()).add(q)
+
+
+def reset_quirks() -> None:
+    """Forget learned quirks (call between runs or in tests)."""
+    with _QLOCK:
+        _QUIRKS.clear()
 
 
 def _messages(system: str, user: Any, quirks: set[str]) -> list[dict[str, Any]]:
+    if "json_word" in quirks:
+        system = f"{system}\n\nRespond in JSON."
     if "system_role" in quirks:
         if isinstance(user, str):
             return [{"role": "user", "content": f"{system}\n\n{user}"}]
@@ -54,7 +74,7 @@ def chat(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperatur
     headers.update(spec.options.get("headers", {}))
     last: Optional[Exception] = None
     for _ in range(4):
-        q = _quirks(spec.model)
+        q = _quirks(_qkey(spec))
         body: dict[str, Any] = {"model": spec.model, "messages": _messages(system, user, q)}
         if "temperature" not in q:
             body["temperature"] = temperature
@@ -65,18 +85,25 @@ def chat(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperatur
             data = post_json(url, body, headers, timeout=timeout)
         except RefusalError as e:
             last = e
-            if not _learn(spec.model, str(e), q):
+            if not _learn(_qkey(spec), str(e), q):
                 raise
             continue
         return _result(spec, data, want_json)
     raise RefusalError(f"request could not be adjusted for {spec.model}: {last}")
 
 
-def _learn(model: str, err: str, have: set[str]) -> bool:
+def _learn(key: tuple[str, str], err: str, have: set[str]) -> bool:
+    """Learn one request adjustment from a 400. Content policy errors never teach a quirk."""
     low = err.lower()
-    for quirk, words in _ADJUSTABLE.items():
-        if quirk not in have and any(w in low for w in words):
-            _add_quirk(model, quirk)
+    if any(w in low for w in _POLICY_WORDS):
+        return False
+    m = _PARAM_RE.search(err)
+    if m and _PARAM_QUIRK.get(m.group(1)) and _PARAM_QUIRK[m.group(1)] not in have:
+        _add_quirk(key, _PARAM_QUIRK[m.group(1)])
+        return True
+    for quirk, phrases in _ADJUSTABLE.items():
+        if quirk not in have and any(p in low for p in phrases):
+            _add_quirk(key, quirk)
             return True
     return False
 

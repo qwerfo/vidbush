@@ -30,9 +30,17 @@ SIDE_MARGIN = 0.06  # fraction of width kept clear left and right
 WEAK_END = {"the", "a", "an", "of", "to", "and", "in", "on", "at", "for", "with", "by", "from", "as", "or",
             "but", "that", "its", "their", "his", "her", "our", "is", "was", "were", "into", "than", "this",
             "it", "they", "we", "he", "she", "i", "you", "not", "be", "has", "had", "have", "will", "would",
-            "could", "should", "very", "most", "more", "so", "if", "when", "who", "which", "where"}
+            "could", "should", "very", "most", "more", "so", "if", "when", "who", "which", "where",
+            "about", "some", "nearly", "roughly", "almost", "around", "over", "under", "just", "only", "each",
+            "every"}
+NUMBER_WORDS = {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+                "twenty", "thirty", "forty", "fifty", "hundred", "thousand", "million", "billion", "dozen"}
+WEAK_END_COST = 1.3
+NAME_SPLIT_COST = 1.0  # breaking inside a capitalised name ("Six | Companies")
+NUMBER_NOUN_COST = 1.0  # breaking between a number and its noun ("22,000 | workers")
 _SENT_END = re.compile(r"[.!?]['\")\]]*$")
 _CLAUSE_END = re.compile(r"[,;:]['\")\]]*$")
+_NUMERAL = re.compile(r"^[$\u00a3\u20ac]?\d[\d,.]*%?$")
 
 
 class CaptionLine(BaseModel):
@@ -55,8 +63,7 @@ def _line_cost(words: list[Word], i: int, j: int, n_total: int) -> float:
         cost += 0.0 if _SENT_END.search(last) else 0.35 if _CLAUSE_END.search(last) else 1.0
         if words[j].start - words[j - 1].end >= 0.35:
             cost -= 0.5
-        if re.sub(r"\W", "", last.lower()) in WEAK_END and not _CLAUSE_END.search(last):
-            cost += 0.6
+        cost += _break_cost(last, words[j].text)
     for k in range(i, j - 1):
         t = words[k].text
         if _SENT_END.search(t):
@@ -69,6 +76,24 @@ def _line_cost(words: list[Word], i: int, j: int, n_total: int) -> float:
             cost += 0.8
     dur = words[j - 1].end - words[i].start
     return cost + max(0.0, dur - 3.2) * 0.5
+
+
+def _bare(token: str) -> str:
+    return re.sub(r"[^\w$\u00a3\u20ac%,.]", "", token).strip(".,")
+
+
+def _break_cost(last: str, nxt: str) -> float:
+    """Extra cost of a line break between tokens last and nxt (weak ending, split name, number + noun)."""
+    if _SENT_END.search(last) or _CLAUSE_END.search(last):
+        return 0.0
+    word, nword = re.sub(r"\W", "", last.lower()), re.sub(r"\W", "", nxt.lower())
+    cost = WEAK_END_COST if word in WEAK_END else 0.0
+    if last[:1].isupper() and nxt[:1].isupper() and word not in WEAK_END:
+        cost += NAME_SPLIT_COST
+    is_number = bool(_NUMERAL.match(_bare(last))) or word in NUMBER_WORDS
+    if is_number and nxt[:1].isalpha() and nxt[:1].islower() and nword not in WEAK_END:
+        cost += NUMBER_NOUN_COST
+    return cost
 
 
 def _partition(words: list[Word], lo: int, hi: int) -> Optional[list[tuple[int, int]]]:
@@ -281,13 +306,39 @@ def load_caption_lines(path: Path | str) -> list[CaptionLine]:
     return [CaptionLine(**d) for d in items]
 
 
+def shift_lines(lines: list[CaptionLine], offset: float) -> list[CaptionLine]:
+    """Copies of lines (and their words) moved by offset seconds."""
+    if not offset:
+        return list(lines)
+    out = []
+    for ln in lines:
+        words = [w.model_copy(update={"start": round(w.start + offset, 3), "end": round(w.end + offset, 3)})
+                 for w in ln.words]
+        out.append(ln.model_copy(update={"start": round(ln.start + offset, 3), "end": round(ln.end + offset, 3),
+                                         "words": words}))
+    return out
+
+
+def write_sidecars(lines: list[CaptionLine], profile: StyleProfile, out_root: Path, settings: Settings,
+                   offset: float = 0.0) -> list[Path]:
+    """captions.srt and captions.ass in out_root on the final video timeline (body time + offset)."""
+    out_root = Path(out_root)
+    w, h = settings.render.width, settings.render.height
+    moved = shift_lines(lines, offset)
+    return [write_srt(moved, out_root / "captions.srt"),
+            write_ass(moved, profile, out_root / "captions.ass", w, h, settings.repo_root)]
+
+
 def build_captions(narration: Narration, profile: StyleProfile, out_root: Path, settings: Settings) -> list[Path]:
-    """Write captions.srt and captions.ass in out_root and work/captions.json. Returns the three paths."""
+    """Write captions.srt and captions.ass in out_root and work/captions.json. Returns the three paths.
+
+    work/captions.json stays in body (narration) time for the segment burn-in; assembly
+    rewrites the srt and ass sidecars shifted by the intro duration.
+    """
     out_root = Path(out_root)
     w, h = settings.render.width, settings.render.height
     lines = group_words(narration.words, profile.captions)
-    srt = write_srt(lines, out_root / "captions.srt")
-    ass = write_ass(lines, profile, out_root / "captions.ass", w, h, settings.repo_root)
+    srt, ass = write_sidecars(lines, profile, out_root, settings)
     geo = caption_geometry(profile, w, h)
     js = write_json(out_root / "work" / "captions.json",
                     {"lines": [ln.model_dump(mode="json") for ln in lines], "geometry": geo,

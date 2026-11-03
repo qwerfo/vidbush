@@ -1,7 +1,9 @@
 """Provider client: one wrapper for every external call.
 
 Handles retries on transport errors, fallback on refusal or 4xx, provider down
-marking with a 10 minute probe cycle, timing, and cost recording.
+marking with a 10 minute probe cycle, rate limit backoff (429 honours
+Retry-After and never marks a provider down), per-provider concurrency
+limits, timing, and cost recording.
 """
 from __future__ import annotations
 
@@ -15,6 +17,12 @@ from ..models import CostEntry, CostReport
 from ..util import JsonLogger, NullLogger, write_json
 
 PROBE_INTERVAL_S = 600.0
+RATE_LIMIT_RETRIES = 6
+RATE_LIMIT_MAX_WAIT_S = 60.0
+# model names in config/seats.yaml that are placeholders, never real model ids
+PLACEHOLDER_PREFIX = "your-"
+# provider types whose requests name a model, so an empty model means not configured
+MODEL_TYPES = {"openai_compat", "fal", "runware"}
 
 
 class ProviderError(Exception):
@@ -23,6 +31,14 @@ class ProviderError(Exception):
 
 class TransportError(ProviderError):
     """Network, timeout or 5xx. Retried with backoff."""
+
+
+class RateLimitError(TransportError):
+    """HTTP 429. Retried after Retry-After (or exponential backoff); never marks a provider down."""
+
+    def __init__(self, msg: str, retry_after: Optional[float] = None) -> None:
+        super().__init__(msg)
+        self.retry_after = retry_after
 
 
 class RefusalError(ProviderError):
@@ -46,11 +62,21 @@ class ProviderSpec:
 
     @property
     def configured(self) -> bool:
+        """True when the spec has what a real request needs. Placeholder models do not count."""
         if self.type == "mock":
             return True
-        if self.type in {"openai_compat"}:
+        if is_placeholder_model(self.model):
+            return False
+        if self.type in MODEL_TYPES and not self.model:
+            return False
+        if self.type == "openai_compat":
             return bool(self.base_url and self.api_key)
         return bool(self.api_key)
+
+
+def is_placeholder_model(model: str) -> bool:
+    """A seats.yaml placeholder such as "your-strong-model"."""
+    return model.strip().lower().startswith(PLACEHOLDER_PREFIX)
 
 
 class CostTracker:
@@ -117,6 +143,27 @@ class HealthBoard:
 HEALTH = HealthBoard()
 
 
+class ConcurrencyLimiter:
+    """Process-wide semaphores per provider, sized by options.max_concurrency."""
+
+    def __init__(self) -> None:
+        self._sems: dict[str, threading.BoundedSemaphore] = {}
+        self._lock = threading.Lock()
+
+    def get(self, spec: ProviderSpec) -> Optional[threading.BoundedSemaphore]:
+        limit = int(spec.options.get("max_concurrency") or 0)
+        if limit <= 0:
+            return None
+        key = f"{spec.name}:{limit}"
+        with self._lock:
+            if key not in self._sems:
+                self._sems[key] = threading.BoundedSemaphore(limit)
+            return self._sems[key]
+
+
+LIMITS = ConcurrencyLimiter()
+
+
 @dataclass
 class CallResult:
     value: Any
@@ -157,14 +204,26 @@ class ProviderClient:
 
     def _try(self, role: str, stage: str, spec: ProviderSpec, fn: Callable[[ProviderSpec], CallResult],
              key: str, errors: list[str], note: str) -> Optional[CallResult]:
-        for attempt in range(1, self.retries + 1):
+        """Run fn on one provider with transport retries and rate limit backoff. None means move on."""
+        transport_fails = rate_fails = 0
+        while True:
             t0 = time.time()
             try:
-                res = fn(spec)
+                res = self._run(spec, fn)
+            except RateLimitError as e:
+                rate_fails += 1
+                self._record(role, stage, spec, ok=False, latency=time.time() - t0, note=f"rate limit: {e}"[:300])
+                if rate_fails < RATE_LIMIT_RETRIES:
+                    self.sleep(self._rate_wait(e, rate_fails))
+                    continue
+                errors.append(f"{spec.name}: rate limited {e}")
+                self.log.warn("provider rate limited", role=role, provider=spec.name, error=str(e)[:300])
+                return None
             except TransportError as e:
+                transport_fails += 1
                 self._record(role, stage, spec, ok=False, latency=time.time() - t0, note=f"transport: {e}"[:300])
-                if attempt < self.retries:
-                    self.sleep(self.backoff_s * (2 ** (attempt - 1)))
+                if transport_fails < self.retries:
+                    self.sleep(self.backoff_s * (2 ** (transport_fails - 1)))
                     continue
                 HEALTH.mark_down(key)
                 errors.append(f"{spec.name}: transport {e}")
@@ -182,7 +241,19 @@ class ProviderClient:
             self._record(role, stage, spec, ok=True, latency=time.time() - t0, note=note,
                          cost=res.cost_usd, units=res.units, unit_kind=res.unit_kind, mock=res.mock)
             return res
-        return None
+
+    @staticmethod
+    def _run(spec: ProviderSpec, fn: Callable[[ProviderSpec], CallResult]) -> CallResult:
+        sem = LIMITS.get(spec)
+        if sem is None:
+            return fn(spec)
+        with sem:
+            return fn(spec)
+
+    def _rate_wait(self, e: RateLimitError, n: int) -> float:
+        if e.retry_after is not None and e.retry_after >= 0:
+            return min(float(e.retry_after), RATE_LIMIT_MAX_WAIT_S)
+        return min(self.backoff_s * (2 ** n), RATE_LIMIT_MAX_WAIT_S)
 
     def _record(self, role: str, stage: str, spec: ProviderSpec, ok: bool, latency: float, note: str = "",
                 cost: float = 0.0, units: float = 0.0, unit_kind: str = "", mock: bool = False) -> None:
@@ -191,8 +262,25 @@ class ProviderClient:
                                    units=units, unit_kind=unit_kind, mock=mock or spec.type == "mock"))
 
 
-def http_error_to_exc(status: int, body: str) -> ProviderError:
-    """Map an HTTP status to the right exception class."""
-    if status in (408, 425, 429) or status >= 500:
+def http_error_to_exc(status: int, body: str, retry_after: Optional[str] = None) -> ProviderError:
+    """Map an HTTP status to the right exception class (429 to RateLimitError with Retry-After seconds)."""
+    if status == 429:
+        return RateLimitError(f"http 429: {body[:300]}", parse_retry_after(retry_after))
+    if status in (408, 425) or status >= 500:
         return TransportError(f"http {status}: {body[:300]}")
     return RefusalError(f"http {status}: {body[:300]}")
+
+
+def parse_retry_after(value: Optional[str]) -> Optional[float]:
+    """Retry-After as seconds (delta seconds or an HTTP date), or None."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+    except (TypeError, ValueError):
+        return None

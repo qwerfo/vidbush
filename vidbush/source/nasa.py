@@ -1,8 +1,10 @@
 """NASA Image and Video Library adapter (images-api.nasa.gov).
 
 Search: /search?q=...&media_type=image|video. Fetch: the asset manifest
-(/asset/<nasa_id>) gives every rendition; the largest jpg (~orig, then
-~large) or the original mp4 is downloaded. Licence "Public domain (NASA)".
+(/asset/<nasa_id>) gives every rendition. ~large is preferred (originals are
+often broadcast masters of several GB or images over 100 MP); ~orig is used
+only when no large or medium rendition exists. Videos over the full download
+size are read as a section. Licence "Public domain (NASA)".
 """
 from __future__ import annotations
 
@@ -17,8 +19,8 @@ from .base import BaseAdapter, Media, RawResult, cached_download, link_into, mak
 SEARCH = "https://images-api.nasa.gov/search"
 ASSET = "https://images-api.nasa.gov/asset/"
 LICENCE = "Public domain (NASA)"
-IMAGE_PREF = ("~orig.jpg", "~large.jpg", "~medium.jpg")
-VIDEO_PREF = ("~orig.mp4", "~large.mp4", "~medium.mp4", "~mobile.mp4")
+IMAGE_PREF = ("~large.jpg", "~medium.jpg", "~orig.jpg")
+VIDEO_PREF = ("~large.mp4", "~medium.mp4", "~orig.mp4", "~mobile.mp4")
 
 
 def parse_search(data: dict[str, Any], media: Media) -> list[RawResult]:
@@ -66,8 +68,10 @@ class NasaAdapter(BaseAdapter):
         if not url:
             return []
         raw = raw.model_copy(update={"download_url": url})
-        ext = ".mp4" if raw.media == "video" else ".jpg"
-        src = cached_download(url, ext, settings)
-        dst = link_into(src, out_dir, f"nasa_{base.url_hash(url)}{ext}")
+        if raw.media == "video":
+            ext, src = ".mp4", base.cached_video(url, ".mp4", settings, shot.duration)
+        else:
+            ext, src = ".jpg", cached_download(url, ".jpg", settings, max_bytes=base.MAX_IMAGE_BYTES)
+        dst = link_into(src, out_dir, f"nasa_{base.url_hash(src.name)}{ext}")
         spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=3) if raw.media == "video" else None
         return make_candidates(raw, dst, shot, settings, spans=spans)

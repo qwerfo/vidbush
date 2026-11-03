@@ -217,3 +217,19 @@ def test_chat_maps_and_optionally_applies(client, settings, project, monkeypatch
     job = _last_job(settings)
     assert r.json()["job_id"] == job.id and job.kind == "apply_ops"
     assert client.post(f"/api/projects/{PID}/chat", json={"message": ""}).status_code == 422
+
+
+def test_load_shotlist_rebases_paths_of_a_moved_project(tmp_path):
+    from vidbush.api.routes_shots import load_shotlist as load_api_shotlist
+    from vidbush.models import Candidate, Shot, ShotList, ShotType, SourceKind
+    from vidbush.util import write_json
+    root = tmp_path / "output" / "mvp"
+    old = "/home/someone/vidbush/output/mvp"
+    write_json(root / "project.json", {"paths": {"root": old}})
+    cand = Candidate(id="c1", source=SourceKind.local, local_path=f"{old}/sources/shot_001/a.mp4", media="video")
+    shot = Shot(id="shot_001", index=0, beat_id="b1", start=0, end=3, duration=3, type=ShotType.footage, intent="x",
+                candidates=[cand], selected="c1", render_segment_path=f"{old}/work/segments/x.mp4")
+    write_json(root / "work" / "shotlist.json", ShotList(project_id="mvp", duration=3, shots=[shot]))
+    got = load_api_shotlist(root).shots[0]
+    assert got.candidates[0].local_path == str(root / "sources" / "shot_001" / "a.mp4")
+    assert got.render_segment_path == str(root / "work" / "segments" / "x.mp4")

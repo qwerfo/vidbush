@@ -45,11 +45,11 @@ def format_number(value: float, unit: str = "") -> str:
     money = u in {"dollars", "usd", "$", "us dollars"}
     av = abs(value)
     if av >= 1e9:
-        s = f"{value / 1e9:.1f}".rstrip("0").rstrip(".") + "B"
+        s = _short(value / 1e9) + "B"
     elif av >= 1e6 and money:
-        s = f"{value / 1e6:.1f}".rstrip("0").rstrip(".") + "M"
+        s = _short(value / 1e6) + "M"
     elif av >= 1e6:
-        s = f"{value / 1e6:.1f}".rstrip("0").rstrip(".") + " million"
+        s = _short(value / 1e6) + " million"
     elif float(value).is_integer():
         s = f"{int(value):,}"
     else:
@@ -59,6 +59,11 @@ def format_number(value: float, unit: str = "") -> str:
     if u in {"percent", "%"}:
         return s + "%"
     return s
+
+
+def _short(v: float) -> str:
+    """Up to two decimals without trailing zeros: 3.25, 2.75, 1.5, 49."""
+    return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
 # ---------------------------------------------------------------- maps
@@ -85,15 +90,23 @@ def map_view(points: Sequence[tuple[float, float]], min_span: Optional[float] = 
 def map_spec(places: Sequence[Place], duration: float = 8.0, route: bool = False, shaded: Sequence[str] = (),
              title: str = "", source_note: str = MAP_SOURCE, palette: str = "documentary_warm",
              push_in: bool = True, dashed: bool = False, route_label: str = "") -> MotionSpec:
-    """Map with staggered markers, an optional route through the places in order and shaded countries."""
+    """Map with staggered markers, an optional route through the places in order and shaded countries.
+
+    shaded may also name states or continents: they get a large label and frame the view but are not shaded.
+    """
     from . import geo
     pts: list[tuple[float, float]] = [(p[1], p[2]) for p in places]
     labels: list[MapLabel] = []
+    countries: list[str] = []
     for name in shaded:
         box = geo.country_bbox(name)
+        hit = geo.lookup(name)
         if box:
             pts += [(box[0], box[1]), (box[2], box[3])]
-        hit = geo.lookup(name)
+            countries.append(geo.country_name(name) or name)
+        elif hit:
+            span = 12.0 if geo.place_kind(name) == "continent" else 4.0
+            pts += [(hit.lat - span, hit.lon - span), (hit.lat + span, hit.lon + span)]
         if hit and not any(p[0] == hit.name for p in places):
             labels.append(MapLabel(lat=hit.lat, lon=hit.lon, text=hit.name.upper(), size="large"))
     center, zoom = map_view(pts)
@@ -109,7 +122,7 @@ def map_spec(places: Sequence[Place], duration: float = 8.0, route: bool = False
                                label=route_label, dashed=dashed))
     payload = MapPayload(center=center, zoom=zoom, zoom_end=round(zoom + 0.35, 2) if push_in else None,
                          markers=markers, routes=routes, labels=labels,
-                         shaded_regions=[geo.country_name(s) or s for s in shaded], title=title)
+                         shaded_regions=countries, title=title)
     return _spec(MotionKind.map, duration, payload.model_dump(), palette, "solid", source_note or MAP_SOURCE)
 
 
@@ -232,10 +245,11 @@ def arrow_spec(x: float = 0.25, y: float = 0.3, to_x: float = 0.5, to_y: float =
 
 
 def recap_grid_spec(items: Sequence[str], title: str = "Recap", duration: float = 10.0,
-                    palette: str = "top10_bold") -> MotionSpec:
-    """Grid listing items in the given order (countdown order for Top 10)."""
-    return _spec(MotionKind.recap_grid, duration, RecapPayload(title=title, items=list(items)).model_dump(),
-                 palette, "solid")
+                    palette: str = "top10_bold", numbers: Optional[Sequence[int]] = None) -> MotionSpec:
+    """Grid listing items in the given order (countdown order for Top 10); numbers label each item."""
+    nums = [int(n) for n in numbers] if numbers is not None and len(numbers) == len(items) else None
+    payload = RecapPayload(title=title, items=list(items), numbers=nums)
+    return _spec(MotionKind.recap_grid, duration, payload.model_dump(), palette, "solid")
 
 
 # ---------------------------------------------------------------- retiming

@@ -8,17 +8,26 @@ or are dropped. Fetch reads the full info dict, skips videos without a
 needed section plus padding at a capped height, then cuts 3 to 12 s clips
 on PySceneDetect scene boundaries. Licence is "Creative Commons
 Attribution" when yt-dlp reports it, else "Standard YouTube License".
+
+YouTube needs a JavaScript runtime for its player challenges: yt-dlp uses
+the yt-dlp-ejs package (installed by the yt-dlp[default] extra) and deno
+(preferred), node or bun. js_runtimes() finds one on PATH and passes it to
+yt-dlp; runtime_warning() explains what is missing so the registry can log
+it once per run. Without a runtime most formats disappear and every video
+looks like it has no 720p rendition. All yt-dlp calls are serialised with a
+small gap (throttle host "youtube") to avoid bot checks.
 """
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
 from ..config import Settings
 from ..models import Candidate, Shot
 from ..util import clamp
-from . import base
+from . import base, throttle
 from .base import BaseAdapter, Media, RawResult, link_into, make_candidates
 
 BOOST = {"archival": 0.25, "archive": 0.2, "documentary": 0.2, "newsreel": 0.3, "public domain": 0.3,
@@ -28,6 +37,45 @@ PENALTY = {"reaction": 0.5, "reacts": 0.5, "vlog": 0.4, "podcast": 0.5, "intervi
            "explained": 0.3, "top 10": 0.4, "top10": 0.4, "#shorts": 0.8, "shorts": 0.5, "unboxing": 0.5,
            "livestream": 0.4, "tutorial": 0.3, "gameplay": 0.6, "trailer": 0.2, "lyrics": 0.5}
 PADDING_S = 10.0
+RUNTIMES = ("deno", "node", "bun")
+YDL_MAX_WAIT_S = 120.0
+
+
+def js_runtimes() -> dict[str, dict[str, str]]:
+    """yt-dlp js_runtimes option for the first runtime found on PATH (deno preferred); {} when none."""
+    for name in RUNTIMES:
+        path = shutil.which(name)
+        if path:
+            return {name: {"path": path}}
+    return {}
+
+
+def ejs_installed() -> bool:
+    try:
+        import yt_dlp_ejs  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def runtime_warning() -> str:
+    """Why YouTube extraction will be degraded, or "" when the runtime and solver are present."""
+    missing = []
+    if not js_runtimes():
+        missing.append("no JavaScript runtime on PATH (install deno, see docs)")
+    if not ejs_installed():
+        missing.append('yt-dlp-ejs is not installed (pip install "yt-dlp[default]")')
+    if not missing:
+        return ""
+    return "YouTube sourcing degraded: " + "; ".join(missing) + ". Most formats will be missing."
+
+
+def _base_opts() -> dict[str, Any]:
+    opts: dict[str, Any] = {"quiet": True, "no_warnings": True, "noplaylist": True}
+    runtimes = js_runtimes()
+    if runtimes:
+        opts["js_runtimes"] = runtimes
+    return opts
 
 
 def score_entry(entry: dict[str, Any]) -> Optional[float]:
@@ -46,16 +94,18 @@ def score_entry(entry: dict[str, Any]) -> Optional[float]:
 def ydl_extract(target: str, opts: dict[str, Any]) -> dict[str, Any]:
     """yt-dlp extract_info without download (network seam for tests)."""
     import yt_dlp
-    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True, **opts}) as ydl:
-        return ydl.sanitize_info(ydl.extract_info(target, download=False))
+    with throttle.slot("youtube", max_wait=YDL_MAX_WAIT_S):
+        with yt_dlp.YoutubeDL({**_base_opts(), **opts}) as ydl:
+            return ydl.sanitize_info(ydl.extract_info(target, download=False))
 
 
 def ydl_download(url: str, opts: dict[str, Any], dest_stem: Path) -> Path:
     """Download with yt-dlp into dest_stem.<ext>; returns the file path (network seam)."""
     import yt_dlp
-    full = {"quiet": True, "no_warnings": True, "noplaylist": True, "outtmpl": f"{dest_stem}.%(ext)s", **opts}
-    with yt_dlp.YoutubeDL(full) as ydl:
-        ydl.download([url])
+    full = {**_base_opts(), "outtmpl": f"{dest_stem}.%(ext)s", **opts}
+    with throttle.slot("youtube", max_wait=YDL_MAX_WAIT_S):
+        with yt_dlp.YoutubeDL(full) as ydl:
+            ydl.download([url])
     files = sorted(p for p in dest_stem.parent.glob(dest_stem.name + ".*") if not p.name.endswith((".part", ".ytdl")))
     if not files:
         raise base.provider_http.TransportError("yt-dlp produced no file")
@@ -140,7 +190,7 @@ class YoutubeAdapter(BaseAdapter):
         lo, hi = settings.sources.youtube_min_height, settings.sources.youtube_max_height
         fmt = (f"bv*[height<={hi}][height>={lo}][ext=mp4]/bv*[height<={hi}][height>={lo}]/"
                f"b[height<={hi}][height>={lo}]")
-        return {"format": fmt, "download_ranges": download_range_func(None, [(a, b)]),
+        return {"format": fmt, "format_sort": ["hdr:SDR", "res", "fps"], "download_ranges": download_range_func(None, [(a, b)]),
                 "force_keyframes_at_cuts": False, "retries": 3, "socket_timeout": settings.sources.timeout_s}
 
 

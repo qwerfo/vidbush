@@ -10,7 +10,7 @@ from typing import Any
 
 from .config import Settings
 from .models import ShotList
-from .util import ffprobe, read_model
+from .util import EM_DASH, ffprobe, read_model
 
 REQUIRED_FILES = ["final.mp4", "captions.srt", "captions.ass", "chapters.txt", "description.md",
                   "shotlist.json", "qa_report.json", "qa_report.md", "cost_report.json"]
@@ -80,5 +80,5 @@ def _text_checks(root: Path) -> dict[str, bool]:
         "description_attribution": "credit" in desc.lower() or "attribution" in desc.lower(),
         "music_ducking": bool(mix_data.get("ducking") or mix_data.get("tracks")),
         "captions_present": srt.count("-->") >= 20,
-        "no_em_dash": "—" not in desc + srt + "\n".join(chapters),
+        "no_em_dash": EM_DASH not in desc + srt + "\n".join(chapters),
     }

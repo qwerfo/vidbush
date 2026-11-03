@@ -6,13 +6,12 @@ demuxer can join them with stream copy. Filter helpers return filter strings
 """
 from __future__ import annotations
 
-import json
-import re
+import functools
+import subprocess
 from pathlib import Path
 from typing import Optional
 
 from ..config import Settings
-from ..util import run
 
 COLOUR_TAGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 AUDIO_RATE = 48000
@@ -45,6 +44,31 @@ def cover_scale(width: int, height: int) -> str:
     """Scale to cover width x height without stretching, then centre crop; bt709 output."""
     return (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos"
             f":out_color_matrix=bt709:out_range=tv,crop={width}:{height},setsar=1")
+
+
+def blur_fill(width: int, height: int, visible_h: int) -> str:
+    """Portrait layout: a blurred, darkened cover copy behind the whole picture fitted to visible_h.
+
+    Returns a labelled sub-graph (split ... overlay) that reads its input from the
+    preceding filter and ends in an overlay, so it can sit inside a chain.
+    """
+    qw, qh = max(2, width // 4 // 2 * 2), max(2, height // 4 // 2 * 2)
+    fg_h = max(2, min(height, visible_h) // 2 * 2)
+    return (f"split=2[pbg][pfg];"
+            f"[pbg]{cover_scale(qw, qh)},boxblur=12:2,eq=brightness=-0.12,"
+            f"scale={width}:{height}:flags=bicubic,setsar=1[pbgo];"
+            f"[pfg]scale=-2:{fg_h}:flags=lanczos:out_color_matrix=bt709:out_range=tv,setsar=1[pfgo];"
+            f"[pbgo][pfgo]overlay=(W-w)/2:(H-h)/2")
+
+
+@functools.lru_cache(maxsize=32)
+def has_filter(name: str) -> bool:
+    """True when this ffmpeg build has the named filter."""
+    try:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return any(line.split()[1:2] == [name] for line in out.decode(errors="replace").splitlines())
 
 
 def fit_pad(width: int, height: int) -> str:
@@ -106,28 +130,6 @@ def write_concat_list(paths: list[Path], list_path: Path) -> Path:
     list_path.parent.mkdir(parents=True, exist_ok=True)
     list_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return list_path
-
-
-def loudnorm_measure(audio: Path, lufs: float, tp: float) -> dict[str, str]:
-    """First loudnorm pass: measured input values as reported by ffmpeg."""
-    cp = run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(audio), "-af",
-              f"loudnorm=I={lufs}:TP={tp}:LRA=11:print_format=json", "-f", "null", "-"], timeout=1800)
-    text = cp.stderr.decode(errors="replace")
-    blocks = re.findall(r"\{[^{}]*\}", text)
-    if not blocks:
-        raise RuntimeError("loudnorm produced no measurement")
-    return json.loads(blocks[-1])
-
-
-def loudnorm_apply(audio: Path, out: Path, lufs: float, tp: float, duration: float) -> Path:
-    """Two pass loudnorm to lufs and true peak tp; output 48 kHz stereo wav of exactly duration seconds."""
-    m = loudnorm_measure(audio, lufs, tp)
-    af = (f"loudnorm=I={lufs}:TP={tp}:LRA=11:measured_I={m['input_i']}:measured_TP={m['input_tp']}"
-          f":measured_LRA={m['input_lra']}:measured_thresh={m['input_thresh']}:offset={m['target_offset']}"
-          f":linear=true,aresample={AUDIO_RATE},{pad_trim(duration)}")
-    run(["ffmpeg", "-y", "-v", "error", "-i", str(audio), "-af", af, "-ac", "2", "-ar", str(AUDIO_RATE),
-         "-c:a", "pcm_s16le", str(out)], timeout=1800)
-    return out
 
 
 def pad_trim(duration: float) -> str:

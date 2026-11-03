@@ -130,6 +130,9 @@ export default function Project({ id }) {
         </div>
       </div>
       <StageBar project={project} />
+      {project.status === "needs_review" && (
+        <div className="banner warnbox" role="status">Finished, but some seats fell back to mock output while real providers are configured. Check the QA report before publishing.</div>
+      )}
       {failedStage && project.status === "failed" && (
         <div className="error">Stage {failedStage.name} failed: {failedStage.error}</div>
       )}

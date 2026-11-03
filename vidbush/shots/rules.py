@@ -4,15 +4,18 @@ apply_rules() runs, in order: merge shots under 1.5 s into a neighbour, keep
 motion graphics at their pacing min where the neighbours can give time, make
 the opening dense (opening_safe footage, short motion graphics), avoid
 consecutive shots from the same idea (framing full, tight, detail when an
-idea must repeat) and break runs of three identical shot types with count
-preserving swaps inside a family. Shot times stay contiguous throughout.
+idea must repeat), break runs of three identical shot types with count
+preserving swaps inside a family, trim long text cards toward the motion
+graphic min, break runs of full screen cards (more than two in a row or about
+16 s) by turning one into footage, and drop overlay text repeated within 30 s
+(another overlay, or the plain sibling type). Shot times stay contiguous.
 """
 from __future__ import annotations
 
 from typing import Callable, Optional
 
-from ..models import OVERLAY_TYPES, MotionSpec, Shot, ShotType, StyleProfile, VisualIdea
-from .pacing import bounds
+from ..models import OVERLAY_TYPES, MotionKind, MotionSpec, Shot, ShotType, StyleProfile, VisualIdea
+from .pacing import MAX_MG_RUN, MAX_MG_RUN_S, bounds
 
 MIN_SHOT = 1.5
 FRAMINGS = ("full", "tight", "detail")
@@ -22,18 +25,30 @@ FAMILY_OF = {ShotType.footage: "footage", ShotType.footage_overlay: "footage", S
              ShotType.image: "still", ShotType.image_overlay: "still", ShotType.ai_image: "still",
              ShotType.motion_graphic: "motion"}
 
+PLAIN = {ShotType.footage_overlay: ShotType.footage, ShotType.image_overlay: ShotType.image}
+TEXT_CARD_KINDS = {MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout}
+TEXT_CARD_EXTRA_S = 1.0  # text cards hold at most the motion graphic min plus this
+OVERLAY_REPEAT_S = 30.0
+
 Rebind = Callable[[Shot, VisualIdea, Optional[int]], None]
-OverlayFor = Callable[[Shot], MotionSpec]
+OverlayFor = Callable[[Shot], Optional[MotionSpec]]
+OverlayPool = Callable[[Shot], list[MotionSpec]]
+FootageFor = Callable[[Shot], Optional[int]]
 
 
 def apply_rules(shots: list[Shot], ideas: list[VisualIdea], idea_of: dict[str, int], profile: StyleProfile,
-                rebind: Rebind, overlay_for: OverlayFor, locked: frozenset[str] = frozenset()) -> list[Shot]:
+                rebind: Rebind, overlay_for: OverlayFor, locked: frozenset[str] = frozenset(),
+                overlay_pool: Optional[OverlayPool] = None, footage_for: Optional[FootageFor] = None) -> list[Shot]:
     """Run every rule; returns the polished list. Locked shot ids (structural anchors) keep type and content."""
     shots = merge_short(shots, MIN_SHOT)
     enforce_motion_min(shots, profile)
     densify_opening(shots, ideas, idea_of, profile, rebind, locked)
     avoid_repeats(shots, ideas, idea_of, rebind, locked)
     break_type_runs(shots, overlay_for, locked)
+    trim_text_cards(shots, profile, locked)
+    if footage_for is not None:
+        break_card_runs(shots, ideas, rebind, footage_for, overlay_for, locked)
+    dedupe_overlays(shots, overlay_pool or (lambda sh: [o for o in [overlay_for(sh)] if o is not None]), locked)
     _retime(shots)
     return shots
 
@@ -202,5 +217,110 @@ def _set_type(shot: Shot, new: ShotType, overlay_for: OverlayFor) -> None:
     shot.type = new
     if new in OVERLAY_TYPES:
         shot.overlay = shot.overlay or overlay_for(shot)
+        if shot.overlay is None:
+            shot.type = PLAIN[new]  # nothing honest to overlay
     else:
         shot.overlay = None
+
+
+# ---------------------------------------------------------------- full screen cards
+
+def trim_text_cards(shots: list[Shot], profile: StyleProfile, locked: frozenset[str] = frozenset()) -> None:
+    """Title, quote and callout cards longer than the motion graphic min plus TEXT_CARD_EXTRA_S give the
+    excess to a non motion neighbour that stays within 1.15 times its max."""
+    cap = profile.pacing.motion_graphic.min + TEXT_CARD_EXTRA_S
+    for i, s in enumerate(shots):
+        if s.type != ShotType.motion_graphic or s.motion is None or s.motion.kind not in TEXT_CARD_KINDS:
+            continue
+        if s.id in locked:
+            continue
+        excess = s.duration - cap
+        for j in (i + 1, i - 1):
+            if excess <= 1e-6 or not 0 <= j < len(shots) or shots[j].type == ShotType.motion_graphic:
+                continue
+            room = bounds(profile, shots[j].type, shots[j].start)[1] * 1.15 - shots[j].duration
+            give = min(excess, max(0.0, room))
+            if give > 0:
+                _move(shots, j, i, give)
+                excess -= give
+
+
+def _card_runs(shots: list[Shot]) -> list[list[int]]:
+    runs, cur = [], []
+    for k, s in enumerate(shots):
+        if s.type == ShotType.motion_graphic:
+            cur.append(k)
+        else:
+            if cur:
+                runs.append(cur)
+            cur = []
+    return runs + ([cur] if cur else [])
+
+
+def break_card_runs(shots: list[Shot], ideas: list[VisualIdea], rebind: Rebind, footage_for: FootageFor,
+                    overlay_for: OverlayFor, locked: frozenset[str] = frozenset()) -> None:
+    """No more than MAX_MG_RUN motion graphics in a row or MAX_MG_RUN_S seconds of them: a free card in the
+    run (text cards first, from the middle) becomes footage of its beat."""
+    for _ in range(len(shots)):
+        bad = next((r for r in _card_runs(shots) if len(r) > MAX_MG_RUN
+                    or sum(shots[k].duration for k in r) > MAX_MG_RUN_S + 1e-6), None)
+        if bad is None:
+            return
+        free = [k for k in bad if shots[k].id not in locked]
+        if not free:
+            continue
+        mid = (bad[0] + bad[-1]) / 2
+        k = min(free, key=lambda x: (shots[x].motion is None or shots[x].motion.kind not in TEXT_CARD_KINDS,
+                                     abs(x - mid)))
+        idx = footage_for(shots[k])
+        if idx is None:
+            return
+        shots[k].type = ShotType.footage
+        rebind(shots[k], ideas[idx], idx)
+        if not _creates_run(shots, k, ShotType.footage_overlay):
+            _set_type(shots[k], ShotType.footage_overlay, overlay_for)
+
+
+# ---------------------------------------------------------------- overlay text
+
+def _overlay_key(spec: MotionSpec) -> str:
+    p = spec.payload
+    text = p.get("title") or p.get("label") or ""
+    return " ".join(str(text).lower().split())
+
+
+def dedupe_overlays(shots: list[Shot], overlay_pool: OverlayPool, locked: frozenset[str] = frozenset()) -> None:
+    """An overlay whose text is on screen within OVERLAY_REPEAT_S (another overlay or a full screen text card)
+    takes the next pool option, else the shot becomes its plain sibling type. Each such loss is then given
+    back to a plain shot of the same family that has a fresh overlay, so the planned mix holds."""
+    used: list[tuple[str, float, float]] = [(_overlay_key(s.motion), s.start, s.end) for s in shots
+                                            if s.type == ShotType.motion_graphic and s.motion is not None
+                                            and s.motion.kind in TEXT_CARD_KINDS]
+
+    def taken(key: str, s: Shot) -> bool:
+        return bool(key) and any(k == key and a - s.end < OVERLAY_REPEAT_S and s.start - b < OVERLAY_REPEAT_S
+                                 for k, a, b in used)
+
+    lost: dict[ShotType, int] = {}
+    for s in shots:
+        if s.type not in OVERLAY_TYPES:
+            continue
+        if s.id not in locked:
+            pool = overlay_pool(s)  # empty on call to action beats: no overlay at all
+            options = ([s.overlay] if s.overlay is not None and pool else []) + pool
+            s.overlay = next((o for o in options if not taken(_overlay_key(o), s)), None)
+            if s.overlay is None:
+                lost[s.type] = lost.get(s.type, 0) + 1
+                s.type = PLAIN[s.type]
+                continue
+        if s.overlay is not None:
+            used.append((_overlay_key(s.overlay), s.start, s.end))
+    for k, s in enumerate(shots):
+        typ = next((t for t, plain in PLAIN.items() if plain == s.type and lost.get(t, 0) > 0), None)
+        if typ is None or s.id in locked or _creates_run(shots, k, typ):
+            continue
+        spec = next((o for o in overlay_pool(s) if not taken(_overlay_key(o), s)), None)
+        if spec is not None:
+            s.type, s.overlay = typ, spec
+            used.append((_overlay_key(spec), s.start, s.end))
+            lost[typ] -= 1

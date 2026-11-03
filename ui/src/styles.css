@@ -94,7 +94,7 @@ legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
 .pill-done { background: rgba(76, 194, 122, .15); color: var(--ok); }
 .pill-running, .pill-queued { background: rgba(79, 157, 255, .15); color: var(--info); }
 .pill-failed { background: rgba(255, 100, 100, .15); color: var(--bad); }
-.pill-mock { background: rgba(242, 179, 61, .15); color: var(--warn); }
+.pill-mock, .pill-needs_review { background: rgba(242, 179, 61, .15); color: var(--warn); }
 .error { background: rgba(255, 100, 100, .1); border: 1px solid #5a2b2b; color: #ffc4c4; padding: 9px 12px;
   border-radius: 6px; margin: 8px 0; white-space: pre-wrap; word-break: break-word; }
 .banner { padding: 9px 12px; border-radius: 6px; margin: 8px 0; display: flex; gap: 8px; align-items: center; }

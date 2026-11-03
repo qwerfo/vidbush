@@ -60,12 +60,13 @@ def net(monkeypatch, tiny_mp4: bytes, tiny_jpg: bytes):
                 return canned(name)
         raise AssertionError(f"unexpected url {url}")
 
-    def get_bytes(url: str, headers=None, timeout: float = 60.0) -> bytes:
+    def download(url: str, dest: Path, headers=None, timeout: float = 60.0, max_bytes: int = 0) -> Path:
         calls.append((url, {}, {}))
-        return tiny_mp4 if url.split("?")[0].endswith((".mp4", ".webm")) else tiny_jpg
+        dest.write_bytes(tiny_mp4 if url.split("?")[0].endswith((".mp4", ".webm")) else tiny_jpg)
+        return dest
 
     monkeypatch.setattr(base, "http_get_json", get_json)
-    monkeypatch.setattr(base, "http_get_bytes", get_bytes)
+    monkeypatch.setattr(base, "http_download", download)
     return routes, calls
 
 
@@ -158,7 +159,7 @@ def test_nasa(net, online, shot, tmp_path) -> None:
     res = NasaAdapter().search("panama canal", "image", 5, online)
     assert len(res) == 1 and res[0].author == "JSC" and res[0].licence == "Public domain (NASA)"
     cands = NasaAdapter().fetch(res[0], tmp_path, shot, online)
-    assert _sidecar(cands[0].local_path)["source_url"].endswith("~orig.jpg")
+    assert _sidecar(cands[0].local_path)["source_url"].endswith("~large.jpg")  # orig only as last resort
     vids = pick_asset(manifest_urls(canned("nasa_asset_video.json")), "video")
     assert vids == "https://images-assets.nasa.gov/video/panama_flyover/panama_flyover~orig.mp4"
 

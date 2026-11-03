@@ -150,16 +150,30 @@ def build_pacing(base: StyleProfile, durations: list[float], labels: Optional[li
 
 
 def visual_mix(durations: list[float], labels: list[str], default: dict[str, float]) -> dict[str, float]:
-    """Share of screen time per shot type in percent. Talking heads count as footage (faceless output)."""
+    """Share of shot count per shot type in percent (the planner's unit). Talking heads count as footage.
+
+    durations is kept for the call signature; screen time is reported in provenance, not in the mix.
+    """
+    acc = {t: 0 for t in SHOT_TYPES}
+    for lab in labels:
+        lab = "footage" if lab == "talking_head" else lab
+        if lab in acc:
+            acc[lab] += 1
+    total = sum(acc.values())
+    if total <= 0:
+        return dict(default)
+    return {t: round(100.0 * v / total, 1) for t, v in acc.items()}
+
+
+def screen_time_mix(durations: list[float], labels: list[str]) -> dict[str, float]:
+    """Share of screen time per shot type in percent (secondary info for provenance)."""
     acc = {t: 0.0 for t in SHOT_TYPES}
     for d, lab in zip(durations, labels):
         lab = "footage" if lab == "talking_head" else lab
         if lab in acc:
             acc[lab] += d
     total = sum(acc.values())
-    if total <= 0:
-        return dict(default)
-    return {t: round(100.0 * v / total, 1) for t, v in acc.items()}
+    return {t: round(100.0 * v / total, 1) for t, v in acc.items()} if total > 0 else {}
 
 
 def caption_colour(hex_colour: str) -> str:
@@ -206,7 +220,8 @@ def _provenance(source: str, shots: list[tuple[float, float]], stats: DurationSt
             "captions_detected": cap.detected, "letterbox_ratio": lb.ratio, "caption_font_px_1080": cap.font_px_1080,
             "caption_band_height": cap.band_height, "caption_frame_share": cap.frame_share,
             "caption_color": cap.color if cap.detected else None, "sampled_frames": samples,
-            "durations": stats.model_dump(), "classified_counts": counts}
+            "durations": stats.model_dump(), "classified_counts": counts, "mix_unit": "shot_count",
+            "screen_time_mix": screen_time_mix([e - s for s, e in shots], labels) if labels else {}}
 
 
 def learn_style(source: str, name: str, settings: Settings) -> Path:

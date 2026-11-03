@@ -5,9 +5,13 @@ settings.render.renderer: "python" (built in, default) or "remotion" (the
 node project in renderer/, falling back to python on any failure).
 
 render_all_motion(shotlist, ctx) -> (ShotList, list[Path]) renders every
-motion_graphic shot's spec to work/mg/<stable_hash(spec)>.mp4 and every
-overlay to work/mg/<hash>.mov (alpha), reusing files that already exist,
-in a process pool of settings.render.workers.
+motion_graphic shot's spec to work/mg/<key>.mp4 and every overlay to
+work/mg/<key>.mov (alpha), reusing files that already exist, in a process pool
+of settings.render.workers. key = mg_key(spec, settings) hashes the spec, the
+configured renderer and MG_RENDER_VERSION (bump it when drawing code changes
+output). A degraded render (remotion fell back to python, or a text card after a
+renderer error) is written to <key>.fallback.<ext> instead, so the next motion
+run retries the real render; an existing fallback is reused when it fails again.
 """
 from __future__ import annotations
 
@@ -24,16 +28,34 @@ from ..util import ToolError, run, stable_hash, write_json
 
 OVERLAY_SHOT_TYPES = {ShotType.footage_overlay, ShotType.image_overlay, ShotType.ai_image, ShotType.ai_video}
 REMOTION_DIR = "renderer"
+MG_RENDER_VERSION = "mg-2"
+
+
+def renderer_kind(settings: Any) -> str:
+    return str(getattr(settings.render, "renderer", "python") or "python")
+
+
+def mg_key(spec: MotionSpec, settings: Any) -> str:
+    """Cache key of a rendered clip: spec (size and fps included), renderer kind and renderer version."""
+    return stable_hash(spec, renderer_kind(settings), MG_RENDER_VERSION)
+
+
+def fallback_path(out: Path) -> Path:
+    """Where a degraded render of out is kept: <key>.fallback.<ext>."""
+    return out.with_name(f"{out.stem}.fallback{out.suffix}")
 
 
 # ---------------------------------------------------------------- single spec
 
 def render_spec(spec: MotionSpec, out_path: Path, alpha: bool, settings: Any,
-                notes: Optional[list[str]] = None) -> Path:
-    """Render spec to out_path with the configured renderer; remotion falls back to python on failure
-    (the reason is appended to `notes` when given, else logged)."""
+                notes: Optional[list[str]] = None, degraded_path: Optional[Path] = None) -> Path:
+    """Render spec with the configured renderer and return the written path.
+
+    Remotion falls back to python on failure (the reason is appended to `notes`
+    when given, else logged); that python render goes to degraded_path when given.
+    """
     out_path = Path(out_path)
-    if getattr(settings.render, "renderer", "python") == "remotion":
+    if renderer_kind(settings) == "remotion":
         try:
             return render_remotion(spec, out_path, alpha, settings)
         except Exception as e:  # noqa: BLE001  any remotion failure falls back
@@ -42,6 +64,7 @@ def render_spec(spec: MotionSpec, out_path: Path, alpha: bool, settings: Any,
                 notes.append(msg)
             else:
                 logging.getLogger("vidbush.mg").warning(msg)
+            out_path = Path(degraded_path) if degraded_path else out_path
     from ..render.mg_python import render_spec_python
     return render_spec_python(spec, out_path, alpha, settings)
 
@@ -66,22 +89,41 @@ def render_remotion(spec: MotionSpec, out_path: Path, alpha: bool, settings: Any
 
 # ---------------------------------------------------------------- stage
 
+def _render_real(spec: MotionSpec, out: Path, alpha: bool, settings: Any) -> Path:
+    """The configured renderer only, with no fallback."""
+    if renderer_kind(settings) == "remotion":
+        return render_remotion(spec, out, alpha, settings)
+    from ..render.mg_python import render_spec_python
+    return render_spec_python(spec, out, alpha, settings)
+
+
 def _job(spec_json: str, out: str, alpha: bool, settings_json: str) -> tuple[str, Optional[str]]:
-    """Process pool worker: render one spec. Returns (path, warning or None)."""
+    """Process pool worker: render one spec. Returns (path written, warning or None).
+
+    Degraded output goes to fallback_path(out). When a fallback already exists only
+    the real render is retried; on another failure the old fallback is kept as is,
+    so its bytes (and the segment cache keyed on them) stay stable.
+    """
     from ..config import Settings
-    from ..render.mg_python import fallback_spec
+    from ..render.mg_python import fallback_spec, render_spec_python
     settings = Settings.model_validate_json(settings_json)
     spec = MotionSpec.model_validate_json(spec_json)
-    warn = None
+    target, degraded = Path(out), fallback_path(Path(out))
+    if degraded.exists():
+        try:
+            _render_real(spec, target, alpha, settings)
+        except Exception as e:  # noqa: BLE001  keep the previous fallback
+            return str(degraded), f"motion render still failing ({type(e).__name__}: {str(e)[-200:]}), reusing fallback"
+        degraded.unlink(missing_ok=True)
+        return str(target), None
     notes: list[str] = []
     try:
-        render_spec(spec, Path(out), alpha, settings, notes)
+        written = render_spec(spec, target, alpha, settings, notes, degraded_path=degraded)
     except Exception as e:  # noqa: BLE001  a broken spec still renders as text
-        warn = f"motion render failed ({type(e).__name__}: {str(e)[-200:]}), rendered as text overlay"
         title = spec.payload.get("title", "") if isinstance(spec.payload, dict) else ""
-        from ..render.mg_python import render_spec_python
-        render_spec_python(fallback_spec(spec, str(title)), Path(out), alpha, settings)
-    return out, warn or (notes[0] if notes else None)
+        render_spec_python(fallback_spec(spec, str(title)), degraded, alpha, settings)
+        return str(degraded), f"motion render failed ({type(e).__name__}: {str(e)[-200:]}), rendered as text overlay"
+    return str(written), notes[0] if notes else None
 
 
 def prepare_spec(spec: MotionSpec, duration: float, shotlist: ShotList, intent: str,
@@ -111,18 +153,19 @@ def _plan(shotlist: ShotList, ctx: Any, mg_dir: Path) -> list[tuple[Any, MotionS
             spec, warn = prepare_spec(shot.motion, shot.duration, shotlist, shot.intent, False)
             if warn:
                 ctx.log.warn(warn, shot=shot.id)
-            jobs.append((shot, spec, mg_dir / f"{stable_hash(spec)}.mp4", False))
+            jobs.append((shot, spec, mg_dir / f"{mg_key(spec, ctx.settings)}.mp4", False))
         if shot.overlay is not None and shot.type in OVERLAY_SHOT_TYPES:
             spec, warn = prepare_spec(shot.overlay, shot.duration, shotlist, shot.intent, True)
             if warn:
                 ctx.log.warn(warn, shot=shot.id)
-            jobs.append((shot, spec, mg_dir / f"{stable_hash(spec)}.mov", True))
+            jobs.append((shot, spec, mg_dir / f"{mg_key(spec, ctx.settings)}.mov", True))
         elif shot.overlay_path:
             shot.overlay_path = ""
     return jobs
 
 
-def _run_jobs(todo: list[tuple[MotionSpec, Path, bool]], ctx: Any) -> None:
+def _run_jobs(todo: list[tuple[MotionSpec, Path, bool]], ctx: Any) -> dict[Path, Path]:
+    """Render todo; returns {planned path: path actually written} (a fallback path when degraded)."""
     settings_json = ctx.settings.model_dump_json()
     args = [(s.model_dump_json(), str(p), a, settings_json) for s, p, a in todo]
     workers = max(1, int(getattr(ctx.settings.render, "workers", 1) or 1))
@@ -131,9 +174,12 @@ def _run_jobs(todo: list[tuple[MotionSpec, Path, bool]], ctx: Any) -> None:
     else:
         with ProcessPoolExecutor(max_workers=min(workers, len(args)), mp_context=get_context("spawn")) as pool:
             results = list(pool.map(_job, *zip(*args)))
-    for out, warn in results:
+    written: dict[Path, Path] = {}
+    for (_, planned, _), (out, warn) in zip(todo, results):
+        written[planned] = Path(out)
         if warn:
             ctx.log.warn(warn, path=Path(out).name)
+    return written
 
 
 def render_all_motion(shotlist: ShotList, ctx: Any) -> tuple[ShotList, list[Path]]:
@@ -147,11 +193,12 @@ def render_all_motion(shotlist: ShotList, ctx: Any) -> tuple[ShotList, list[Path
         if out not in seen and not out.exists():
             todo.append((spec, out, alpha))
         seen.add(out)
-    if todo:
-        _run_jobs(todo, ctx)
-    ctx.log.info("motion graphics", rendered=len(todo), cached=len(seen) - len(todo))
+    written = _run_jobs(todo, ctx) if todo else {}
+    ctx.log.info("motion graphics", rendered=len(todo), cached=len(seen) - len(todo),
+                 degraded=sum(1 for k, v in written.items() if k != v))
     outs: list[Path] = []
-    for shot, spec, out, alpha in jobs:
+    for shot, spec, planned, alpha in jobs:
+        out = written.get(planned, planned)
         outs.append(out)
         if alpha:
             shot.overlay_path = str(out)

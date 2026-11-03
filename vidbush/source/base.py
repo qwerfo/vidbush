@@ -7,11 +7,16 @@ several candidates for one asset (a long video cut into clips). Candidate
 ids returned by fetch are provisional: the registry renumbers them to
 f"{shot.id}_{source}_{n}" and extracts keyframes.
 
-All network access goes through http_get_json / http_get_bytes /
-ffmpeg_section in this module so tests can monkeypatch one place.
-Downloads land in a shared cache (settings.source_cache_folder, keyed by
-URL hash) and are hardlinked or copied into the project, each with a
-<file>.json sidecar.
+All network access goes through http_get_json / http_download /
+ffmpeg_section in this module so tests can monkeypatch one place. Every
+request is rate limited per host and concurrency capped (source/throttle.py);
+a 429 backs off using Retry-After, is retried, and cools the host down.
+Downloads stream to disk with a size cap and land in a shared cache
+(settings.source_cache_folder, keyed by URL hash); videos too big for a full
+download are read as a section with ffmpeg (cached_video). Files are
+hardlinked or copied into the project, each with a <file>.json sidecar.
+configure(settings) sets the User-Agent contact (VIDBUSH_CONTACT) and the
+throttle overrides; the registry calls it once per sourcing run.
 """
 from __future__ import annotations
 
@@ -29,11 +34,19 @@ from pydantic import Field
 from ..config import Settings
 from ..models import Candidate, Model, Shot, SourceKind
 from ..providers import http as provider_http
+from ..providers.base import RateLimitError, TransportError, http_error_to_exc
 from ..util import clamp, run, write_json
+from . import throttle
 from .licence import licence_flags, normalise_licence
 
 Media = Literal["video", "image"]
-USER_AGENT = "Vidbush/1.0 (self-hosted documentary tool; contact: operator)"
+DEFAULT_USER_AGENT = "Vidbush/1.0 (self-hosted documentary tool; contact not set, see VIDBUSH_CONTACT)"
+USER_AGENT = DEFAULT_USER_AGENT
+MAX_DOWNLOAD_BYTES = 400_000_000  # hard cap for any streamed download
+SECTION_OVER_BYTES = 150_000_000  # videos above this are read as a section, never downloaded whole
+MAX_IMAGE_BYTES = 60_000_000
+RATE_LIMIT_RETRIES = 2
+RATE_LIMIT_MAX_WAIT_S = 60.0
 SOURCE_LABELS: dict[str, str] = {
     "youtube": "YouTube", "wikimedia": "Wikimedia Commons", "archive": "Internet Archive",
     "loc": "Library of Congress", "nasa": "NASA", "pexels": "Pexels", "pixabay": "Pixabay",
@@ -75,23 +88,97 @@ class SourceAdapter(Protocol):
 
 # ---------------------------------------------------------------- network seams
 
+def user_agent_for(contact: str) -> str:
+    """User-Agent with the operator contact (Wikimedia and loc.gov ask for one)."""
+    contact = (contact or "").strip()
+    return f"Vidbush/1.0 (self-hosted documentary tool; {contact})" if contact else DEFAULT_USER_AGENT
+
+
+def configure(settings: Settings) -> None:
+    """Set the User-Agent contact and the throttle overrides for this process."""
+    global USER_AGENT
+    USER_AGENT = user_agent_for(settings.key("VIDBUSH_CONTACT"))
+    throttle.configure(settings.sources)
+
+
+def _rate_limited(call: Any, url: str) -> Any:
+    """Run call() in a throttle slot for url's host; 429 waits Retry-After, retries, then cools the host."""
+    host = throttle.host_of(url)
+    for n in range(RATE_LIMIT_RETRIES + 1):
+        try:
+            with throttle.slot(host):
+                return call()
+        except RateLimitError as e:
+            wait = e.retry_after if e.retry_after is not None else 5.0 * (2 ** n)
+            throttle.cool_down(host, max(wait, 5.0))
+            if n == RATE_LIMIT_RETRIES or wait > RATE_LIMIT_MAX_WAIT_S:
+                raise
+    raise AssertionError("unreachable")
+
+
 def http_get_json(url: str, params: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None,
                   timeout: float = 20.0) -> Any:
     hdrs = {"User-Agent": USER_AGENT, **(headers or {})}
-    return provider_http.get_json(url, params=params, headers=hdrs, timeout=timeout)
+    return _rate_limited(lambda: provider_http.get_json(url, params=params, headers=hdrs, timeout=timeout), url)
 
 
 def http_get_bytes(url: str, headers: Optional[dict[str, str]] = None, timeout: float = 60.0) -> bytes:
+    """Small downloads held in memory (kept for callers outside sourcing; sourcing streams to disk)."""
     hdrs = {"User-Agent": USER_AGENT, **(headers or {})}
-    return provider_http.get_bytes(url, headers=hdrs, timeout=max(timeout, 60.0))
+    return _rate_limited(lambda: provider_http.get_bytes(url, headers=hdrs, timeout=max(timeout, 60.0)), url)
+
+
+class DownloadTooLarge(TransportError):
+    """The asset is over the size cap; size is the Content-Length or the bytes read so far."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__(f"download too large ({size} bytes)")
+        self.size = size
+
+
+def http_download(url: str, dest: Path, headers: Optional[dict[str, str]] = None, timeout: float = 60.0,
+                  max_bytes: int = MAX_DOWNLOAD_BYTES) -> Path:
+    """Stream url into dest. Raises DownloadTooLarge (dest removed) when over max_bytes."""
+    hdrs = {"User-Agent": USER_AGENT, **(headers or {})}
+    return _rate_limited(lambda: _stream(url, dest, hdrs, max(timeout, 60.0), max_bytes), url)
+
+
+def _stream(url: str, dest: Path, headers: dict[str, str], timeout: float, max_bytes: int) -> Path:
+    import requests
+    try:
+        with requests.get(url, headers=headers, timeout=timeout, stream=True) as r:
+            if r.status_code >= 400:
+                raise http_error_to_exc(r.status_code, r.text[:300], r.headers.get("Retry-After"))
+            length = int(r.headers.get("Content-Length") or 0)
+            if length > max_bytes:
+                raise DownloadTooLarge(length)
+            got = 0
+            with open(dest, "wb") as fh:
+                for chunk in r.iter_content(1 << 16):
+                    got += len(chunk)
+                    if got > max_bytes:
+                        raise DownloadTooLarge(got)
+                    fh.write(chunk)
+        return dest
+    except requests.RequestException as e:
+        dest.unlink(missing_ok=True)
+        raise TransportError(str(e)[:300]) from e
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
 
 
 def ffmpeg_section(url: str, start: float, length: float, out: Path) -> Path:
     """Copy one section of a remote (or local) video without downloading the rest."""
-    run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{length:.2f}",
-         "-user_agent", USER_AGENT, "-i", url, "-map", "0:v:0", "-c", "copy", "-avoid_negative_ts", "make_zero",
-         str(out)], timeout=600)
-    return out
+    def call() -> Path:
+        run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{length:.2f}",
+             "-user_agent", USER_AGENT, "-i", url, "-map", "0:v:0", "-c", "copy", "-avoid_negative_ts",
+             "make_zero", str(out)], timeout=600)
+        return out
+    if "://" not in url:
+        return call()
+    with throttle.slot(throttle.host_of(url), max_wait=RATE_LIMIT_MAX_WAIT_S):
+        return call()
 
 
 # ---------------------------------------------------------------- cache and files
@@ -120,29 +207,49 @@ def cache_dir(settings: Settings) -> Path:
     return d
 
 
-def cached_download(url: str, ext: str, settings: Settings, headers: Optional[dict[str, str]] = None) -> Path:
-    """Download url once into the shared cache; later calls reuse the file."""
+def cached_download(url: str, ext: str, settings: Settings, headers: Optional[dict[str, str]] = None,
+                    max_bytes: int = MAX_DOWNLOAD_BYTES) -> Path:
+    """Stream url once into the shared cache; later calls reuse the file. DownloadTooLarge over max_bytes."""
     dest = cache_dir(settings) / f"{url_hash(url)}{ext}"
     with _lock_for(str(dest)):
         if dest.exists() and dest.stat().st_size > 0:
             return dest
-        data = http_get_bytes(url, headers=headers, timeout=settings.sources.timeout_s)
         tmp = dest.with_suffix(dest.suffix + ".part")
-        tmp.write_bytes(data)
+        http_download(url, tmp, headers=headers, timeout=settings.sources.timeout_s, max_bytes=max_bytes)
         tmp.replace(dest)
     return dest
 
 
-def cached_section(url: str, start: float, length: float, settings: Settings) -> Path:
+def cached_section(url: str, start: float, length: float, settings: Settings, ext: str = ".mp4") -> Path:
     """ffmpeg_section through the shared cache, keyed by url and range."""
-    dest = cache_dir(settings) / f"{url_hash(f'{url}#{start:.1f}+{length:.1f}')}.mp4"
+    dest = cache_dir(settings) / f"{url_hash(f'{url}#{start:.1f}+{length:.1f}')}{ext}"
     with _lock_for(str(dest)):
         if dest.exists() and dest.stat().st_size > 0:
             return dest
-        tmp = dest.with_name(dest.stem + ".part.mp4")
+        tmp = dest.with_name(dest.stem + ".part" + ext)
         ffmpeg_section(url, start, length, tmp)
         tmp.replace(dest)
     return dest
+
+
+def section_window(duration: float, shot_duration: float) -> tuple[float, float]:
+    """(start, length) of the part of a long video read as a section: skips the opening tenth."""
+    length = clamp(shot_duration * 4, 40.0, 90.0)
+    if duration <= 0:
+        return 20.0, length
+    return clamp(duration * 0.1, 0.0, max(0.0, duration - length)), min(length, duration)
+
+
+def cached_video(url: str, ext: str, settings: Settings, shot_duration: float, duration: float = 0.0,
+                 size: float = 0.0) -> Path:
+    """A video in the cache: whole when small, else (size known, or found while streaming) a section."""
+    if size <= SECTION_OVER_BYTES:
+        try:
+            return cached_download(url, ext, settings, max_bytes=SECTION_OVER_BYTES)
+        except DownloadTooLarge:
+            pass
+    start, length = section_window(duration, shot_duration)
+    return cached_section(url, start, length, settings, ext=ext)
 
 
 def link_into(src: Path, out_dir: Path, name: str) -> Path:

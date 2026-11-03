@@ -153,6 +153,28 @@ def geocode(name: str, us_bias: bool = False) -> Optional[tuple[float, float]]:
     return (hit.lat, hit.lon) if hit else None
 
 
+AREA_KINDS = {"country", "region", "continent", "ocean", "sea", "gulf", "strait", "route", "isthmus"}
+WATER_KINDS = {"ocean", "sea", "gulf", "strait", "bay", "channel"}
+
+
+def place_kind(name: str) -> str:
+    """'country', a landmark kind ('region' for states, 'continent', 'ocean', 'city', 'dam', ...), 'city' for a
+    gazetteer place, or '' when unknown."""
+    hit = lookup(name)
+    if hit is None:
+        return ""
+    if hit.kind == "country":
+        return "country"
+    if hit.kind == "place":
+        return "city"
+    return next((lm.get("kind", "landmark") for lm in landmarks() if lm["name"] == hit.name), "landmark")
+
+
+def is_area(name: str) -> bool:
+    """True for countries, states, continents and seas: places a single marker or lower third cannot show."""
+    return place_kind(name) in AREA_KINDS
+
+
 def is_country(name: str) -> bool:
     """True when the name resolves to a country (name, long name, admin or ISO A3)."""
     return norm(name) in countries()

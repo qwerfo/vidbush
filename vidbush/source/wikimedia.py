@@ -73,8 +73,11 @@ class WikimediaAdapter(BaseAdapter):
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         url = raw.download_url or raw.url
         ext = ext_from_url(url, ".webm" if raw.media == "video" else ".jpg")
-        src = cached_download(url, ext, settings)
-        dst = link_into(src, out_dir, f"wikimedia_{base.url_hash(url)}{ext}")
+        if raw.media == "video":
+            src = base.cached_video(url, ext, settings, shot.duration, duration=raw.duration)
+        else:
+            src = cached_download(url, ext, settings, max_bytes=base.MAX_IMAGE_BYTES)
+        dst = link_into(src, out_dir, f"wikimedia_{base.url_hash(src.name)}{ext}")
         spans = None
         if raw.media == "video":
             spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=3)

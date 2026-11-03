@@ -24,16 +24,27 @@ MAX_KEYFRAMES = 3
 JUDGE_MOCK_FLAG = "judge_mock"
 _VISION_SLOTS = threading.BoundedSemaphore(JUDGE_WORKERS)  # process wide cap on concurrent judge calls
 
+HARD_REJECTS = ("burned_in_captions", "watermark", "channel_logo", "talking_head", "anachronism", "wrong_subject")
+REJECT_RULES = "rejects must be [] when no hard reject applies; otherwise use only these labels: "
+
 JUDGE_SYSTEM = (
     "You are the picture editor of a long-form documentary channel. You judge whether a candidate clip or "
     "still can cover one narration beat. House principles: good enough is the bar. Fail a candidate only "
     "when the difference is big enough to break viewer immersion. Small prop differences, minor crops and "
     "slight colour shifts pass. Judge in this order: first the place must make sense, then the subject must "
-    "be right, then the action. Hard rejects, listed in rejects: burned in captions or subtitles, a big "
-    "watermark, a channel logo, a person speaking to camera, a visible modern anachronism when the brief "
-    "says to avoid it, a clearly wrong subject. Score 0 to 100 where 70 means usable. Be concise: the "
-    "reason is one short line. Reply with strict JSON only: "
-    '{"score": number, "reason": "one line", "rejects": ["short reject label", ...]}'
+    "be right, then the action. Hard rejects: burned in captions or subtitles (burned_in_captions), a big "
+    "watermark (watermark), a channel logo (channel_logo), a person speaking to camera (talking_head), a "
+    "visible modern anachronism when the brief says to avoid it (anachronism), a clearly wrong subject "
+    "(wrong_subject). " + REJECT_RULES + ", ".join(HARD_REJECTS) + ". Score 0 to 100 where 70 means "
+    "usable. Be concise: the reason is one short line. Reply with strict JSON only: "
+    '{"score": number, "reason": "one line", "rejects": []}'
+)
+_NONE_RE = re.compile(r"^\W*(none|n\s*/?\s*a|no|null|nil|nothing|-+|no hard rejects?|no rejects?)\W*$", re.I)
+_LABEL_RULES: tuple[tuple[str, str], ...] = (
+    (r"caption|subtitle|burn", "burned_in_captions"), (r"watermark", "watermark"),
+    (r"logo|bug|channel", "channel_logo"), (r"talking|speak|to camera|presenter|interview", "talking_head"),
+    (r"anachron|modern|out of era|wrong era", "anachronism"), (r"wrong|subject|unrelated|mismatch", "wrong_subject"),
+    (r"black frame|blank", "black_frame"), (r"frozen|freeze|still frame", "frozen_frame"),
 )
 
 Result = tuple[float, str, Optional[str]]
@@ -76,24 +87,44 @@ def _image_size(path: str) -> tuple[int, int]:
         return 0, 0
 
 
-def parse_verdict(raw: Any) -> Optional[tuple[float, str, list[str]]]:
-    """Normalise a model reply to (score 0..100, reason, rejects); None when the shape is unusable."""
+def normalize_rejects(raw: Any, allowed: tuple[str, ...] = HARD_REJECTS) -> tuple[list[str], list[str]]:
+    """(hard reject labels, other notes): drops none-like entries, maps wording onto the allowed labels."""
+    items = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+    labels: list[str] = []
+    notes: list[str] = []
+    for item in items:
+        text = " ".join(str(item).split())
+        if not text or _NONE_RE.match(text):
+            continue
+        key = text.lower().replace(" ", "_")
+        label = key if key in allowed else next(
+            (lab for pat, lab in _LABEL_RULES if lab in allowed and re.search(pat, text, re.I)), None)
+        if label is None:
+            notes.append(text)
+        elif label not in labels:
+            labels.append(label)
+    return labels, notes
+
+
+def parse_verdict(raw: Any, allowed: tuple[str, ...] = HARD_REJECTS) -> Optional[tuple[float, str, list[str]]]:
+    """Normalise a model reply to (score 0..100, reason, rejects); None when the shape is unusable.
+
+    A fractional score (0 < score < 1) is read as a 0..1 scale; anything else is taken as 0..100.
+    Reject entries such as "none" are dropped; unknown labels move into the reason instead.
+    """
     if not isinstance(raw, dict):
         return None
     try:
         score = float(raw.get("score"))
     except (TypeError, ValueError):
         return None
-    if 0 < score <= 1:
-        score *= 100.0  # a 0..1 scale reply
-    elif 0 < score <= 10:
-        score *= 10.0  # a 0..10 scale reply (still below threshold when it was a poor 0..100 score)
-    rejects = raw.get("rejects") or []
-    if isinstance(rejects, str):
-        rejects = [rejects]
-    rejects = [str(r).strip() for r in rejects if str(r).strip()]
-    reason = " ".join(str(raw.get("reason") or "").split())[:240]
-    return max(0.0, min(100.0, score)), reason, rejects
+    if 0 < score < 1:
+        score *= 100.0
+    rejects, extra = normalize_rejects(raw.get("rejects") or [], allowed)
+    reason = " ".join(str(raw.get("reason") or "").split())
+    if extra:
+        reason = "; ".join([reason] + extra) if reason else "; ".join(extra)
+    return max(0.0, min(100.0, score)), reason[:240], rejects
 
 
 def score_candidate(shot: Shot, cand: Candidate, ctx: Any) -> Result:
@@ -113,8 +144,20 @@ def score_candidate(shot: Shot, cand: Candidate, ctx: Any) -> Result:
         return 50.0, "judge reply unusable", None
     score, reason, rejects = verdict
     _flag_from_rejects(cand, rejects)
+    score, reason = _short_clip_penalty(shot, cand, score, reason)
     reject = "; ".join(rejects) if rejects else None
     return round(score, 1), reason or "no reason given", reject
+
+
+SHORT_CLIP_PENALTY = 15.0
+
+
+def _short_clip_penalty(shot: Shot, cand: Candidate, score: float, reason: str) -> tuple[float, str]:
+    """Video clips that cannot cover the shot even slowed to 1.25x lose points, so longer clips win."""
+    span = cand.out_point - cand.in_point
+    if cand.media == "video" and span > 0 and span * 1.25 < shot.duration:
+        return max(0.0, score - SHORT_CLIP_PENALTY), f"{reason} (clip {span:.1f} s for a {shot.duration:.1f} s shot)"
+    return score, reason
 
 
 def _flag_from_rejects(cand: Candidate, rejects: list[str]) -> None:

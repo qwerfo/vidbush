@@ -306,3 +306,36 @@ def _merge_cost(a: Shot, b: Shot) -> float:
     if ShotType.motion_graphic in (a.type, b.type):
         cost += 50.0
     return cost
+
+
+# ---------------------------------------------------------------- clip spans
+
+def extend_video_spans(shotlist: ShotList, before: dict[str, float], probe: Any) -> list[str]:
+    """Widen the selected clip span of every video shot that got longer than its span.
+
+    before maps shot id to its duration before the op; probe(path) returns the file length in
+    seconds. The span grows forward into the file first, then backwards. Returns a note for each
+    shot whose file still has less footage than the shot needs (its last frame will hold).
+    """
+    notes: list[str] = []
+    for s in shotlist.shots:
+        old = before.get(s.id)
+        cand = s.selected_candidate()
+        if old is None or s.duration <= old + EPS or cand is None or cand.media != "video":
+            continue
+        if cand.source == SourceKind.motion or not cand.local_path or cand.out_point <= cand.in_point:
+            continue
+        if cand.out_point - cand.in_point >= s.duration - EPS:
+            continue
+        try:
+            length = float(probe(cand.local_path))
+        except Exception:  # unreadable file: keep the span, the renderer holds the last frame
+            continue
+        if length <= 0:
+            continue
+        out = min(length, cand.in_point + s.duration)
+        start = max(0.0, min(cand.in_point, out - s.duration))
+        cand.in_point, cand.out_point = round(start, 3), round(out, 3)
+        if out - start < s.duration - 0.05:
+            notes.append(f"{s.id} has only {out - start:.1f} s of footage for {s.duration:.1f} s")
+    return notes

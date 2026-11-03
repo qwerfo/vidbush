@@ -109,3 +109,13 @@ def test_caption_check_full_match(make_ctx):
 
 def test_mmss():
     assert mmss(0) == "00:00" and mmss(61.4) == "01:01" and mmss(3599.6) == "60:00"
+
+
+def test_mix_headline_is_shot_count_with_screen_time_secondary():
+    from vidbush.judge.qa import mix_and_pacing
+    from vidbush.models import Shot, ShotList, ShotType
+    shots = [Shot(id=f"s{i}", beat_id="b", start=0, end=d, duration=d, type=t, intent="x")
+             for i, (t, d) in enumerate([(ShotType.footage, 3.0), (ShotType.motion_graphic, 9.0)])]
+    mix, pacing = mix_and_pacing(ShotList(project_id="p", duration=12.0, shots=shots))
+    assert mix["motion_graphic"] == 50.0 and mix["footage"] == 50.0
+    assert pacing["motion_graphic"]["time_pct"] == 75.0 and pacing["motion_graphic"]["count_pct"] == 50.0

@@ -3,6 +3,8 @@
 The researcher seat (task "factcheck") returns {"verdicts": [{"id", "status"}]}.
 Without a usable answer, a card is verified when its years and numbers all
 appear in the fetched excerpt of its own source, otherwise it keeps its status.
+A real seat that fails on every provider raises ProviderError (stage fails,
+resume retries), per the mock fallback policy.
 """
 from __future__ import annotations
 
@@ -10,6 +12,7 @@ import re
 from typing import Any, Optional
 
 from ..models import FactCard, Research
+from ..providers.base import ProviderError
 from ..script import prompts
 from ..util import JsonLogger, NullLogger
 
@@ -50,7 +53,9 @@ def _ask(research: Research, seats: Any, excerpts: dict[str, str]) -> dict[str, 
     try:
         data = seats.llm_json("researcher", "factcheck", prompts.FACTCHECK_SYSTEM, user, stage="research",
                               temperature=0.1)
-    except Exception:  # a seat failure keeps the cards as they are
+    except ProviderError:
+        raise
+    except Exception:  # a malformed answer keeps the cards as they are
         return {}
     rows = data.get("verdicts") if isinstance(data, dict) else None
     if not isinstance(rows, list):

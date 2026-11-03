@@ -12,7 +12,8 @@ from ..config import Settings, load_brand, load_style_profile
 from ..models import Brand, Project, StyleProfile
 from ..providers.base import CostTracker
 from ..providers.seats import Seats
-from ..util import JsonLogger, read_model, write_json
+from ..util import JsonLogger, write_json
+from .paths import read_rebased, stored_root
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -40,6 +41,7 @@ class StageContext:
     tracker: CostTracker
     stage: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    old_roots: list[str] = field(default_factory=list)  # earlier project roots, for rebasing moved paths
 
     # ------------------------------------------------------------ paths
 
@@ -60,11 +62,12 @@ class StageContext:
     # ------------------------------------------------------------ io
 
     def load(self, key: str, model: type[T]) -> T:
-        return read_model(self.work_path(key), model)
+        """Read a work file; absolute paths from an earlier project root are rebased onto this one."""
+        return read_rebased(self.work_path(key), model, self.project.id, self.root, self.old_roots)
 
     def maybe_load(self, key: str, model: type[T]) -> Optional[T]:
         p = self.work_path(key)
-        return read_model(p, model) if p.exists() else None
+        return self.load(key, model) if p.exists() else None
 
     def save(self, key: str, obj: BaseModel) -> Path:
         return write_json(self.work_path(key), obj)
@@ -85,8 +88,9 @@ def build_context(settings: Settings, project: Project, echo: bool = True) -> St
     log = JsonLogger(project.id, settings.path(settings.data_folder) / "logs", echo=echo)
     tracker = CostTracker(project.id, Path(project.paths.root) / "cost_report.json")
     seats = Seats(settings, tracker, log, fixture_key=fixture_key_for(project))
+    old = stored_root(Path(project.paths.root) / "project.json")
     return StageContext(settings=settings, project=project, brand=brand, profile=profile, seats=seats,
-                        log=log, tracker=tracker)
+                        log=log, tracker=tracker, old_roots=[old] if old and old != project.paths.root else [])
 
 
 def apply_profile_override(profile: StyleProfile, path: Path) -> StyleProfile:

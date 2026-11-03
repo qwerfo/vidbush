@@ -129,7 +129,8 @@ def test_titles_and_texts_heuristics() -> None:
     titles = heuristic_titles(script, script.title)
     assert len(titles) >= 3 and all(len(t) <= 70 for t in titles)
     assert fit_title("A" * 30 + ": " + "b " * 40) == "A" * 30
-    assert heuristic_text("22,000 Lost Before the Americans Arrived") == "22,000 LOST BEFORE"
+    assert heuristic_text("22,000 Lost Before the Americans Arrived") == "22,000 LOST"
+    assert heuristic_text("In 1914 the World Changed Forever") == "WORLD CHANGED FOREVER"
     assert heuristic_text("The Panama Canal: The Shortcut That Cost a Fortune") == "PANAMA CANAL"
 
 

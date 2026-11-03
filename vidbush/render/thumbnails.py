@@ -28,6 +28,15 @@ MAX_WORDS = 4
 MAX_CHARS = 24  # longer texts get too small to read on a phone
 STOP = {"the", "a", "an", "of", "to", "and", "in", "on", "at", "for", "with", "by", "from", "that", "this",
         "how", "why", "what", "is", "was", "it", "its", "into", "they", "who", "really", "still"}
+BREAK_WORDS = STOP | {"before", "after", "during", "since", "until", "over", "under", "between", "through",
+                      "across", "against", "without", "when", "where", "while", "as", "than", "about", "who",
+                      "which", "will", "would", "could", "has", "had", "have", "were", "are", "be"}
+ARROW_MIN_PEAK = 1.5  # energy peak / mean below this: no distinct subject, no arrow
+ARROW_SHORT_PX = 60
+JUDGE_SYSTEM = 'Reply with strict JSON only: {"score": 0-100, "reason": "one line"}.'
+JUDGE_PROMPT = ("Score this frame as a YouTube thumbnail background for a video about: {intent}. "
+                "Rubric: one clear subject, strong contrast and colour, readable at small size, "
+                "no burned-in text, no logos or watermarks. Return the JSON object.")
 SYSTEM = ("You write YouTube thumbnail text. Two to four punchy words each, uppercase, accurate, no clickbait, "
           "no emojis, no em dashes. Reply with strict JSON only.")
 
@@ -76,8 +85,9 @@ def best_frames(shotlist: ShotList, ctx: Any, k: int) -> list[Path]:
             continue
         score = c.score if c.score is not None else shot.judge_score
         if score is None:
-            res = ctx.seats.vision_json("judge", "judge", "Score this frame as a YouTube thumbnail, 0 to 100.",
-                                        shot.intent, [str(img)], stage="packaging", intent=shot.intent)
+            res = ctx.seats.vision_json("judge", "thumbnail_score", JUDGE_SYSTEM,
+                                        JUDGE_PROMPT.format(intent=shot.intent or "documentary"), [str(img)],
+                                        stage="packaging", intent=shot.intent)
             score = float(res.get("score", 0) or 0)
         scored.append((1 if c.source == SourceKind.motion else 0, -float(score), img))
     scored.sort(key=lambda t: (t[0], t[1]))
@@ -127,7 +137,7 @@ def thumbnail_texts(titles: list[str], ctx: Any) -> list[str]:
     """Three short uppercase texts (writer seat task thumbnail_text, heuristic fallback)."""
     user = ("Titles:\n" + "\n".join(f"- {t}" for t in titles) +
             '\nReturn {"texts": [3 different thumbnail texts, 2 to 4 words each]}.')
-    data = ctx.seats.llm_json("writer", "thumbnail_text", SYSTEM, user, stage="packaging")
+    data = ctx.seats.llm_json("writer", "thumbnail_text", _system(ctx), user, stage="packaging")
     texts: list[str] = []
     if isinstance(data, dict):
         for t in data.get("texts") or []:
@@ -142,6 +152,11 @@ def thumbnail_texts(titles: list[str], ctx: Any) -> list[str]:
     return texts[:3]
 
 
+def _system(ctx: Any) -> str:
+    from .package import system_prompt
+    return system_prompt(SYSTEM, ctx)
+
+
 def _short(text: str) -> str:
     """Uppercase text of at most MAX_WORDS words and MAX_CHARS characters, else ''."""
     words = re.sub(r"\s+", " ", no_em_dash(text)).strip().upper().split()
@@ -149,12 +164,42 @@ def _short(text: str) -> str:
     return out if 1 <= len(words) <= MAX_WORDS and len(out) <= MAX_CHARS else ""
 
 
+def _number_phrase(title: str) -> str:
+    """A number plus the words after it up to a break word, trailing stopwords dropped ('22,000 LOST')."""
+    m = re.search(r"\b\d[\d,.]*\b", title)
+    if not m:
+        return ""
+    words = [m.group(0).rstrip(",.")]
+    for w in re.findall(r"[A-Za-z0-9']+", title[m.end():]):
+        if w.lower() in BREAK_WORDS or len(words) >= 3:
+            break
+        words.append(w)
+    while len(words) > 1 and words[-1].lower() in STOP:
+        words.pop()
+    if len(words) < 2 or words[-1].lower().endswith("ly"):
+        return ""
+    return _short(" ".join(words))
+
+
+def _strong_runs(text: str) -> list[list[str]]:
+    """Runs of consecutive words with no stopword between them."""
+    runs: list[list[str]] = [[]]
+    for w in re.findall(r"[A-Za-z0-9',]+", text):
+        w = w.strip(",")
+        if w.lower() in STOP:
+            runs.append([])
+        elif w:
+            runs[-1].append(w)
+    return [r for r in runs if r]
+
+
 def heuristic_text(title: str) -> str:
-    """2 to 4 strong words from a title: a number phrase, else the subtitle, else the topic."""
+    """2 to 4 strong words from a title: a number phrase, else the subtitle, else the strongest run of
+    adjacent content words (never words joined across a dropped stopword)."""
     title = no_em_dash(title)
-    m = re.search(r"\b\d[\d,.]*\b(?:\s+[A-Za-z]+){0,2}", title)
-    if m and len(m.group(0).split()) >= 2:
-        return _short(m.group(0))
+    num = _number_phrase(title)
+    if num:
+        return num
     parts = [p.strip() for p in title.split(":") if p.strip()]
     for part in reversed(parts):
         words = [w for w in re.findall(r"[A-Za-z0-9']+", part)]
@@ -162,10 +207,17 @@ def heuristic_text(title: str) -> str:
             words.pop(0)
         if 2 <= len(words) <= MAX_WORDS and _short(" ".join(words)):
             return _short(" ".join(words))
-    strong = [w for w in re.findall(r"[A-Za-z0-9']+", title) if w.lower() not in STOP]
-    while len(strong) > 1 and not _short(" ".join(strong[:3])):
-        strong.pop()
-    return _short(" ".join(strong[:3]))
+    runs = _strong_runs(title)
+    best = max(runs, key=lambda r: (min(len(r), 3) if len(r) > 1 else 0, -runs.index(r)), default=[])
+    best = best[:3]
+    while len(best) > 1 and not _short(" ".join(best)):
+        best.pop()
+    if len(best) < 2:
+        strong = [w for r in runs for w in r]
+        best = strong[:3]
+        while len(best) > 1 and not _short(" ".join(best)):
+            best.pop()
+    return _short(" ".join(best))
 
 
 def split_lines(text: str) -> list[list[str]]:
@@ -313,12 +365,30 @@ def comp_subject(src: Image.Image, text: str, font: Path) -> Image.Image:
     for i, ln in enumerate(lines):
         d.text((x0 + pad, y0 + pad * 0.6 + i * f.size * 1.02), ln, font=f, fill=(15, 15, 15))
     start = np.array([x0 + block_w + 36, y0 + 24], dtype=np.float32)
-    target = np.array([SIZE[0] * 0.6, SIZE[1] * 0.38], dtype=np.float32)
-    if target[0] - start[0] < 160:
-        target = start + np.array([240, -190], dtype=np.float32)
-    target = np.minimum(target, np.array([SIZE[0] - 60, SIZE[1] - 60], dtype=np.float32))
-    _arrow(im, (int(start[0]), int(start[1])), (int(target[0]), int(target[1])))
+    peak = arrow_target(im, (x0 - 12, y0 - 20, x0 + block_w + 48, SIZE[1]))
+    if peak is not None:
+        v = np.array(peak, dtype=np.float32) - start
+        dist = float(np.linalg.norm(v))
+        if dist > ARROW_SHORT_PX + 120:
+            end = start + v * (dist - ARROW_SHORT_PX) / dist
+            _arrow(im, (int(start[0]), int(start[1])), (int(end[0]), int(end[1])))
     return im
+
+
+def arrow_target(im: Image.Image, text_box: tuple[int, int, int, int]) -> Optional[tuple[int, int]]:
+    """Pixel position of the detail peak outside text_box, or None when no peak stands out."""
+    e = energy(im)
+    h, w = e.shape
+    sx, sy = SIZE[0] / w, SIZE[1] / h
+    x0, y0, x1, y1 = text_box
+    e[max(0, int(y0 / sy)):int(np.ceil(y1 / sy)), max(0, int(x0 / sx)):int(np.ceil(x1 / sx))] = 0
+    margin = 4
+    e[:margin], e[-margin:], e[:, :margin], e[:, -margin:] = 0, 0, 0, 0
+    mean = float(e.mean())
+    if mean <= 1e-6 or float(e.max()) / mean < ARROW_MIN_PEAK:
+        return None
+    y, x = np.unravel_index(int(np.argmax(e)), e.shape)
+    return int((x + 0.5) * sx), int((y + 0.5) * sy)
 
 
 def _arrow(im: Image.Image, start: tuple[int, int], end: tuple[int, int], width: int = 26) -> None:

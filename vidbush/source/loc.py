@@ -2,7 +2,10 @@
 
 Search: https://www.loc.gov/photos/?q=...&fo=json (or /film-and-videos/).
 Fetch: the item JSON (<item url>?fo=json) lists resource files; the largest
-jpeg (or an mp4) is downloaded. Rights statements become licence strings.
+jpeg (or an mp4) is downloaded; films over the full download size are read
+as a section. Rights statements become licence strings. loc.gov blocks
+clients that exceed its rate limits for an hour, so every request goes
+through the base throttle (about 1 request per 3 s).
 """
 from __future__ import annotations
 
@@ -93,11 +96,15 @@ class LocAdapter(BaseAdapter):
         f = best_resource(item, raw.media)
         if f:
             raw = raw.model_copy(update={"download_url": f["url"], "width": int(f.get("width") or raw.width),
-                                         "height": int(f.get("height") or raw.height)})
+                                         "height": int(f.get("height") or raw.height),
+                                         "extra": {**raw.extra, "size": float(f.get("size") or 0)}})
         if not raw.download_url:
             return []
-        ext = ".mp4" if raw.media == "video" else ".jpg"
-        src = cached_download(raw.download_url, ext, settings)
-        dst = link_into(src, out_dir, f"loc_{base.url_hash(raw.download_url)}{ext}")
+        if raw.media == "video":
+            ext = ".mp4"
+            src = base.cached_video(raw.download_url, ext, settings, shot.duration, size=raw.extra.get("size", 0.0))
+        else:
+            ext, src = ".jpg", cached_download(raw.download_url, ".jpg", settings, max_bytes=base.MAX_IMAGE_BYTES)
+        dst = link_into(src, out_dir, f"loc_{base.url_hash(src.name)}{ext}")
         spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=3) if raw.media == "video" else None
         return make_candidates(raw, dst, shot, settings, spans=spans)

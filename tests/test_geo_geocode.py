@@ -67,3 +67,11 @@ def test_find_places_skips_people_months_and_common_words() -> None:
     assert _names("The Hoover Dam rose in the Black Canyon.") == ["Hoover Dam", "Black Canyon"]
     assert _names("President Jimmy Carter signed the treaties with Panama.") == ["Panama"]
     assert _names("Panama, Panama and Panama again.") == ["Panama"]
+
+
+def test_place_kind_and_areas() -> None:
+    assert geo.place_kind("California") == "region" and geo.is_area("California")
+    assert geo.place_kind("Europe") == "continent" and geo.is_area("Europe")
+    assert geo.place_kind("Panama") == "country" and geo.is_area("Panama")
+    assert geo.place_kind("Las Vegas") == "city" and not geo.is_area("Las Vegas")
+    assert not geo.is_area("Hoover Dam") and geo.place_kind("Nowhere Special") == ""

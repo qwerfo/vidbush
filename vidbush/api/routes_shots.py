@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from ..config import Settings
 from ..models import Candidate, EditOp, EditOpName, Shot, ShotList
-from ..util import read_model, slug, stable_hash
+from ..util import slug, stable_hash
 from .app import get_settings
 from .media import IMAGE_EXT, VIDEO_EXT, file_response, media_url, safe_join, thumbnail
 from .routes_projects import enqueue_job, project_root
@@ -43,10 +43,12 @@ class ChatBody(BaseModel):
 # ---------------------------------------------------------------- loading
 
 def load_shotlist(root: Path) -> ShotList:
-    """Working copy work/shotlist.json, else the published shotlist.json."""
+    """Working copy work/shotlist.json, else the published shotlist.json (paths rebased onto root)."""
+    from ..jobs.paths import read_rebased, stored_root
+    old = stored_root(root / "project.json")
     for p in (root / "work" / "shotlist.json", root / "shotlist.json"):
         if p.exists():
-            return read_model(p, ShotList)
+            return read_rebased(p, ShotList, root.name, root, [old] if old else [])
     raise HTTPException(404, "this project has no shot list yet")
 
 

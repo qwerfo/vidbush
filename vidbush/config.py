@@ -39,6 +39,9 @@ class SourcesConfig(BaseModel):
     youtube_min_height: int = 720
     local_library: str = "fixtures/sample_assets"
     timeout_s: float = 20.0
+    rate_limits: dict[str, list[float]] = Field(default_factory=dict)  # host -> [requests per second, burst]
+    max_concurrency: int = 6
+    query_budget: dict[str, int] = Field(default_factory=dict)  # source -> max searches per run
 
 
 class JudgeConfig(BaseModel):

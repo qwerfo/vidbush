@@ -3,24 +3,39 @@
 source_all(shotlist, ctx, force=False) -> ShotList
     For every footage / footage_overlay shot (video) and image / image_overlay
     shot (still) without sourced candidates (or every one when force), run
-    the shot's queries against the enabled adapters in parallel, interleave
+    the shot's queries against the enabled adapters in parallel (one small
+    pool per adapter, so a throttled source never starves the others),
+    interleave
     sources for diversity, prefer assets the previous 3 shots do not use,
     download up to settings.sources.max_candidates per shot, write sidecars
     and keyframes. Network errors are logged, never fatal.
 source_shot(shot, ctx, queries=None, exclude_ids=()) -> list[Candidate]
     Fresh candidates for one shot (director loop re-query). Assets already on
     the shot are skipped and ids never clash with existing ones.
+
+Politeness: search responses are cached on disk under
+<source_cache_folder>/search/<adapter>/ (SEARCH_CACHE_TTL_S) so a resume or
+a re-run does not query again; each run has a query budget per adapter
+(throttle.take_budget, keyed by run_id(ctx)); requests are rate limited per host and capped
+globally in base/throttle. A throttled or over-budget search returns no
+results and is logged once per adapter and run.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
+import threading
+import time
+import uuid
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
 
 from ..models import FOOTAGE_TYPES, Candidate, Shot, ShotList, ShotType, SourceKind
+from . import base, throttle
 from .base import Media, RawResult, SourceAdapter
 from .blocklist import Blocklist
 
@@ -30,6 +45,10 @@ if TYPE_CHECKING:
 STILL_SHOT_TYPES = {ShotType.image, ShotType.image_overlay}
 QUERIES_PER_SHOT = 3
 RECENT_SHOTS = 3
+SEARCH_CACHE_TTL_S = 14 * 86400
+ADAPTER_WORKERS = {"youtube": 1, "loc": 1, "local": 2}
+DEFAULT_ADAPTER_WORKERS = 3
+UNCACHED = {"local"}  # in-memory index; its results change with the library
 
 
 def _factories() -> dict[str, Callable[[], SourceAdapter]]:
@@ -48,6 +67,7 @@ def _factories() -> dict[str, Callable[[], SourceAdapter]]:
 def active_adapters(ctx: "StageContext") -> list[SourceAdapter]:
     """Enabled and available adapters in settings.sources.enabled order."""
     cfg = ctx.settings.sources
+    base.configure(ctx.settings)
     factories = _factories()
     out: list[SourceAdapter] = []
     for name in cfg.enabled:
@@ -56,7 +76,44 @@ def active_adapters(ctx: "StageContext") -> list[SourceAdapter]:
         adapter = factories[name]()
         if adapter.available(ctx.settings):
             out.append(adapter)
+    _setup_warnings(out, ctx)
     return out
+
+
+def _setup_warnings(adapters: list[SourceAdapter], ctx: "StageContext") -> None:
+    """Log, once per run, a missing YouTube JS runtime and a missing User-Agent contact."""
+    names = {a.name for a in adapters}
+    if "youtube" in names:
+        from .youtube import runtime_warning
+        msg = runtime_warning()
+        if msg:
+            _note_once(ctx, "youtube_runtime", msg)
+    web = names - {"local"}
+    if web and not ctx.settings.key("VIDBUSH_CONTACT"):
+        _note_once(ctx, "contact", "VIDBUSH_CONTACT is not set: Wikimedia and loc.gov ask for a contact "
+                                   "(email or URL) in the User-Agent and may throttle anonymous clients")
+
+
+_noted: set[tuple[str, str]] = set()
+_noted_lock = threading.Lock()
+
+
+def run_id(ctx: "StageContext") -> str:
+    """Key of one pipeline run (or one editor action): budgets and one-time warnings are per run."""
+    extra = getattr(ctx, "extra", None)
+    if not isinstance(extra, dict):
+        return ctx.project.id
+    with _noted_lock:
+        return extra.setdefault("source_run_id", f"{ctx.project.id}:{uuid.uuid4().hex[:8]}")
+
+
+def _note_once(ctx: "StageContext", key: str, msg: str, **fields: Any) -> None:
+    rid = run_id(ctx)
+    with _noted_lock:
+        if (rid, key) in _noted:
+            return
+        _noted.add((rid, key))
+    ctx.log.warn(msg, **fields)
 
 
 def shot_media(shot: Shot) -> Optional[Media]:
@@ -93,11 +150,57 @@ def _has_sourced(shot: Shot) -> bool:
 
 def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
                 ctx: "StageContext") -> list[RawResult]:
+    """One search: disk cache first, then the run budget, then the adapter. Never raises."""
+    cacheable = adapter.name not in UNCACHED
+    if cacheable:
+        hit = cache_get(adapter.name, query, media, n, ctx.settings)
+        if hit is not None:
+            return hit
+        if not throttle.take_budget(run_id(ctx), adapter.name):
+            _note_once(ctx, f"budget_{adapter.name}", "source query budget spent, skipping searches",
+                       source=adapter.name)
+            return []
     try:
-        return adapter.search(query, media, n, ctx.settings, shot=shot)
+        results = adapter.search(query, media, n, ctx.settings, shot=shot)
+    except throttle.Throttled as e:
+        _note_once(ctx, f"throttled_{adapter.name}", "source search throttled, some queries skipped",
+                   source=adapter.name, error=str(e)[:200])
+        return []
     except Exception as e:  # noqa: BLE001 - one failing source never stops sourcing
         ctx.log.warn("source search failed", source=adapter.name, query=query, shot=shot.id, error=str(e)[:200])
         return []
+    if cacheable:
+        cache_put(adapter.name, query, media, n, results, ctx.settings)
+    return results
+
+
+def _cache_path(adapter: str, query: str, media: str, n: int, settings: Any) -> Path:
+    key = hashlib.sha1(f"{adapter}|{media}|{n}|{' '.join(query.lower().split())}".encode("utf-8")).hexdigest()
+    return base.cache_dir(settings) / "search" / adapter / f"{key[:24]}.json"
+
+
+def cache_get(adapter: str, query: str, media: str, n: int, settings: Any) -> Optional[list[RawResult]]:
+    """Cached search results younger than SEARCH_CACHE_TTL_S, or None."""
+    path = _cache_path(adapter, query, media, n, settings)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if time.time() - float(data.get("ts", 0)) > SEARCH_CACHE_TTL_S:
+            return None
+        return [RawResult(**r) for r in data.get("results") or []]
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def cache_put(adapter: str, query: str, media: str, n: int, results: list[RawResult], settings: Any) -> None:
+    path = _cache_path(adapter, query, media, n, settings)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".{threading.get_ident()}.part")
+        tmp.write_text(json.dumps({"ts": time.time(), "query": query, "media": media,
+                                   "results": [r.model_dump(mode="json") for r in results]}), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass  # the cache is an optimisation only
 
 
 def _per_adapter_n(adapter: SourceAdapter, cap: int) -> int:
@@ -105,11 +208,29 @@ def _per_adapter_n(adapter: SourceAdapter, cap: int) -> int:
     return max(cap * 3, 30) if adapter.name == "local" else max(3, cap // 2)
 
 
+class SearchPools:
+    """One small thread pool per adapter so a slow or throttled source never starves the others."""
+
+    def __init__(self, adapters: list[SourceAdapter]) -> None:
+        self.pools = {a.name: ThreadPoolExecutor(max_workers=ADAPTER_WORKERS.get(a.name, DEFAULT_ADAPTER_WORKERS))
+                      for a in adapters}
+
+    def submit(self, adapter: SourceAdapter, fn: Callable[..., Any], *args: Any) -> Future:
+        return self.pools[adapter.name].submit(fn, *args)
+
+    def __enter__(self) -> "SearchPools":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        for pool in self.pools.values():
+            pool.shutdown(wait=True)
+
+
 def search_shot(shot: Shot, adapters: list[SourceAdapter], media: Media, queries: list[str],
-                ctx: "StageContext", pool: ThreadPoolExecutor) -> dict[str, list[RawResult]]:
-    """Run every query on every adapter (in the pool); results merged per adapter."""
+                ctx: "StageContext", pools: SearchPools) -> dict[str, list[RawResult]]:
+    """Run every query on every adapter (in its pool); results merged per adapter."""
     cap = ctx.settings.sources.max_candidates
-    jobs = [(a, q, pool.submit(_search_one, a, q, media, _per_adapter_n(a, cap), shot, ctx))
+    jobs = [(a, q, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap), shot, ctx))
             for a in adapters if media in a.media for q in queries]
     merged: dict[str, list[RawResult]] = defaultdict(list)
     for a, _q, fut in jobs:
@@ -221,8 +342,8 @@ def _source_with_plan(shot: Shot, plan: list[RawResult], adapters: list[SourceAd
     cands = _fetch_raws(shot, plan, by_name, ctx, cap, media)
     if media == "image" and not cands:
         video_adapters = [a for a in adapters if "video" in a.media]
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            per = search_shot(shot, video_adapters, "video", shot_queries(shot), ctx, pool)
+        with SearchPools(video_adapters) as pools:
+            per = search_shot(shot, video_adapters, "video", shot_queries(shot), ctx, pools)
         vplan = plan_shot(interleave(per, [a.name for a in video_adapters]), _blocklist(ctx), set(), skip, cap)
         cands = _fetch_raws(shot, vplan, by_name, ctx, cap, "image")
     return finalize(shot, cands, ctx, taken)
@@ -248,8 +369,8 @@ def source_all(shotlist: ShotList, ctx: "StageContext", force: bool = False) -> 
     order = [a.name for a in adapters]
     cap = ctx.settings.sources.max_candidates
     blocklist = _blocklist(ctx)
-    with ThreadPoolExecutor(max_workers=_workers() * 2) as pool:
-        found = {s.id: search_shot(s, adapters, shot_media(s), shot_queries(s), ctx, pool) for s in targets}
+    with SearchPools(adapters) as pools:
+        found = _search_all(targets, adapters, ctx, pools)
     plans = _plan_all(shotlist, found, order, blocklist, cap, force)
     with ThreadPoolExecutor(max_workers=_workers()) as pool:
         futs = {s.id: pool.submit(_source_with_plan, s, plans[s.id], adapters, ctx, shot_media(s), set(), [])
@@ -261,6 +382,25 @@ def source_all(shotlist: ShotList, ctx: "StageContext", force: bool = False) -> 
     ctx.log.info("sourcing done", candidates=sum(len(v) for v in results.values()),
                  empty=[sid for sid, v in results.items() if not v])
     return shotlist
+
+
+def _search_all(targets: list[Shot], adapters: list[SourceAdapter], ctx: "StageContext",
+                pools: SearchPools) -> dict[str, dict[str, list[RawResult]]]:
+    """Searches for every target shot, all submitted before any result is awaited."""
+    cap = ctx.settings.sources.max_candidates
+    jobs: dict[str, list[tuple[str, Future]]] = {}
+    for s in targets:
+        media = shot_media(s)
+        jobs[s.id] = [(a.name, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap), s, ctx))
+                      for a in adapters if media in a.media for q in shot_queries(s)]
+    found: dict[str, dict[str, list[RawResult]]] = {}
+    for sid, futs in jobs.items():
+        merged: dict[str, list[RawResult]] = defaultdict(list)
+        for name, fut in futs:
+            merged[name].extend(fut.result())
+        found[sid] = {name: _merge(res) for name, res in merged.items()}
+    ctx.log.info("source searches", sent=throttle.spent(run_id(ctx)))
+    return found
 
 
 def _plan_all(shotlist: ShotList, found: dict[str, dict[str, list[RawResult]]], order: list[str],
@@ -287,8 +427,8 @@ def source_shot(shot: Shot, ctx: "StageContext", queries: Optional[list[str]] = 
         return []
     skip = {asset_key(c.url) for c in shot.candidates}  # every asset already on the shot, excluded ones included
     qs = shot_queries(shot, queries)
-    with ThreadPoolExecutor(max_workers=_workers()) as pool:
-        per = search_shot(shot, adapters, media, qs, ctx, pool)
+    with SearchPools(adapters) as pools:
+        per = search_shot(shot, adapters, media, qs, ctx, pools)
     cap = ctx.settings.sources.max_candidates
     plan = plan_shot(interleave(per, [a.name for a in adapters]), _blocklist(ctx), set(), skip, cap + cap // 2)
     taken = {c.id for c in shot.candidates} | set(exclude_ids)

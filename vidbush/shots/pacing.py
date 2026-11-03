@@ -7,7 +7,9 @@ deficit against profile.visual_mix (share of shot count) and whose duration is
 drawn from profile.pacing (mean with bounded jitter, clamped to min and max,
 times hook_multiplier inside the first hook_seconds). Internal boundaries are
 snapped to gaps between words when that keeps both neighbours within bounds.
-All randomness comes from the rng argument.
+Back-to-back full screen cards are limited: at most MAX_MG_RUN motion graphics
+in a row and about MAX_MG_RUN_S seconds of them. All randomness comes from
+the rng argument.
 """
 from __future__ import annotations
 
@@ -48,6 +50,11 @@ class Anchor(BaseModel):
     tag: str
     motion: Optional[MotionSpec] = None
     overlay: Optional[MotionSpec] = None
+    pinned: bool = False  # start must not move later (number card at its item start)
+
+
+MAX_MG_RUN = 2  # full screen motion graphics in a row
+MAX_MG_RUN_S = 16.0  # seconds of consecutive full screen cards
 
 
 def mix_targets(profile: StyleProfile) -> dict[ShotType, float]:
@@ -113,10 +120,12 @@ class _Planner:
                 score -= 10.0
             elif last and last[-1] == t:
                 score -= 0.25
+            if t == ShotType.motion_graphic:
+                score -= self._mg_run_penalty(at, remaining, avoid_end)
             lo, hi, _ = bounds(self.profile, t, at)
             if lo > remaining + EPS:
                 score -= 5.0
-            if t == avoid_end and remaining <= hi + self._min_any(at):
+            if t == avoid_end and t != ShotType.motion_graphic and remaining <= hi + self._min_any(at):
                 score -= 1.5
             if in_hook and t == ShotType.motion_graphic:
                 score -= 1.2
@@ -125,6 +134,23 @@ class _Planner:
             if score > best_score:
                 best, best_score = t, score
         return best or ShotType.footage
+
+    def _mg_run_penalty(self, at: float, remaining: float, avoid_end: Optional[ShotType]) -> float:
+        """Cost of one more motion graphic after the current run of them (and before a motion anchor)."""
+        run_n, run_s = 0, 0.0
+        for s in reversed(self.slots):
+            if s.type != ShotType.motion_graphic:
+                break
+            run_n, run_s = run_n + 1, run_s + s.duration
+        lo, hi, _ = bounds(self.profile, ShotType.motion_graphic, at)
+        last_slot = remaining <= hi + self._min_any(at)
+        if last_slot and avoid_end == ShotType.motion_graphic:
+            run_n, run_s = run_n + 1, run_s + lo
+        if run_n == 0:
+            return 0.0
+        if run_n >= MAX_MG_RUN or run_s + lo > MAX_MG_RUN_S + EPS:
+            return 10.0
+        return 2.0
 
     def add(self, slot: Slot) -> None:
         self.slots.append(slot)
@@ -217,16 +243,29 @@ def _fill_range(planner: _Planner, a: float, b: float, cuts: list[float],
 
 
 def _place_anchors(anchors: Sequence[Anchor], total: float) -> list[Anchor]:
-    """Sort anchors, clip them to the timeline and push overlapping ones later."""
+    """Sort anchors, clip them to the timeline and push overlapping ones later.
+
+    A pinned anchor keeps its start: the anchor before it is shortened (or dropped) instead, and a sliver
+    before it is absorbed by that anchor.
+    """
     out: list[Anchor] = []
     t = 0.0
     for a in sorted(anchors, key=lambda x: x.start):
         start = max(a.start, t)
+        if a.pinned and out and t > a.start + EPS:
+            prev = out[-1]
+            keep = a.start - prev.start
+            out[-1:] = [prev.model_copy(update={"duration": keep})] if keep >= 1.5 else []
+            t = out[-1].start + out[-1].duration if out else 0.0
+            start = max(a.start, t)
         dur = min(a.duration, total - start)
         if dur < 1.5:
             continue
-        if out and start - t < 1.5:
-            start = t  # avoid a sliver between two anchors
+        if out and 0 < start - t < 1.5:
+            if a.pinned:
+                out[-1] = out[-1].model_copy(update={"duration": round(start - out[-1].start, 3)})
+            else:
+                start = t  # avoid a sliver between two anchors
         out.append(a.model_copy(update={"start": start, "duration": dur}))
         t = start + dur
     return out

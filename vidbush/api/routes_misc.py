@@ -22,22 +22,31 @@ def health(request: Request) -> dict[str, Any]:
 
 
 @router.get("/settings")
-def settings_status(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
-    """Seat resolution (real or mock per role), sources and render config, doctor checks."""
+def settings_status(probe: bool = False, settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """Seat resolution per role (configured, down_since, last probe), mock fallback policy, sources,
+    render config and doctor checks. ?probe=true sends one tiny live request per configured role first."""
     from ..doctor import doctor
     from ..providers.base import CostTracker
+    from ..providers.probe import last_results
     from ..providers.seats import Seats
-    seats = Seats(settings, CostTracker("api")).status()
+    seats_obj = Seats(settings, CostTracker("api"))
+    doc = doctor(settings, probe=probe)
+    probes = last_results()
+    seats = seats_obj.status()
+    for role, info in seats.items():
+        info["configured"] = info["real"]
+        info["probe"] = probes.get(role)
     return {
         "offline": settings.offline,
         "seats": seats,
         "mock_roles": sorted(r for r, v in seats.items() if not v["real"]),
+        "mock_policy": seats_obj.mock_policy(),
         "sources": settings.sources.model_dump(mode="json"),
         "render": settings.render.model_dump(mode="json"),
         "judge": settings.judge.model_dump(mode="json"),
         "music_folder": settings.music_folder,
         "output_folder": settings.output_folder,
-        "doctor": doctor(settings),
+        "doctor": doc,
     }
 
 

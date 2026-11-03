@@ -17,7 +17,7 @@ def post_json(url: str, payload: dict[str, Any], headers: Optional[dict[str, str
     except requests.RequestException as e:
         raise TransportError(str(e)[:300]) from e
     if r.status_code >= 400:
-        raise http_error_to_exc(r.status_code, r.text)
+        raise http_error_to_exc(r.status_code, r.text, r.headers.get("Retry-After"))
     try:
         return r.json()
     except ValueError as e:
@@ -31,7 +31,7 @@ def get_json(url: str, params: Optional[dict[str, Any]] = None, headers: Optiona
     except requests.RequestException as e:
         raise TransportError(str(e)[:300]) from e
     if r.status_code >= 400:
-        raise http_error_to_exc(r.status_code, r.text)
+        raise http_error_to_exc(r.status_code, r.text, r.headers.get("Retry-After"))
     try:
         return r.json()
     except ValueError as e:
@@ -43,7 +43,7 @@ def get_bytes(url: str, headers: Optional[dict[str, str]] = None, timeout: float
     try:
         with requests.get(url, headers=headers or {}, timeout=timeout, stream=True) as r:
             if r.status_code >= 400:
-                raise http_error_to_exc(r.status_code, r.text[:300])
+                raise http_error_to_exc(r.status_code, r.text[:300], r.headers.get("Retry-After"))
             buf = bytearray()
             for chunk in r.iter_content(1 << 16):
                 buf.extend(chunk)
@@ -61,5 +61,5 @@ def post_bytes(url: str, payload: dict[str, Any], headers: Optional[dict[str, st
     except requests.RequestException as e:
         raise TransportError(str(e)[:300]) from e
     if r.status_code >= 400:
-        raise http_error_to_exc(r.status_code, r.text)
+        raise http_error_to_exc(r.status_code, r.text, r.headers.get("Retry-After"))
     return r.content

@@ -99,8 +99,10 @@ class FakeRealSeats:
     def is_real(self, role: str) -> bool:
         return role == "tts"
 
-    def tts(self, text: str, voice: VoiceConfig, out_path: Path, stage: str) -> tuple[Path, Optional[list[dict]], bool, str]:
+    def tts(self, text: str, voice: VoiceConfig, out_path: Path, stage: str,
+            **kw: Any) -> tuple[Path, Optional[list[dict]], bool, str]:
         self.calls.append(text)
+        self.kwargs = kw
         res = mock.mock_tts(text, out_path)
         wav, words, _engine = res.value
         words = [{**w, "start": w["start"] * self.scale, "end": w["end"] * self.scale} for w in words]
@@ -176,3 +178,43 @@ def test_narration_from_voiceover(make_ctx: Any, tmp_path: Path) -> None:
     assert len(n.words) == len(text.split())
     _assert_spans(n, ["b1", "b2", "b3"])
     assert measure(n.audio_path)["lufs"] == pytest.approx(-16.0, abs=1.0)
+
+
+class FailingRealSeats(FakeRealSeats):
+    """Real TTS seat whose second request fails over to the mock voice (allow_mock_fallback on the seat)."""
+
+    def tts(self, text: str, voice: VoiceConfig, out_path: Path, stage: str,
+            **kw: Any) -> tuple[Path, Optional[list[dict]], bool, str]:
+        if self.calls:
+            res = mock.mock_tts(text, out_path)
+            return Path(res.value[0]), None, True, "mock_espeak"
+        return super().tts(text, voice, out_path, stage, **kw)
+
+
+def test_mock_audio_never_spliced_into_real_narration(make_ctx: Any) -> None:
+    from vidbush.providers.base import ProviderError
+    ctx = make_ctx(mode="script", project_id="nar7")
+    ctx.settings.render.workers = 1
+    with pytest.raises(ProviderError):
+        nar.narrate(_script(), ctx.brand, FailingRealSeats(), ctx.settings, ctx.work, ctx.log)
+    ctx = make_ctx(mode="script", project_id="nar7b")
+    ctx.settings.render.workers = 1
+    ctx.settings.allow_mock_fallback = True
+    n = nar.narrate(_script(), ctx.brand, FailingRealSeats(), ctx.settings, ctx.work, ctx.log)
+    assert "mock_espeak" in n.provider
+
+
+def test_seat_error_propagates_and_language_is_passed(make_ctx: Any) -> None:
+    from vidbush.providers.base import ProviderError
+
+    class Down(FakeRealSeats):
+        def tts(self, *a: Any, **kw: Any) -> Any:
+            raise ProviderError("all providers failed for tts")
+
+    ctx = make_ctx(mode="script", project_id="nar8")
+    with pytest.raises(ProviderError):
+        nar.narrate(_script(), ctx.brand, Down(), ctx.settings, ctx.work, ctx.log)
+    seats = FakeRealSeats()
+    ctx.brand.language = "de"
+    nar.narrate(_script(), ctx.brand, seats, ctx.settings, ctx.work, ctx.log)
+    assert seats.kwargs == {"language": "de"}

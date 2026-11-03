@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from ..config import Settings
 from ..models import Brand, Narration, Script, Word
+from ..providers.base import ProviderError
 from ..util import JsonLogger, no_em_dash, read_json, stable_hash, write_json
 from . import align
 from .loudness import SR, normalize, read_audio, write_audio
@@ -70,18 +71,26 @@ def plan_chunks(script: Script, per_beat: bool, max_chars: int = MAX_CHUNK_CHARS
     return chunks
 
 
-def synthesize_chunk(chunk: Chunk, brand: Brand, seats: Any, nar_dir: Path, log: JsonLogger) -> Chunk:
-    """TTS for one chunk, cached on disk by text and voice (a sidecar json keeps words)."""
+def synthesize_chunk(chunk: Chunk, brand: Brand, seats: Any, nar_dir: Path, log: JsonLogger,
+                     allow_mock_fallback: bool = False) -> Chunk:
+    """TTS for one chunk, cached on disk by text, voice and language (a sidecar json keeps words).
+
+    With a real TTS seat, a chunk that came back from the mock voice raises ProviderError
+    unless allow_mock_fallback: mock audio is never spliced silently into real narration.
+    """
     real = seats.is_real("tts")
-    key = stable_hash(chunk.text, brand.voice, "real" if real else "mock")
+    key = stable_hash(chunk.text, brand.voice, brand.language, "real" if real else "mock")
     sidecar = nar_dir / f"chunk_{key}.json"
     if sidecar.exists():
         cached = Chunk(**read_json(sidecar))
         if Path(cached.path).exists() and not (real and cached.is_mock):
             return chunk.model_copy(update={"path": cached.path, "words": cached.words,
                                             "is_mock": cached.is_mock, "engine": cached.engine})
-    path, words, is_mock, engine = seats.tts(chunk.text, brand.voice, nar_dir / f"chunk_{key}.wav", "narration")
+    path, words, is_mock, engine = seats.tts(chunk.text, brand.voice, nar_dir / f"chunk_{key}.wav", "narration",
+                                             language=brand.language)
     if real and is_mock:
+        if not allow_mock_fallback:
+            raise ProviderError(f"tts returned mock audio for scene {chunk.scene_id} with a real tts seat")
         log.warn("tts provider failed, chunk narrated by the mock voice", scene=chunk.scene_id, beats=chunk.beat_ids)
     out = chunk.model_copy(update={"path": str(path), "words": None if is_mock else words,
                                    "is_mock": is_mock, "engine": engine})
@@ -93,7 +102,8 @@ def synthesize_all(chunks: list[Chunk], brand: Brand, seats: Any, settings: Sett
                    log: JsonLogger) -> list[Chunk]:
     workers = max(1, min(4, settings.render.workers))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        done = list(pool.map(lambda c: synthesize_chunk(c, brand, seats, nar_dir, log), chunks))
+        done = list(pool.map(lambda c: synthesize_chunk(c, brand, seats, nar_dir, log,
+                                                        settings.allow_mock_fallback), chunks))
     log.info("narration chunks synthesized", chunks=len(done), mock=sum(c.is_mock for c in done))
     return done
 
@@ -284,7 +294,7 @@ def renarrate_beat(narration: Narration, script: Script, beat_id: str, new_text:
     nar_dir = Path(work_dir) / "narration"
     scene = next(sc for sc in script.scenes if any(b.id == beat_id for b in sc.beats))
     chunk = synthesize_chunk(Chunk(scene_id=scene.id, beat_ids=[beat_id], texts=[no_em_dash(new_text.strip())]),
-                             brand, seats, nar_dir, log)
+                             brand, seats, nar_dir, log, settings.allow_mock_fallback)
     raw = read_audio(chunk.path)[:, 0]
     speech, trimmed = _trim_speech(raw, Path(chunk.path))
     s, e = narration.beat_spans[beat_id]

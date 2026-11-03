@@ -26,6 +26,10 @@ CLOSING = ("This is a long-form documentary built from published sources. If you
 GENERIC_HOOK = {"", "hook", "intro", "introduction", "cold open", "opening", "teaser", "prologue"}
 SYSTEM = ("You write YouTube metadata for a long-form faceless documentary channel. Be accurate and "
           "curiosity driven, never clickbait, no emojis, no em dashes. Reply with strict JSON only, concise.")
+LANGUAGE_NAMES = {"en": "English", "de": "German", "fr": "French", "es": "Spanish", "it": "Italian",
+                  "pt": "Portuguese", "nl": "Dutch", "pl": "Polish", "sv": "Swedish", "ja": "Japanese",
+                  "ko": "Korean", "zh": "Chinese", "ar": "Arabic", "hi": "Hindi", "ru": "Russian", "tr": "Turkish"}
+YEAR_RE = re.compile(r"^(1[0-9]{3}|20[0-9]{2})$")
 
 
 @dataclass
@@ -56,6 +60,19 @@ def package(shotlist: ShotList, ctx: Any) -> list[Path]:
     ctx.log.info("package written", chapters=len(chapters), titles=len(titles),
                  description_words=len(description.split()))
     return [ch_path, desc_path] + make_thumbnails(shotlist, titles, ctx)
+
+
+def language_name(code: str) -> str:
+    """Display name for a brand language code ('en' -> 'English'); unknown codes pass through."""
+    code = (code or "en").strip()
+    return LANGUAGE_NAMES.get(code.lower().split("-")[0], code)
+
+
+def system_prompt(base: str, ctx: Any) -> str:
+    """base plus the brand language instruction (every packaging prompt goes through this)."""
+    brand = getattr(ctx, "brand", None)
+    lang = language_name(getattr(brand, "language", "en") or "en")
+    return f"{base} Write every text in {lang}."
 
 
 def clean(text: str) -> str:
@@ -164,7 +181,7 @@ def make_titles(script: Optional[Script], video_title: str, ctx: Any) -> tuple[l
     """Three title options under MAX_TITLE_CHARS and a tag list (writer seat, heuristic fallback)."""
     user = (_context(script, video_title) + '\nReturn {"titles": [3 distinct titles under 70 characters], '
             '"tags": [10 to 15 lowercase search tags]}.')
-    data = ctx.seats.llm_json("writer", "titles", SYSTEM, user, stage="packaging")
+    data = ctx.seats.llm_json("writer", "titles", system_prompt(SYSTEM, ctx), user, stage="packaging")
     titles: list[str] = []
     tags: list[str] = []
     if isinstance(data, dict):
@@ -201,17 +218,39 @@ def key_phrases(script: Optional[Script]) -> list[str]:
     return sorted(counts, key=lambda k: (-counts[k], text.index(k)))[:6]
 
 
+def inner_topic(topic: str) -> str:
+    """Topic for use inside a title: a leading 'The' becomes 'the'."""
+    return re.sub(r"^The\s+", "the ", topic)
+
+
+def number_phrase(script: Optional[Script]) -> str:
+    """Largest non-year number in the script with the word after it, title cased ('22,000 Workers')."""
+    if not script:
+        return ""
+    best: tuple[float, str] = (0.0, "")
+    text = " ".join(b.text for b in script.beats())
+    for m in re.finditer(r"\b(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s+([a-z][a-z-]+)\b", text):
+        num, word = m.group(1), m.group(2)
+        if YEAR_RE.match(num) or word in {"and", "or", "the", "a", "an", "to", "of", "in", "on", "at", "by"}:
+            continue
+        value = float(num.replace(",", ""))
+        if value >= 10 and value > best[0]:
+            best = (value, f"{num} {word.capitalize()}")
+    return best[1]
+
+
 def heuristic_titles(script: Optional[Script], video_title: str) -> list[str]:
-    """Honest, curiosity driven title variants built from the script title and its key names."""
+    """Honest, fact-led title variants from the script title and its biggest number."""
     topic = video_title.split(":")[0].strip() or video_title
-    names = [n for n in key_phrases(script) if n.lower() not in topic.lower()]
+    inner = inner_topic(topic)
+    fact = number_phrase(script)
     if script and script.format == VideoFormat.top10:
         opts = [video_title, f"{topic}, Ranked", f"{topic}: The Full Countdown"]
     else:
-        opts = [video_title, f"The Untold Story of {topic}", f"{topic}: How It Really Happened",
-                f"Why {topic} Still Matters"]
-    if names:
-        opts.insert(2, f"{topic} and {names[0]}: The Full Story")
+        opts = [video_title]
+        if fact:
+            opts.append(f"{fact}: The Story of {inner}")
+        opts += [f"{topic}: How It Really Happened", f"Why {inner} Still Matters"]
     out: list[str] = []
     for t in (fit_title(clean(o)) for o in opts):
         if t and t.lower() not in {x.lower() for x in out}:
@@ -247,7 +286,7 @@ def make_description(script: Optional[Script], video_title: str, ctx: Any) -> st
     """150 to 250 word description (writer seat, heuristic fallback, then fitted to the range)."""
     user = (_context(script, video_title) + '\nReturn {"description": "150 to 250 words in 2 or 3 short '
             'paragraphs: open with the most intriguing fact, then what the video covers. No hashtags, no links."}')
-    data = ctx.seats.llm_json("writer", "description", SYSTEM, user, stage="packaging")
+    data = ctx.seats.llm_json("writer", "description", system_prompt(SYSTEM, ctx), user, stage="packaging")
     text = data.get("description", "") if isinstance(data, dict) else ""
     text = no_em_dash(text.strip()) if isinstance(text, str) else ""
     if not text:
@@ -264,18 +303,36 @@ def heuristic_description(script: Optional[Script], video_title: str) -> str:
     if not script or not script.scenes:
         return f"{video_title}. A long-form documentary."
     hook = " ".join(_sentences(" ".join(b.text for b in script.scenes[0].beats))[:3])
-    titles = [clean(s.title) for s in script.scenes[1:] if clean(s.title).lower() not in GENERIC_HOOK]
+    names = name_vocab(script)
+    titles = [inline_title(clean(s.title), names) for s in script.scenes[1:]
+              if clean(s.title).lower() not in GENERIC_HOOK]
     if script.format == VideoFormat.top10:
         covers = "We count down " + _join(titles) + "." if titles else ""
     else:
-        covers = f"In this documentary we cover {_join(titles)}." if titles else ""
+        covers = f"We follow {_join(titles, ', then ')}." if titles else ""
     last = script.scenes[-1]
     closing = " ".join(_sentences(" ".join(b.text for b in last.beats))[-2:]) if len(script.scenes) > 1 else ""
     return "\n\n".join(p for p in (hook, covers, closing) if p)
 
 
-def _join(items: list[str]) -> str:
-    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+def _join(items: list[str], last: str = " and ") -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + last + items[-1]
+
+
+def name_vocab(script: Script) -> set[str]:
+    """Words the narration capitalises mid-sentence (names), lower cased."""
+    text = " ".join(b.text for b in script.beats())
+    return {m.group(1).lower() for m in re.finditer(r"(?<![.!?])\s([A-Z][A-Za-z'-]+)", text)}
+
+
+def inline_title(title: str, names: set[str]) -> str:
+    """Scene title for use mid-sentence: words lower cased except names and acronyms."""
+    out = []
+    for w in title.split():
+        core = re.sub(r"[^A-Za-z'-]", "", w)
+        keep = not core or core.isupper() or core.lower() in names
+        out.append(w if keep else w.lower())
+    return " ".join(out).rstrip(".")
 
 
 def fit_words(text: str, script: Optional[Script]) -> str:

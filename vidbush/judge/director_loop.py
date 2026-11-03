@@ -12,7 +12,7 @@ from __future__ import annotations
 import inspect
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from typing import Any
 
 from ..models import Candidate, Script, Shot, ShotList, ShotType, SourceKind
 from .judge import JUDGE_MOCK_FLAG, score_many
@@ -20,7 +20,11 @@ from .judge import JUDGE_MOCK_FLAG, score_many
 SOURCED_TYPES = {ShotType.footage, ShotType.footage_overlay, ShotType.image, ShotType.image_overlay}
 AI_TYPES = {ShotType.ai_image, ShotType.ai_video}
 RESOLVE_WORKERS = 4
-DIVERSITY_GAP = 5.0
+DIVERSITY_GAP = 5.0  # score points charged per earlier use of the same asset anywhere in the video
+RECENT_S = 60.0
+RECENT_PENALTY = 10.0  # extra when the earlier use is within RECENT_S
+SEGMENT_GAP_S = 3.0  # a reused video must start at least this far from the earlier in point
+SAME_SEGMENT_PENALTY = 15.0
 SHOT_FLAGS = {"mock", "low_res", "nc_nd", "anachronism", "no_match_accepted"}
 MAX_QUERIES = 6
 
@@ -243,12 +247,34 @@ def add_candidates(shot: Shot, new: list[Candidate]) -> list[Candidate]:
 
 # ---------------------------------------------------------------- selection
 
+class _Usage:
+    """Assets already selected in this video: (shot start, asset key, in point) in timeline order."""
+
+    def __init__(self) -> None:
+        self.picks: list[tuple[float, str, float]] = []
+
+    def penalty(self, c: Candidate, at: float) -> float:
+        """Score points to subtract for reusing c at time at: any reuse, reuse within 60 s, same segment."""
+        key, p = asset_key(c), 0.0
+        for t, k, inp in self.picks:
+            if k != key:
+                continue
+            p += DIVERSITY_GAP
+            if abs(at - t) <= RECENT_S:
+                p += RECENT_PENALTY
+            if c.media == "video" and abs(c.in_point - inp) < SEGMENT_GAP_S:
+                p += SAME_SEGMENT_PENALTY  # stills may repeat with a new framing; a video needs a new segment
+        return p
+
+    def add(self, c: Candidate, at: float) -> None:
+        self.picks.append((at, asset_key(c), c.in_point))
+
+
 def _select_all(shotlist: ShotList, ctx: Any, threshold: float, notes: dict[str, list[str]]) -> None:
-    """Pick one candidate per shot, avoiding the same asset on adjacent shots when a close alternative exists."""
-    prev: Optional[str] = None
+    """Pick one candidate per shot, penalising reuse of an asset anywhere in the video (more within 60 s)."""
+    usage = _Usage()
     for shot in shotlist.shots:
         if shot.type == ShotType.motion_graphic:
-            prev = None
             continue
         _ensure_usable(shot, ctx)
         pinned = shot.selected_candidate()
@@ -256,11 +282,13 @@ def _select_all(shotlist: ShotList, ctx: Any, threshold: float, notes: dict[str,
         if pinned is not None and pinned.source == SourceKind.upload:
             pick, accepted = pinned, False
         elif passing:
-            pick, accepted = _diverse(passing, prev), False
+            pick, accepted = _diverse(passing, usage, shot.start), False
         else:
-            pick, accepted = _ranked(shot)[0], True
+            ranked = _ranked(shot)
+            pool = [c for c in ranked if c.reject_reason is None] or ranked[:1]
+            pick, accepted = _diverse(pool, usage, shot.start), True
         _apply(shot, pick, accepted, notes.get(shot.id, []))
-        prev = asset_key(pick)
+        usage.add(pick, shot.start)
 
 
 def _ensure_usable(shot: Shot, ctx: Any) -> None:
@@ -273,14 +301,9 @@ def _ensure_usable(shot: Shot, ctx: Any) -> None:
     _add_ai(shot, ctx)
 
 
-def _diverse(passing: list[Candidate], prev: Optional[str]) -> Candidate:
-    top = passing[0]
-    if prev is None or asset_key(top) != prev:
-        return top
-    for alt in passing[1:]:
-        if asset_key(alt) != prev and (top.score or 0) - (alt.score or 0) <= DIVERSITY_GAP:
-            return alt
-    return top
+def _diverse(pool: list[Candidate], usage: _Usage, at: float) -> Candidate:
+    """Best of pool by judge score minus the reuse penalty; ties keep the judge order."""
+    return max(pool, key=lambda c: (c.score or 0.0) - usage.penalty(c, at))
 
 
 def _apply(shot: Shot, pick: Candidate, accepted: bool, notes: list[str]) -> None:

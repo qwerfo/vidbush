@@ -2,18 +2,29 @@
 
 Levels: each track is measured and gained so the bed sits at REF_LUFS +
 bed_gain_db under narration (about -32 LUFS with the defaults) and rises by
-ducking_depth_db in the open (intro, long pauses, the tail). Ducking is FFmpeg
-sidechaincompress keyed by a smoothed speech envelope: speech regions with gaps
-under KEY_MERGE_GAP_S are merged into one constant level, so the bed holds one
-ducked level through sentences instead of pumping on every word. The final mix
-is two pass loudnorm to settings.render.target_lufs and true_peak.
+ducking_depth_db in the open (intro, genuinely long pauses, the tail). Ducking
+is FFmpeg sidechaincompress keyed by a smoothed speech envelope: speech regions
+with gaps under KEY_MERGE_GAP_S (2.5 s) are merged into one constant level and
+held KEY_HOLD_S after the last word, so the bed holds one ducked level through
+sentences, scene pauses and paragraph breaks instead of pumping. The key ramps in
+dB (so the gain reduction ramps linearly): down over KEY_RAMP_IN_S before speech,
+up over KEY_RAMP_OUT_S after it, with a compressor release of at least
+MIN_RELEASE_MS. The final mix is two pass normalized (linear gain plus limiter)
+to settings.render.target_lufs and true_peak.
+
+Optional sparse SFX (off by default): a soft synthesized whoosh (title cards,
+maps) or low hit (number cards) at the start of some motion graphic shots, at
+most max_per_minute, mixed at a fixed gain under the narration. Enable it with
+an sfx.json ({"enabled": true, "max_per_minute": 3, "gain_db": -24, "kinds":
+[...]}) in the brand music folder, or per project in work/sfx.json (which wins).
+Events are recorded in mix.json under "sfx".
 """
 from __future__ import annotations
 
 import json
 import random
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 from pydantic import BaseModel
@@ -26,7 +37,11 @@ from .loudness import SR, measure, normalize_graph, write_audio
 
 AUDIO_EXT = {".mp3", ".ogg", ".wav", ".m4a", ".flac", ".aac", ".opus"}
 REF_LUFS = -14.0
-KEY_MERGE_GAP_S = 0.8
+KEY_MERGE_GAP_S = 2.5  # pauses shorter than this keep the bed ducked
+KEY_HOLD_S = 0.4  # the key stays up this long after the last word
+KEY_RAMP_IN_S = 0.35  # duck ramp before speech
+KEY_RAMP_OUT_S = 1.5  # slow rise after speech
+MIN_RELEASE_MS = 1000.0
 KEY_RATE = 2000
 KEY_LEVEL_DB = -6.0
 RATIO = 20.0
@@ -184,24 +199,40 @@ def plan_sections(script: Script, narration: Narration, duration: float, tracks:
 # ---------------------------------------------------------------- ducking key
 
 def speech_envelope(regions: list[align.Region], duration: float, merge_gap: float = KEY_MERGE_GAP_S,
-                    lead_s: float = 0.0) -> list[align.Region]:
-    """Speech regions with short gaps merged, each started lead_s early (so the dip lands on the word)."""
+                    lead_s: float = 0.0, hold_s: float = 0.0) -> list[align.Region]:
+    """Speech regions with gaps under merge_gap merged, each started lead_s early (so the dip lands on
+    the word) and held hold_s after its end."""
     merged: list[list[float]] = []
     for s, e in sorted(regions):
         if merged and s - merged[-1][1] < merge_gap:
             merged[-1][1] = max(merged[-1][1], e)
         else:
             merged.append([s, e])
-    return [(max(0.0, s - lead_s), min(duration, e)) for s, e in merged]
+    return [(round(max(0.0, s - lead_s), 4), round(min(duration, e + hold_s), 4)) for s, e in merged]
 
 
-def write_key(envelope: list[align.Region], duration: float, path: Path) -> Path:
-    """Stereo sidechain key: constant KEY_LEVEL_DB inside the envelope, silence elsewhere, at KEY_RATE."""
-    n = int(np.ceil(duration * KEY_RATE)) + 1
-    key = np.zeros(n, dtype=np.float32)
-    level = 10 ** (KEY_LEVEL_DB / 20.0)
+def key_db_curve(envelope: list[align.Region], duration: float, depth_db: float,
+                 ramp_in: float = KEY_RAMP_IN_S, ramp_out: float = KEY_RAMP_OUT_S,
+                 rate: int = KEY_RATE) -> np.ndarray:
+    """Key level in dB per sample: KEY_LEVEL_DB inside the envelope, linear dB ramps from the compressor
+    threshold before and after each region, -inf (silence) elsewhere."""
+    n = int(np.ceil(duration * rate)) + 1
+    t = np.arange(n, dtype=np.float64) / rate
+    thr = 20 * np.log10(key_threshold(depth_db))
+    span = KEY_LEVEL_DB - thr
+    frac = np.zeros(n, dtype=np.float64)
     for s, e in envelope:
-        key[int(s * KEY_RATE): int(np.ceil(e * KEY_RATE))] = level
+        up = np.clip((t - (s - ramp_in)) / max(ramp_in, 1e-3), 0.0, 1.0)
+        down = np.clip(1.0 - (t - e) / max(ramp_out, 1e-3), 0.0, 1.0)
+        frac = np.maximum(frac, np.minimum(up, down))
+    return np.where(frac > 0, thr + span * frac, -np.inf)
+
+
+def write_key(envelope: list[align.Region], duration: float, path: Path, depth_db: float = 12.0,
+              ramp_in: float = KEY_RAMP_IN_S, ramp_out: float = KEY_RAMP_OUT_S) -> Path:
+    """Stereo sidechain key at KEY_RATE from key_db_curve (gain reduction ramps linearly in dB)."""
+    db = key_db_curve(envelope, duration, depth_db, ramp_in, ramp_out)
+    key = np.where(np.isfinite(db), 10 ** (np.nan_to_num(db, neginf=-200.0) / 20.0), 0.0).astype(np.float32)
     return write_audio(path, np.stack([key, key], 1), sr=KEY_RATE)  # stereo: a mono upmix would cost 3 dB
 
 
@@ -252,20 +283,110 @@ def duck_graph(bed: tuple[list[str], str], key: Path, profile: StyleProfile, n: 
     k = inputs.count("-i")
     m = profile.music
     duck = (f"sidechaincompress=threshold={key_threshold(m.ducking_depth_db):.6f}:ratio={RATIO}:"
-            f"attack={max(m.attack_ms, 0.01)}:release={max(m.release_ms, 0.01)}:knee=1:detection=rms:link=maximum")
+            f"attack={max(m.attack_ms, 0.01)}:release={max(m.release_ms, MIN_RELEASE_MS)}:knee=1:detection=rms:"
+            f"link=maximum")
     graph += f";{_fit(f'[{k}:a]', n)}[key];[bed][key]{duck}[duck]"
     return inputs + ["-i", str(key)], graph
 
 
 def mix_graph(narration_path: str, n: int, bed: Optional[tuple[list[str], str]], key: Optional[Path],
-              profile: StyleProfile) -> tuple[list[str], str]:
-    """Inputs and graph producing [pre]: narration plus the ducked bed (or narration alone)."""
+              profile: StyleProfile, sfx: Optional[Path] = None) -> tuple[list[str], str]:
+    """Inputs and graph producing [pre]: narration plus the ducked bed and the optional SFX track."""
     if bed is None or key is None:
-        return ["-i", narration_path], _fit("[0:a]", n) + "[pre]"
-    inputs, graph = duck_graph(bed, key, profile, n)
-    k = inputs.count("-i")
-    graph += f";{_fit(f'[{k}:a]', n)}[nar];[nar][duck]amix=inputs=2:normalize=0:duration=first[pre]"
-    return inputs + ["-i", narration_path], graph
+        inputs, graph, parts = ["-i", narration_path], _fit("[0:a]", n) + "[nar]", ["[nar]"]
+    else:
+        inputs, graph = duck_graph(bed, key, profile, n)
+        k = inputs.count("-i")
+        graph += f";{_fit(f'[{k}:a]', n)}[nar]"
+        inputs, parts = inputs + ["-i", narration_path], ["[nar]", "[duck]"]
+    if sfx is not None:
+        k = inputs.count("-i")
+        graph += f";{_fit(f'[{k}:a]', n)}[sfx]"
+        inputs, parts = inputs + ["-i", str(sfx)], parts + ["[sfx]"]
+    if len(parts) == 1:
+        return inputs, graph + ";[nar]anull[pre]"
+    return inputs, graph + f";{''.join(parts)}amix=inputs={len(parts)}:normalize=0:duration=first[pre]"
+
+
+# ---------------------------------------------------------------- sparse sfx
+
+class SfxConfig(BaseModel):
+    """Optional sparse SFX (sfx.json in the music folder, or work/sfx.json which wins)."""
+
+    enabled: bool = False
+    max_per_minute: float = 3.0  # hard cap: events at least 60 / max_per_minute s apart
+    gain_db: float = -24.0  # peak level of each effect in the pre-normalization mix
+    kinds: list[str] = ["title_card", "map", "number_card"]
+
+
+SFX_SOUND = {"number_card": "hit"}  # every other kind gets a whoosh
+SFX_MIN_START_S = 1.0
+
+
+def sfx_config(folder: Optional[Path], work_dir: Path) -> SfxConfig:
+    """Project work/sfx.json, else <music folder>/sfx.json, else defaults (disabled)."""
+    for p in (Path(work_dir) / "sfx.json", (folder / "sfx.json") if folder else None):
+        if p is not None and p.exists():
+            try:
+                return SfxConfig(**json.loads(p.read_text(encoding="utf-8")))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+    return SfxConfig()
+
+
+def sfx_events(shotlist: ShotList, cfg: SfxConfig) -> list[dict[str, Any]]:
+    """[{t, shot_id, kind, sound}] at motion graphic starts of the configured kinds, capped in rate."""
+    if not cfg.enabled or cfg.max_per_minute <= 0:
+        return []
+    spacing = 60.0 / cfg.max_per_minute
+    out: list[dict[str, Any]] = []
+    for shot in shotlist.shots:
+        spec = shot.motion
+        if shot.type.value != "motion_graphic" or spec is None or spec.kind.value not in cfg.kinds:
+            continue
+        if shot.start < SFX_MIN_START_S or (out and shot.start - out[-1]["t"] < spacing):
+            continue
+        out.append({"t": round(shot.start, 3), "shot_id": shot.id, "kind": spec.kind.value,
+                    "sound": SFX_SOUND.get(spec.kind.value, "whoosh")})
+    return out
+
+
+def synth_whoosh(sr: int = SR, seconds: float = 0.9, seed: int = 7) -> np.ndarray:
+    """Soft stereo whoosh: band-passed noise swept upward, swelling to a peak at 70 percent of its length."""
+    n = int(seconds * sr)
+    rng = np.random.default_rng(seed)
+    spec = np.fft.rfft(rng.standard_normal((n, 2)), axis=0)
+    f = np.fft.rfftfreq(n, 1.0 / sr)[:, None]
+    spec *= np.exp(-0.5 * ((np.log(np.maximum(f, 1.0)) - np.log(1400.0)) / 0.7) ** 2)
+    y = np.fft.irfft(spec, n, axis=0)
+    t = np.linspace(0.0, 1.0, n)[:, None]
+    env = np.where(t < 0.7, (t / 0.7) ** 2, np.exp(-(t - 0.7) * 14.0))
+    y = y * env
+    return (y / (np.abs(y).max() + 1e-9)).astype(np.float32)
+
+
+def synth_hit(sr: int = SR, seconds: float = 0.7) -> np.ndarray:
+    """Soft low hit: a 58 Hz sine dropping in pitch with a fast exponential decay."""
+    t = np.arange(int(seconds * sr)) / sr
+    phase = 2 * np.pi * (58.0 * t + 12.0 * (1 - np.exp(-t * 18.0)) / 18.0)
+    y = np.sin(phase) * np.exp(-t * 7.0) * np.minimum(1.0, t / 0.004)
+    y = y / (np.abs(y).max() + 1e-9)
+    return np.stack([y, y], 1).astype(np.float32)
+
+
+def write_sfx_track(events: list[dict[str, Any]], duration: float, path: Path, gain_db: float) -> Path:
+    """Stereo wav of exactly duration s holding every event; whooshes peak on the cut, hits start on it."""
+    n = int(round(duration * SR))
+    out = np.zeros((n, 2), dtype=np.float32)
+    sounds = {"whoosh": synth_whoosh(), "hit": synth_hit()}
+    gain = 10 ** (gain_db / 20.0)
+    for ev in events:
+        snd = sounds[ev["sound"]]
+        start = int(round(ev["t"] * SR)) - (int(len(snd) * 0.7) if ev["sound"] == "whoosh" else 0)
+        a, b = max(0, start), min(n, start + len(snd))
+        if b > a:
+            out[a:b] += snd[a - start: b - start] * gain
+    return write_audio(path, out)
 
 
 # ---------------------------------------------------------------- entry point
@@ -319,10 +440,13 @@ def build_mix(narration: Narration, script: Script, shotlist: ShotList, brand: B
     bed, key, env = None, None, []
     if sections:
         regions, _ = align.speech_regions(narration.audio_path)
-        env = speech_envelope(regions, duration, KEY_MERGE_GAP_S, m.attack_ms / 1000.0)
-        key = write_key(env, duration, work_dir / "mix_key.wav")
+        env = speech_envelope(regions, duration, KEY_MERGE_GAP_S, m.attack_ms / 1000.0, KEY_HOLD_S)
+        key = write_key(env, duration, work_dir / "mix_key.wav", m.ducking_depth_db)
         bed = bed_graph(sections, tracks, duration, m.scene_crossfade_s)
-    inputs, graph = mix_graph(narration.audio_path, n, bed, key, profile)
+    sfx_cfg = sfx_config(folder or (settings.path(brand.music_folder) if brand.music_folder else None), work_dir)
+    events = sfx_events(shotlist, sfx_cfg)
+    sfx = write_sfx_track(events, duration, work_dir / "mix_sfx.wav", sfx_cfg.gain_db) if events else None
+    inputs, graph = mix_graph(narration.audio_path, n, bed, key, profile, sfx)
     out = work_dir / "mix.wav"
     loud = normalize_graph(inputs, graph, out, settings.render.target_lufs, settings.render.true_peak, SR, 2,
                            exact_samples=n)
@@ -333,15 +457,19 @@ def build_mix(narration: Narration, script: Script, shotlist: ShotList, brand: B
                    for s in sections],
         "ducking": {"depth_db": m.ducking_depth_db, "attack_ms": m.attack_ms, "release_ms": m.release_ms,
                     "ratio": RATIO, "threshold": key_threshold(m.ducking_depth_db), "key_merge_gap_s": KEY_MERGE_GAP_S,
-                    "speech_regions": len(env)},
+                    "hold_s": KEY_HOLD_S, "ramp_in_s": KEY_RAMP_IN_S, "ramp_out_s": KEY_RAMP_OUT_S,
+                    "compressor_release_ms": max(m.release_ms, MIN_RELEASE_MS), "speech_regions": len(env)},
+        "sfx": {"enabled": sfx_cfg.enabled, "gain_db": sfx_cfg.gain_db, "max_per_minute": sfx_cfg.max_per_minute,
+                "events": events},
         "bed": {"bed_gain_db": m.bed_gain_db, "under_speech_lufs": REF_LUFS + m.bed_gain_db,
                 "open_lufs": REF_LUFS + m.bed_gain_db + m.ducking_depth_db, "crossfade_s": m.scene_crossfade_s},
         "loudness": {"lufs": loud["lufs"], "true_peak": loud["true_peak"], "lra": loud["lra"],
                      "target_lufs": settings.render.target_lufs, "target_tp": settings.render.true_peak},
     }
     write_json(work_dir / "mix.json", info)
-    if key is not None:
-        key.unlink(missing_ok=True)
+    for tmp in (key, sfx):
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
     log.info("mix ready", duration=duration, sections=len(sections), selection=mode, lufs=loud["lufs"],
              true_peak=loud["true_peak"])
     return out

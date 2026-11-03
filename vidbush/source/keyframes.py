@@ -62,7 +62,8 @@ def image_keyframe(cand: Candidate, out_dir: Path) -> list[str]:
     with Image.open(cand.local_path) as im:
         im = ImageOps.exif_transpose(im)
         cand.width, cand.height = im.size
-        rgb = im.convert("RGB")
+        from ..render.segment import to_8bit_rgb
+        rgb = to_8bit_rgb(im)
         ratio = KEYFRAME_WIDTH / max(1, rgb.width)
         thumb = rgb.resize((KEYFRAME_WIDTH, max(1, round(rgb.height * ratio))), Image.LANCZOS)
     out = out_dir / f"{cand.id}_k1.jpg"

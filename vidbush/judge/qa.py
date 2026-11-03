@@ -17,22 +17,25 @@ from typing import Any, Optional
 
 from ..models import SHOT_TYPES, Narration, QAReport, QAShot, Shot, ShotList, ShotType, SourceKind
 from ..util import ToolError, media_duration, read_json, run, write_json
-from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, parse_verdict
+from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, parse_verdict
 
-QA_FLAGS = ("mock", "nc_nd", "anachronism", "low_res", "no_match_accepted")
+QA_FLAGS = ("mock", "nc_nd", "anachronism", "low_res", "no_match_accepted", "held_frame", "missing_media")
 NO_MATCH_TARGET_PCT = 1.0
 MIX_TOLERANCE_PTS = 5.0
 FRAMES_PER_SHOT = 3
 NO_ATTRIBUTION = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
 
+QA_REJECTS = ("burned_in_captions", "watermark", "channel_logo", "talking_head", "black_frame", "frozen_frame")
 QA_SYSTEM = (
     "You check frames of a finished documentary video. Each request shows frames from one shot and the "
     "narration intent it should cover. Ignore the black letterbox bars, the single caption line in the "
     "bottom band and branded graphics such as maps, charts, number cards and lower thirds: they are part of "
     "the edit. Good enough is the bar: fail only what would break viewer immersion. Check that the place "
-    "makes sense, then the subject, then the action. List hard problems in rejects: foreign burned in "
-    "subtitles, a big watermark, a channel logo, a person speaking to camera, a black or frozen frame. "
-    'Be concise. Reply with strict JSON only: {"score": 0-100, "reason": "one line", "rejects": [...]}'
+    "makes sense, then the subject, then the action. Hard problems: foreign burned in subtitles "
+    "(burned_in_captions), a big watermark (watermark), a channel logo (channel_logo), a person speaking to "
+    "camera (talking_head), a black frame (black_frame), a frozen frame (frozen_frame). " + REJECT_RULES
+    + ", ".join(QA_REJECTS) + '. Be concise. Reply with strict JSON only: '
+    '{"score": 0-100, "reason": "one line", "rejects": []}'
 )
 
 
@@ -134,7 +137,7 @@ def score_post_render(shotlist: ShotList, frames: dict[str, list[str]], ctx: Any
         except Exception as e:  # noqa: BLE001  QA never fails the stage
             ctx.log.warn("qa scoring failed", shot=shot.id, error=str(e)[:300])
             return None
-        verdict = parse_verdict(raw)
+        verdict = parse_verdict(raw, QA_REJECTS)
         if verdict is None:
             return None
         score, reason, rejects = verdict
@@ -208,18 +211,21 @@ def _shot_flags(shot: Shot, post: Optional[float], threshold: float) -> list[str
 
 
 def mix_and_pacing(shotlist: ShotList) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
-    """Screen time share per type (percent) and per type pacing stats with count and time shares."""
+    """Share of shot count per type (percent, the headline mix) and per type pacing stats.
+
+    Pacing rows carry count_pct (same as the mix) and time_pct, the screen time share, as secondary info.
+    """
     total_t = sum(s.duration for s in shotlist.shots) or 1.0
     total_n = len(shotlist.shots) or 1
     mix: dict[str, float] = {}
     pacing: dict[str, dict[str, float]] = {}
     for t in SHOT_TYPES:
         durs = [s.duration for s in shotlist.shots if s.type.value == t]
-        mix[t] = round(100.0 * sum(durs) / total_t, 1)
+        mix[t] = round(100.0 * len(durs) / total_n, 1)
         if durs:
             pacing[t] = {"count": float(len(durs)), "min": round(min(durs), 2), "max": round(max(durs), 2),
-                         "mean": round(sum(durs) / len(durs), 2), "count_pct": round(100.0 * len(durs) / total_n, 1),
-                         "time_pct": mix[t]}
+                         "mean": round(sum(durs) / len(durs), 2), "count_pct": mix[t],
+                         "time_pct": round(100.0 * sum(durs) / total_t, 1)}
     return mix, pacing
 
 
@@ -279,7 +285,7 @@ def review_notes(r: QAReport, ctx: Any) -> list[str]:
     for t, target in r.mix_target.items():
         got = r.mix_achieved.get(t, 0.0)
         if abs(got - target) > MIX_TOLERANCE_PTS:
-            out.append(f"{t} screen time {got}% versus target {target}%")
+            out.append(f"{t} share of shots {got}% versus target {target}%")
     if ctx.profile.captions.enabled and (r.caption_coverage < 0.95 or r.caption_word_match < 0.9):
         out.append(f"captions cover {r.caption_coverage:.0%} of narration time and match {r.caption_word_match:.0%} "
                    "of narration words")
@@ -314,11 +320,12 @@ def render_markdown(r: QAReport, offset: float = 0.0) -> str:
           f"- Mock seats: {', '.join(r.mock_used) or 'none'}", ""]
     if r.notes:
         md += ["## Notes", ""] + [f"- {n}" for n in r.notes] + [""]
-    md += ["## Visual mix", "", "| Type | Target % | Screen time % | Shots % | Count | Min s | Max s | Mean s |",
+    md += ["## Visual mix (share of shot count)", "",
+           "| Type | Target % | Shots % | Screen time % | Count | Min s | Max s | Mean s |",
            "|---|---|---|---|---|---|---|---|"]
     for t in SHOT_TYPES:
         p = r.pacing.get(t, {})
-        md.append(f"| {t} | {r.mix_target.get(t, 0):g} | {r.mix_achieved.get(t, 0):g} | {p.get('count_pct', 0):g} | "
+        md.append(f"| {t} | {r.mix_target.get(t, 0):g} | {r.mix_achieved.get(t, 0):g} | {p.get('time_pct', 0):g} | "
                   f"{int(p.get('count', 0))} | {p.get('min', 0):g} | {p.get('max', 0):g} | {p.get('mean', 0):g} |")
     flagged = [s for s in r.shots if s.flags or (s.score is not None and s.score < r.threshold)]
     md += ["", f"## Flagged shots ({len(flagged)})", ""]

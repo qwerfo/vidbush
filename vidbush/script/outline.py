@@ -1,8 +1,10 @@
 """Outline builder: documentary or top10 skeleton sized at about 150 words per minute.
 
-make_outline asks the writer seat (task "outline") and validates the answer.
-When the seat returns nothing usable, a deterministic skeleton is built and
-the research facts are distributed over it in chronological order.
+make_outline asks the writer seat (task "outline", in brand.language) and
+validates the answer. When the seat returns nothing usable, a deterministic
+skeleton is built and the research facts are distributed over it in
+chronological order. A real seat that fails on every provider raises
+ProviderError so the stage fails and resume can retry it.
 """
 from __future__ import annotations
 
@@ -10,6 +12,7 @@ import re
 from typing import Any, Optional
 
 from ..models import Brand, Brief, FactCard, Outline, OutlineSection, Research, ScenePurpose, VideoFormat
+from ..providers.base import ProviderError
 from ..util import no_em_dash
 from . import prompts
 
@@ -50,10 +53,12 @@ def _ask_seat(brief: Brief, research: Research, brand: Brand, seats: Any, words:
     user = prompts.OUTLINE_USER.format(format=brief.format.value, topic=brief.topic, angle=brief.angle or "none",
                                        audience=brief.audience or "general", minutes=brief.target_minutes,
                                        words=words, notes=brand.niche_notes or "none", structure=structure,
-                                       facts=facts or "none")
+                                       facts=facts or "none", language=prompts.language_line(brand.language))
     try:
         return seats.llm_json("writer", "outline", prompts.OUTLINE_SYSTEM, user, stage="outline")
-    except Exception:  # a seat failure must never stop the pipeline
+    except ProviderError:
+        raise  # every real provider failed: the stage fails, resume retries
+    except Exception:  # a malformed answer falls back to the heuristic skeleton
         return None
 
 

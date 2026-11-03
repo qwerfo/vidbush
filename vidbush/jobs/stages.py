@@ -22,13 +22,25 @@ def stage_intake(ctx: StageContext) -> list[str]:
     if p.input_mode == InputMode.voiceover and not p.voiceover_path:
         raise ValueError("voiceover mode needs an audio file")
     if ctx.profile.top10 is False and p.format == VideoFormat.top10:
-        from ..config import load_style_profile
-        ctx.profile = load_style_profile(ctx.settings, "top10_default")
-        p.style_profile_id = ctx.profile.id
-    snap = write_json(ctx.work_path("profile_snapshot.json"), {"brand": ctx.brand, "profile": ctx.profile,
-                                                                "seats": ctx.seats.status()})
+        use_top10_profile(ctx)
+    snap = _write_snapshot(ctx)
     ctx.save_project()
     return [str(ctx.root / "project.json"), str(snap)]
+
+
+def _write_snapshot(ctx: StageContext) -> Path:
+    return write_json(ctx.work_path("profile_snapshot.json"), {"brand": ctx.brand, "profile": ctx.profile,
+                                                                "seats": ctx.seats.status()})
+
+
+def use_top10_profile(ctx: StageContext) -> None:
+    """Switch the context and project to top10_default (with any per-project override applied)."""
+    from ..config import load_style_profile
+    from .context import apply_profile_override
+    profile = load_style_profile(ctx.settings, "top10_default")
+    ctx.profile = apply_profile_override(profile, ctx.work / "profile_override.json")
+    ctx.project.style_profile_id = profile.id
+    ctx.log.info("style profile switched for a top10 script", profile=profile.id)
 
 
 def stage_research(ctx: StageContext) -> list[str]:
@@ -59,6 +71,9 @@ def stage_script(ctx: StageContext) -> list[str]:
         script = parse_script(text, p.format)
     if script.format != p.format and p.input_mode != InputMode.brief:
         p.format = script.format
+    if script.format == VideoFormat.top10 and not ctx.profile.top10 and not p.style_profile_id:
+        use_top10_profile(ctx)  # detected from the script; an operator chosen profile is kept
+        _write_snapshot(ctx)
     if not p.title or p.title == Path(p.script_path or p.voiceover_path or "").stem:
         p.title = script.title or p.title
     ctx.save_project()

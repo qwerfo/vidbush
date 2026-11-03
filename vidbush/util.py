@@ -187,7 +187,7 @@ def clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
-EM_DASH = "—"
+EM_DASH = "\u2014"
 
 
 def no_em_dash(text: str) -> str:

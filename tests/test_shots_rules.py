@@ -87,3 +87,27 @@ def test_break_type_runs_preserves_counts() -> None:
     assert not any(types[i] == types[i + 1] == types[i + 2] for i in range(len(types) - 2))
     for s in shots:
         assert (s.overlay is not None) == (s.type in (ShotType.footage_overlay, ShotType.image_overlay))
+
+
+def test_break_card_runs_and_dedupe_overlays() -> None:
+    from vidbush.mg import builders as bld
+    ideas = [VisualIdea(beat_id="b1", family="footage", intent="Ships", queries=["ships"])]
+    mk = lambda k, typ, dur, **kw: Shot(id=f"s{k}", beat_id="b1", start=0, end=dur, duration=dur, type=typ,  # noqa: E731
+                                         intent="x", **kw)
+    shots = [mk(0, ShotType.footage, 4.0), mk(1, ShotType.motion_graphic, 8.0, motion=bld.title_card_spec("A")),
+             mk(2, ShotType.motion_graphic, 8.0, motion=bld.number_card_spec("1")),
+             mk(3, ShotType.motion_graphic, 8.0, motion=bld.number_card_spec("2")), mk(4, ShotType.footage, 4.0)]
+    rules._retime(shots)
+
+    def rebind(shot, idea, idx=None):
+        shot.intent, shot.motion = idea.intent, None
+
+    rules.break_card_runs(shots, ideas, rebind, lambda s: 0, lambda s: None)
+    assert [s.type for s in shots].count(ShotType.motion_graphic) == 2
+    assert shots[1].type in (ShotType.footage, ShotType.footage_overlay)  # the text card went first
+    lt = bld.lower_third_spec("Colon", "Panama")
+    over = [mk(k, ShotType.footage_overlay, 5.0, overlay=lt) for k in range(3)]
+    rules._retime(over)
+    rules.dedupe_overlays(over, lambda s: [lt])
+    assert [s.overlay is not None for s in over] == [True, False, False]
+    assert over[1].type == ShotType.footage

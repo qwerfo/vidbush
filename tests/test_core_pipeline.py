@@ -59,7 +59,7 @@ def test_missing_output_reruns_stage(settings, tmp_path):
     (Path(proj.paths.work) / "mix.done").unlink()
     calls.clear()
     run_project(settings, "p1", stages=_stub_stages(calls), echo=False)
-    assert calls == ["mix"]
+    assert calls == ["mix", "assembly", "packaging"]  # a rerun stage forces the stages that read its output
 
 
 def test_invalidate_from(settings, tmp_path):

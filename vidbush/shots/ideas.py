@@ -274,19 +274,41 @@ def content_words(text: str, n: int = 4) -> list[str]:
     return [w.lower() for w in ranked[:n]]
 
 
+_TIME_PREFIX = (r"(in|by|on|during|at|since|until|from)\s+(the\s+)?((early|late|mid|summer|spring|autumn|fall|"
+                r"winter)\s+of\s+)?((?:%s)\s+)?(\d{1,2}(st|nd|rd|th)?,?\s+)?\d{4}s?" % "|".join(
+                    ["january", "february", "march", "april", "may", "june", "july", "august", "september",
+                     "october", "november", "december"]))
+_TIME_ONLY_RE = re.compile(r"^(%s|\d{4}s?)$" % _TIME_PREFIX, re.I)
+_TIME_LEAD_RE = re.compile(r"^%s\s*,?\s*" % _TIME_PREFIX, re.I)
+
+
+def is_time_only(clause: str) -> bool:
+    """True for a clause that is only a time expression: 'In November 1932', 'In the summer of 1931'."""
+    return bool(_TIME_ONLY_RE.match(clause.strip(" ,.")))
+
+
+def _has_substance(clause: str) -> bool:
+    """A clause worth quoting carries a verb or a concrete noun."""
+    words = [w.lower() for w in _WORD_RE.findall(clause)]
+    return any(w in CONCRETE or w in _VERBS or (len(w) > 4 and w.endswith("ed")) for w in words)
+
+
 def key_phrase(text: str, max_words: int = 9) -> str:
-    """The most quotable short clause of a beat, ideally 4 to max_words words."""
+    """The most quotable short clause of a beat, ideally 4 to max_words words; never a bare date."""
     clauses = [c.strip(" \"'") for c in re.split(r"[;:.!?](?!\d)|,(?!\d{3})", text) if c.strip()]
     clauses = [re.sub(r"^(and|but|so|yet|or|then)\s+", "", c, flags=re.I) for c in clauses]
-    clauses = [re.sub(r"^(in|by|on) (the )?\d{4}s?\s*", "", c, flags=re.I) for c in clauses]
+    clauses = [c for c in clauses if not is_time_only(c)]
+    clauses = [_TIME_LEAD_RE.sub("", c) for c in clauses]
+    clauses = [c for c in clauses if c.strip()]
 
     def score(c: str) -> float:
         n = len(c.split())
         s = -5.0 if n < 3 else 2.0 if n <= max_words else 2.0 - (n - max_words) * 0.4
         s += 0.8 if re.search(r"\d", c) else 0.0
         s += 0.4 * sum(w.lower().strip(",") in CONCRETE for w in c.split())
+        s -= 0.0 if _has_substance(c) else 1.5
         return s - abs(n - 6) * 0.1
-    best = max(clauses, key=score) if clauses else text
+    best = max(clauses, key=score) if clauses else ""
     words = best.split()
     if len(words) > max_words + 3:
         words = words[:max_words]
@@ -327,6 +349,7 @@ class BeatEntities(BaseModel):
 
     places: list[tuple[str, float, float]] = Field(default_factory=list)
     countries: list[str] = Field(default_factory=list)
+    areas: list[str] = Field(default_factory=list)  # countries, states, continents, seas: no single point
     people: list[str] = Field(default_factory=list)
     nouns: list[str] = Field(default_factory=list)
     years: list[int] = Field(default_factory=list)
@@ -335,15 +358,20 @@ class BeatEntities(BaseModel):
 
 
 def beat_entities(bc: BeatContext) -> BeatEntities:
-    """Places, people, nouns, years, numbers and key phrase of a beat (scene title adds places)."""
+    """Places, people, nouns, years, numbers and key phrase of a beat (scene title adds places).
+
+    Places named only in a comparison ('enough to pave a highway from X to Y') are not places of the beat.
+    """
     from ..mg import geo
     text = bc.beat.text
-    hits = geo.find_place_hits(text) or geo.find_place_hits(bc.scene.title)
+    literal = " ".join(x for x in re.split(r"(?<=[.!?])\s+", text) if not COMPARE_RE.search(x))
+    hits = geo.find_place_hits(literal) or (geo.find_place_hits(bc.scene.title) if literal == text else [])
     scene_text = " ".join(b.text for b in bc.scene.beats)
     nouns = (visual_nouns(text) or visual_nouns(bc.scene.title) or visual_nouns(scene_text)[:2]
              or content_words(bc.topic, 2))
     return BeatEntities(places=[(DISPLAY_NAMES.get(h.name, h.name), h.lat, h.lon) for h in hits],
                         countries=[DISPLAY_NAMES.get(h.name, h.name) for h in hits if h.kind == "country"],
+                        areas=[DISPLAY_NAMES.get(h.name, h.name) for h in hits if geo.is_area(h.name)],
                         people=capitalised_names(text), nouns=nouns, years=extract_years(text),
                         numbers=[n for n in extract_numbers(text) if not n.is_year], phrase=key_phrase(text))
 
@@ -387,7 +415,7 @@ def footage_ideas(bc: BeatContext, ent: BeatEntities) -> list[VisualIdea]:
     era = era_label(bc.era)
     old = bool(bc.era and bc.era < 1990)
     kind = "archival footage" if old else "footage"
-    place = next((p[0] for p in ent.places if p[0] not in ent.countries), ent.places[0][0] if ent.places else "")
+    place = next((p[0] for p in ent.places if p[0] not in ent.areas), ent.places[0][0] if ent.places else "")
     main = (ent.people[:1] + ent.nouns[:2])[:2] or [bc.topic]
     rest = [n for n in ent.nouns if n not in main][:2]
     variants: list[tuple[list[str], bool]] = [(main, False)]
@@ -415,7 +443,7 @@ def still_ideas(bc: BeatContext, ent: BeatEntities) -> list[VisualIdea]:
     """Two still ideas: a period photograph (or painting) and a detail or portrait."""
     era = era_label(bc.era)
     medium = "painting" if bc.era and bc.era < 1840 else "photograph"
-    place = ent.places[0][0] if ent.places else ""
+    place = next((p[0] for p in ent.places if p[0] not in ent.areas), ent.places[0][0] if ent.places else "")
     out: list[VisualIdea] = []
     subjects = ent.nouns[:2] or [bc.topic]
     if ent.people:
@@ -445,19 +473,51 @@ def still_ideas(bc: BeatContext, ent: BeatEntities) -> list[VisualIdea]:
     return out
 
 
+def person_role(name: str, text: str) -> str:
+    """Role for a person lower third: a title word before the name ('President'), else the appositive after it
+    ('Frank Crowe, a blunt, tireless engineer' -> 'Engineer'), else ''."""
+    pre = re.search(r"\b([A-Za-z]+)\s+" + re.escape(name), text)
+    if pre and pre.group(1).lower() in TITLE_WORDS:
+        return pre.group(1).capitalize()
+    m = re.search(re.escape(name) + r",\s+(?:a|an|the)\s+([^.;:!?]+)", text)
+    if not m:
+        return ""
+    body = re.split(r",?\s+(?:who|which|that|was|had|is|has|would|did)\b", m.group(1))[0]
+    parts = [p.strip() for p in body.split(",") if p.strip()]
+    while len(parts) > 1 and len(parts[0].split()) == 1 and " of " not in parts[0]:
+        parts.pop(0)  # a lone adjective before the next comma: 'a blunt, tireless engineer'
+    phrase = parts[0] if parts else ""
+    words = phrase.split()
+    if " of " in f" {phrase} ":
+        k = words.index("of")
+        role = words[k - 1:k] + words[k:k + 5] if k > 0 else []
+    else:
+        role = words[-1:]
+    out = " ".join(role).strip(" ,")
+    return out[:1].upper() + out[1:] if out and len(out) <= 40 else ""
+
+
+def _named_overlays(bc: BeatContext, ent: BeatEntities, palette: str) -> dict[str, MotionSpec]:
+    """Lower thirds keyed by the name they show: people, and cities or landmarks (never areas)."""
+    from ..mg import builders as b
+    out: dict[str, MotionSpec] = {}
+    for person in ent.people[:2]:
+        out[person] = b.lower_third_spec(person, person_role(person, bc.beat.text), palette=palette)
+    for name, _la, _lo in ent.places:
+        if name not in ent.areas and name not in out:
+            out[name] = b.lower_third_spec(name, _place_sub(name), palette=palette)
+    return out
+
+
 def overlay_options(bc: BeatContext, ent: BeatEntities, palette: str, rng: random.Random) -> list[MotionSpec]:
-    """Overlay specs for footage and still ideas, best first."""
+    """Generic overlays any footage or still of the beat can carry, best first (no named lower thirds)."""
     from ..mg import builders as b
     out: list[MotionSpec] = []
-    era = era_label(bc.era)
-    if ent.people:
-        out.append(b.lower_third_spec(ent.people[0], era or bc.scene.title, palette=palette))
-    for name, _la, _lo in ent.places[:1]:
-        sub = "" if name in ent.countries else _place_sub(name)
-        out.append(b.lower_third_spec(name, sub, palette=palette))
+    if CTA_RE.search(bc.beat.text):
+        return out
     for y in ent.years[:1]:
-        out.append(b.text_overlay_spec(str(y), position="upper_left", subtitle=ent.places[0][0] if ent.places else "",
-                                       palette=palette))
+        sub = next((p[0] for p in ent.places if p[0] not in ent.areas), "")
+        out.append(b.text_overlay_spec(str(y), position="upper_left", subtitle=sub, palette=palette))
     if ent.phrase and len(ent.phrase.split()) >= 3:
         out.append(b.callout_spec(ent.phrase, palette=palette))
     roll = rng.random()
@@ -467,6 +527,20 @@ def overlay_options(bc: BeatContext, ent: BeatEntities, palette: str, rng: rando
     elif roll < 0.2 and ent.nouns:
         out.append(b.arrow_spec(0.2, 0.3, 0.45 + rng.random() * 0.15, 0.5, ent.nouns[0].title(), palette=palette))
     return out
+
+
+def overlay_choices(bc: BeatContext, palette: str, must_show: list[str]) -> list[MotionSpec]:
+    """Overlays for one shot, best first: lower thirds naming what it shows, then the generic options.
+
+    Empty on call-to-action beats, where an overlay shot should become a plain shot.
+    """
+    if CTA_RE.search(bc.beat.text):
+        return []
+    ent = beat_entities(bc)
+    named = _named_overlays(bc, ent, palette)
+    shown = {m.lower() for m in must_show}
+    first = [spec for name, spec in named.items() if name.lower() in shown]
+    return first + overlay_options(bc, ent, palette, random.Random(bc.beat.id))
 
 
 PREPOSITIONS = {
@@ -498,14 +572,13 @@ def _place_sub(name: str) -> str:
     return "United States" if hit.country == geo.US else hit.country
 
 
-def default_overlay(bc: BeatContext, palette: str) -> MotionSpec:
-    """Overlay used when an overlay slot's idea has none: lower third, date stamp or key phrase callout."""
+def default_overlay(bc: BeatContext, palette: str, must_show: Optional[list[str]] = None) -> MotionSpec:
+    """First overlay choice for a shot, else a key phrase callout."""
     from ..mg import builders as b
-    ent = beat_entities(bc)
-    opts = overlay_options(bc, ent, palette, random.Random(bc.beat.id))
+    opts = overlay_choices(bc, palette, must_show or [])
     if opts:
         return opts[0]
-    return b.callout_spec(ent.phrase or bc.scene.title, palette=palette)
+    return b.callout_spec(beat_entities(bc).phrase or bc.scene.title, palette=palette)
 
 
 # ---------------------------------------------------------------- motion ideas
@@ -515,24 +588,63 @@ def _motion_idea(bc: BeatContext, spec: MotionSpec, intent: str, priority: float
                       priority=priority, opening_safe=spec.kind.value in {"map", "number_card"})
 
 
+TRAVEL_RE = re.compile(r"\b(sail|sailed|sailing|sails|travel|travell?ed|travels|ship|shipped|shipping|carry|"
+                       r"carried|carries|haul|hauled|move|moved|moving|flew|fly|flight|marched|march|steamed|"
+                       r"crossed|cross|voyage|journey|journeys|route|routes|ran|run|runs|drove|drive|rode|"
+                       r"railroad|railway|road|highway|pipeline|trek|trekked|migrated|fled|delivered|sent)\b", re.I)
+COMPARE_RE = re.compile(r"\b(enough(?:\s+\w+){0,3}\s+to|as long as|as far as|as wide as|as tall as|like a|longer than|"
+                        r"the distance from|equivalent|the length of)\b", re.I)
+_NAME = r"((?:the\s+)?[A-Z][\w'.-]*(?:\s+(?:of\s+)?[A-Z][\w'.-]*){0,3})"
+_FROM_TO_RE = re.compile(r"\bfrom\s+" + _NAME + r"\s+to\s+" + _NAME)
+_BETWEEN_RE = re.compile(r"\bbetween\s+" + _NAME + r"\s+and\s+" + _NAME)
+
+
+def _point(name: str) -> Optional[tuple[str, float, float]]:
+    """A city or landmark with one location (never a country, state, continent or sea)."""
+    from ..mg import geo
+    name = re.sub(r"^the\s+", "", name.strip(), flags=re.I)
+    hit = geo.lookup(name)
+    if hit is None or geo.is_area(hit.name):
+        return None
+    return DISPLAY_NAMES.get(hit.name, hit.name), hit.lat, hit.lon
+
+
+def travel_route(text: str) -> Optional[list[tuple[str, float, float]]]:
+    """Endpoints of a real journey: 'from X to Y' with a movement word, or 'between X and Y'.
+
+    Comparisons ('enough to pave a highway from X to Y') and areas as endpoints give None.
+    """
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        if COMPARE_RE.search(sent):
+            continue
+        for rx, need_verb in ((_FROM_TO_RE, True), (_BETWEEN_RE, False)):
+            m = rx.search(sent)
+            if not m or (need_verb and not TRAVEL_RE.search(sent)):
+                continue
+            a, b = _point(m.group(1)), _point(m.group(2))
+            if a and b and a[0] != b[0]:
+                return [a, b]
+    return None
+
+
 def map_idea(bc: BeatContext, ent: BeatEntities, palette: str) -> Optional[VisualIdea]:
-    """Route map for two or more places, shaded countries when only countries are named, push-in always."""
+    """Route map for a real journey between two points, else markers on the named points with areas labelled."""
     from ..mg import builders as b
     if not ent.places:
         return None
-    points = [p for p in ent.places if p[0] not in ent.countries]
-    shaded = ent.countries[:3]
-    route = len(points) >= 2
+    route = travel_route(bc.beat.text)
+    points = route or [p for p in ent.places if p[0] not in ent.areas]
+    shaded = [a for a in ent.areas][:3]
     if route:
-        title = f"{points[0][0]} to {points[-1][0]}"
-        intent = f"Map tracing the route from {points[0][0]} to {points[-1][0]}."
+        title = f"{route[0][0]} to {route[-1][0]}"
+        intent = f"Map tracing the route from {route[0][0]} to {route[-1][0]}."
     else:
         title = points[0][0] if points else _join(shaded)
         if points:
             intent = f"Map pushing in on {title}" + (f", with {_join(shaded)} shaded." if shaded else ".")
         else:
             intent = f"Map pushing in with {title} shaded."
-    spec = b.map_spec(points[:6], route=route, shaded=shaded, title=title, palette=palette)
+    spec = b.map_spec(points[:6], route=bool(route), shaded=shaded, title=title, palette=palette)
     return _motion_idea(bc, spec, intent, 0.95)
 
 
@@ -663,6 +775,52 @@ def line_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research], 
     return _motion_idea(bc, spec, f"Line chart of {best_unit} over the years.", 1.0)
 
 
+_PLACE_AFTER_RE = re.compile(r"^(from|to)\s+((?:the\s+)?[A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*){0,3})")
+_MONEY_RE = re.compile(r"\b(cost|costs|spent|price|budget|paid|bill)\b", re.I)
+
+
+def _tail_after(m: NumberMention, sentence: str) -> str:
+    i = sentence.find(m.raw)
+    return sentence[i + len(m.raw):].strip() if i >= 0 else m.after
+
+
+def number_label(m: NumberMention, text: str) -> str:
+    """Card label: the unit as written plus a short noun phrase ('miles to Las Vegas', 'cubic yards of concrete').
+
+    Prepositions and articles end the phrase; money and percent fall back to 'cost' or nothing.
+    """
+    from ..mg import geo
+    text = spelled_to_digits(text)
+    words = _WORD_RE.findall(_tail_after(m, _sentence_of(m.raw, text) or text))
+    unit_words: list[str] = []
+    while words and (UNIT_ALIASES.get(words[0].lower()) == m.unit or words[0].lower() in m.unit.split()):
+        unit_words.append(words.pop(0))
+    head = " ".join(unit_words) or ("" if m.unit in ("dollars", "percent") else m.unit)
+    rest = " ".join(words)
+    place = _PLACE_AFTER_RE.match(rest)
+    if place and head:
+        hit = geo.lookup(re.sub(r"^the\s+", "", place.group(2)))
+        if hit is not None:
+            return f"{head} {place.group(1)} {DISPLAY_NAMES.get(hit.name, hit.name)}"
+    if head and len(words) > 1 and words[0].lower() == "of" and _nounish(words[1]):
+        noun = words[1:3] if len(words) > 2 and _nounish(words[2]) else words[1:2]
+        return f"{head} of {' '.join(noun)}"
+    if not head and m.unit == "dollars" and _MONEY_RE.search(_sentence_of(m.raw, text)):
+        return "cost"
+    return head
+
+
+def _nounish(word: str) -> bool:
+    w = word.lower()
+    return w not in STOP and w not in _VERBS and not (len(w) > 4 and w.endswith("ed"))
+
+
+def number_sublabel(m: NumberMention, text: str) -> str:
+    """A year from the same sentence as the number, else empty."""
+    years = [y for y in extract_years(_sentence_of(m.raw, spelled_to_digits(text))) if y != int(m.value)]
+    return str(years[0]) if years else ""
+
+
 def number_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research], palette: str) -> Optional[VisualIdea]:
     """Number card for the most striking number (count up) or, failing that, the year."""
     from ..mg import builders as b
@@ -672,14 +830,16 @@ def number_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research]
         pool = cited or ent.numbers
         m = max(pool, key=lambda x: (x.unit not in TIME_UNITS, x.value))
         src = number_is_cited(m.value, facts) if facts else None
-        label = (m.after or m.unit or "").strip()
-        spec = b.number_card_spec(b.format_number(m.value, m.unit), label=label[:40], sublabel=era_label(bc.era),
-                                  count_up=True, palette=palette,
+        label = number_label(m, bc.beat.text)[:40]
+        spec = b.number_card_spec(b.format_number(m.value, m.unit), label=label,
+                                  sublabel=number_sublabel(m, bc.beat.text), count_up=True, palette=palette,
                                   source_note=b.source_note_for(src.source_title) if src else "")
-        return _motion_idea(bc, spec, f"Number card: {m.raw} {label}.", 0.85)
+        return _motion_idea(bc, spec, f"Number card: {m.raw} {label}.".replace("  ", " "), 0.85)
     if ent.years:
-        spec = b.number_card_spec(str(ent.years[0]), label=" ".join(ent.phrase.split()[:6]), count_up=False,
-                                  palette=palette)
+        words = ent.phrase.split()[:6]
+        while words and words[-1].lower() in STOP:
+            words.pop()
+        spec = b.number_card_spec(str(ent.years[0]), label=" ".join(words), count_up=False, palette=palette)
         return _motion_idea(bc, spec, f"Year card: {ent.years[0]}.", 0.6)
     return None
 
@@ -707,16 +867,34 @@ def text_ideas(bc: BeatContext, ent: BeatEntities, palette: str) -> list[VisualI
 
 # ---------------------------------------------------------------- per beat
 
+def _attach_overlays(bc: BeatContext, ent: BeatEntities, ideas: list[VisualIdea], palette: str,
+                     rng: random.Random) -> None:
+    """Each overlay goes to at most one footage and one still idea; named lower thirds only where shown."""
+    named = _named_overlays(bc, ent, palette)
+    generic = overlay_options(bc, ent, palette, rng)
+    for family in ("footage", "still"):
+        used: set[int] = set()
+        for idea in (i for i in ideas if i.family == family):
+            shown = {m.lower() for m in idea.must_show}
+            pool = [spec for name, spec in named.items() if name.lower() in shown] + generic
+            spec = next((sp for sp in pool if id(sp) not in used), None)
+            if spec is not None:
+                used.add(id(spec))
+                idea.overlay = spec
+
+
 def ideas_for_beat(bc: BeatContext, research: Optional[Research], palette: str,
                    rng: random.Random) -> list[VisualIdea]:
-    """All heuristic ideas for one beat; always includes footage, still and motion."""
+    """All heuristic ideas for one beat; always includes footage, still and motion.
+
+    Call-to-action beats get plain footage and stills with no overlay, and a closing title card only.
+    """
     ent = beat_entities(bc)
     foot = footage_ideas(bc, ent)
     still = still_ideas(bc, ent)
-    overlays = overlay_options(bc, ent, palette, rng)
-    for i, idea in enumerate(foot + still):
-        if overlays:
-            idea.overlay = overlays[i % len(overlays)]
+    if CTA_RE.search(bc.beat.text):
+        return foot + still + text_ideas(bc, ent, palette)
+    _attach_overlays(bc, ent, foot + still, palette, rng)
     motion = [x for x in (chart_idea(bc, ent, research, palette), line_idea(bc, ent, research, palette),
                           map_idea(bc, ent, palette), number_idea(bc, ent, research, palette)) if x]
     return foot + still + motion + text_ideas(bc, ent, palette)

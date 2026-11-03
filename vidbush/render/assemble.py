@@ -3,10 +3,14 @@
 assemble(shotlist, ctx) -> (final_path, shotlist). Frames come from cumulative
 rounding of shot times, so the concatenated picture has exactly
 round(ShotList.duration * fps) frames and matches work/mix.wav. Intro and
-outro clips are normalised with the same encoder settings and keep their own
-audio; when either exists the combined audio gets a two pass loudnorm to the
-render target (-14 LUFS, -1 dBTP). Writes work/render_stats.json and
-work/assembly.json and ctx.root/final.mp4.
+outro clips are normalised with the same encoder settings (the picture is held
+on its last frame when the audio runs longer) and keep their own audio, which is
+normalised on its own to the render target with linear gain and a limiter. The
+already mastered body mix is never re-normalised: final audio is intro + mix +
+outro concatenated and trimmed. captions.srt and captions.ass are rewritten on
+the final timeline (shifted by the intro). Writes work/render_stats.json,
+work/assembly.json and ctx.root/final.mp4; verify() raises when picture and
+sound disagree by more than MAX_AV_DRIFT_FRAMES or the frame count is off.
 """
 from __future__ import annotations
 
@@ -18,10 +22,15 @@ from typing import Any, Optional
 
 from ..config import Settings
 from ..models import Shot, ShotList
-from ..util import ffprobe, file_fingerprint, media_duration, read_json, run, stable_hash, write_json
+from ..audio.loudness import normalize
+from ..models import ShotType
+from ..util import ToolError, ffprobe, media_duration, read_json, run, stable_hash, write_json
 from . import ffmpeg_cmds as fc
-from .cache import frame_range, lines_in_window, resolve_media, segment_file, segment_hash
-from .segment import render_segment
+from .cache import content_fingerprint, frame_range, lines_in_window, resolve_media, segment_file, segment_hash
+from .segment import HOLD_WARN_S, footage_plan, render_segment
+
+MAX_AV_DRIFT_FRAMES = 3
+BUMPER_VERSION = "bumper-2"
 
 
 @dataclass
@@ -47,6 +56,7 @@ def assemble(shotlist: ShotList, ctx: Any) -> tuple[Path, ShotList]:
     for job in jobs:
         job.shot.render_hash = job.render_hash
         job.shot.render_segment_path = str(job.path)
+        flag_held_frames(job, settings)
     intro = _bumper(ctx.brand.intro_path, "intro", settings, seg_dir, ctx.log)
     outro = _bumper(ctx.brand.outro_path, "outro", settings, seg_dir, ctx.log)
     fps = settings.render.fps
@@ -56,11 +66,40 @@ def assemble(shotlist: ShotList, ctx: Any) -> tuple[Path, ShotList]:
     videos = ([intro[0]] if intro else []) + [j.path for j in jobs] + ([outro[0]] if outro else [])
     final = ctx.root / "final.mp4"
     _mux(videos, audio, final, ctx.work)
-    report = verify(final, fps, ctx.log)
-    report.update({"intro_duration": intro[2] / fps if intro else 0.0,
-                   "outro_duration": outro[2] / fps if outro else 0.0})
+    total_frames = body_frames + (intro[2] if intro else 0) + (outro[2] if outro else 0)
+    report = verify(final, fps, ctx.log, total_frames)
+    intro_s = intro[2] / fps if intro else 0.0
+    report.update({"intro_duration": intro_s, "outro_duration": outro[2] / fps if outro else 0.0})
     write_json(ctx.work / "assembly.json", report)
+    _write_caption_sidecars(lines, ctx, intro_s)
     return final, shotlist
+
+
+def _write_caption_sidecars(lines: list[Any], ctx: Any, offset: float) -> None:
+    """Rewrite captions.srt/.ass on the final timeline (work/captions.json stays in body time)."""
+    if not lines:
+        return
+    from .captions import CaptionLine, write_sidecars
+    objs = [ln if isinstance(ln, CaptionLine) else CaptionLine(**ln) for ln in lines]
+    write_sidecars(objs, ctx.profile, ctx.root, ctx.settings, offset)
+
+
+def flag_held_frames(job: "SegmentJob", settings: Settings) -> None:
+    """Set or clear the held_frame flag on a footage shot whose clip is too short even when extended."""
+    shot = job.shot
+    shot.flags = [f for f in shot.flags if f != "held_frame"]
+    c = shot.selected_candidate()
+    if c is None or c.media != "video" or shot.type == ShotType.motion_graphic:
+        return
+    path = resolve_media(c.local_path, settings)
+    if not path.is_file():
+        return
+    try:
+        plan = footage_plan(c, path, (job.frames[1] - job.frames[0]) / settings.render.fps, settings.render.fps)
+    except (ToolError, OSError, ValueError):
+        return
+    if plan.hold > HOLD_WARN_S:
+        shot.flags.append("held_frame")
 
 
 def load_lines(path: Path) -> list[Any]:
@@ -135,32 +174,43 @@ def _bumper(rel: Optional[str], kind: str, settings: Settings, seg_dir: Path,
     if frames <= 0:
         log.warn(f"{kind} has no duration, skipped", path=str(src))
         return None
-    key = stable_hash(kind, file_fingerprint(src), r.width, r.height, r.fps, r.crf, r.preset, fc.encoder_args(settings))
+    key = stable_hash(kind, BUMPER_VERSION, content_fingerprint(src), r.width, r.height, r.fps, r.crf, r.preset,
+                      fc.encoder_args(settings), r.target_lufs, r.true_peak)
     video, wav = seg_dir / f"{kind}_{key}.mp4", seg_dir / f"{kind}_{key}.wav"
     if not video.exists():
         tmp = video.with_suffix(".part.mp4")
+        # unbounded clone pad: -frames:v caps the length, so audio longer than video holds the last frame
         vf = fc.chain(fc.fit_pad(r.width, r.height), f"fps={r.fps}", "format=yuv420p",
-                      "tpad=stop_mode=clone:stop_duration=1")
+                      "tpad=stop_mode=clone:stop=-1")
         run(["ffmpeg", "-y", "-v", "error", "-nostdin", "-i", str(src), "-vf", vf, "-frames:v", str(frames),
              *fc.encoder_args(settings), str(tmp)], timeout=1800)
         tmp.replace(video)
     if not wav.exists():
-        _bumper_audio(src, wav, frames / r.fps)
+        _bumper_audio(src, wav, frames / r.fps, settings)
     return video, wav, frames
 
 
-def _bumper_audio(src: Path, wav: Path, duration: float) -> None:
-    """Bumper audio as 48 kHz stereo wav of exactly duration seconds (silence when it has none)."""
+def _bumper_audio(src: Path, wav: Path, duration: float, settings: Settings) -> None:
+    """Bumper audio: 48 kHz stereo wav of exactly duration seconds at the render loudness target
+    (linear gain plus limiter, never loudnorm dynamic mode), or silence when it has none."""
     has_audio = any(s.get("codec_type") == "audio" for s in ffprobe(src).get("streams", []))
     inputs = ["-i", str(src)] if has_audio else ["-f", "lavfi", "-i", f"anullsrc=r={fc.AUDIO_RATE}:cl=stereo"]
     af = fc.chain(f"aresample={fc.AUDIO_RATE}", fc.pad_trim(duration))
+    raw = wav.with_name(wav.stem + "_raw.wav")
     run(["ffmpeg", "-y", "-v", "error", "-nostdin", *inputs, "-vn", "-af", af, "-ac", "2",
-         "-ar", str(fc.AUDIO_RATE), "-c:a", "pcm_s16le", str(wav)], timeout=600)
+         "-ar", str(fc.AUDIO_RATE), "-c:a", "pcm_s16le", str(raw)], timeout=600)
+    r = settings.render
+    tmp = wav.with_name(wav.stem + "_part.wav")
+    normalize(raw, tmp, r.target_lufs, r.true_peak, fc.AUDIO_RATE, 2,
+              exact_samples=int(round(duration * fc.AUDIO_RATE)))
+    raw.unlink(missing_ok=True)
+    tmp.replace(wav)
 
 
 def _final_audio(work: Path, intro: Optional[tuple[Path, Path, int]], outro: Optional[tuple[Path, Path, int]],
                  video_dur: float, settings: Settings) -> Path:
-    """Audio of exactly video_dur seconds: mix.wav alone, or intro + mix + outro re-normalised."""
+    """Audio of exactly video_dur seconds: mix.wav alone, or intro + mix + outro joined (each part is
+    already at the target, so nothing is re-normalised)."""
     mix = work / "mix.wav"
     if not mix.exists():
         raise FileNotFoundError(f"missing {mix}: run the mix stage first")
@@ -174,13 +224,10 @@ def _final_audio(work: Path, intro: Optional[tuple[Path, Path, int]], outro: Opt
     inputs = [a for p in parts for a in ("-i", str(p))]
     pre = "".join(f"[{i}:a]aresample={fc.AUDIO_RATE},aformat=channel_layouts=stereo[a{i}];"
                   for i in range(len(parts)))
-    cat = "".join(f"[a{i}]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=0:a=1[out]"
-    joined = work / "final_audio_joined.wav"
+    cat = ("".join(f"[a{i}]" for i in range(len(parts))) + f"concat=n={len(parts)}:v=0:a=1,"
+           f"{fc.pad_trim(video_dur)}[out]")
     run(["ffmpeg", "-y", "-v", "error", "-nostdin", *inputs, "-filter_complex", pre + cat, "-map", "[out]",
-         "-c:a", "pcm_s16le", str(joined)], timeout=1800)
-    r = settings.render
-    fc.loudnorm_apply(joined, out, r.target_lufs, r.true_peak, video_dur)
-    joined.unlink(missing_ok=True)
+         "-ac", "2", "-ar", str(fc.AUDIO_RATE), "-c:a", "pcm_s16le", str(out)], timeout=1800)
     return out
 
 
@@ -194,13 +241,20 @@ def _mux(videos: list[Path], audio: Path, final: Path, work: Path) -> None:
     tmp.replace(final)
 
 
-def verify(final: Path, fps: int, log: Any) -> dict[str, Any]:
-    """Probe final.mp4: video and audio durations must match within one frame."""
+def verify(final: Path, fps: int, log: Any, expected_frames: Optional[int] = None) -> dict[str, Any]:
+    """Probe final.mp4. durations_match means within one frame; raise ToolError beyond
+    MAX_AV_DRIFT_FRAMES of drift or when the frame count differs from expected_frames."""
     info = ffprobe(final)
     v = next((s for s in info["streams"] if s.get("codec_type") == "video"), {})
     a = next((s for s in info["streams"] if s.get("codec_type") == "audio"), {})
     vd, ad = float(v.get("duration", 0.0)), float(a.get("duration", 0.0))
     ok = abs(vd - ad) <= 1.0 / fps + 1e-6
-    fields = {"video_duration": round(vd, 4), "audio_duration": round(ad, 4), "durations_match": ok}
+    frames = int(v["nb_frames"]) if str(v.get("nb_frames", "")).isdigit() else None
+    fields = {"video_duration": round(vd, 4), "audio_duration": round(ad, 4), "durations_match": ok,
+              "frames": frames, "expected_frames": expected_frames}
     (log.info if ok else log.warn)("final durations checked", path=str(final), **fields)
+    if abs(vd - ad) > MAX_AV_DRIFT_FRAMES / fps + 1e-6:
+        raise ToolError(f"final.mp4 picture ({vd:.3f} s) and sound ({ad:.3f} s) are out of sync")
+    if expected_frames is not None and frames is not None and frames != expected_frames:
+        raise ToolError(f"final.mp4 has {frames} frames, expected {expected_frames}")
     return fields

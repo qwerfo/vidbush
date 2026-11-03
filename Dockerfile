@@ -10,9 +10,22 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-venv python3-pip ffmpeg espeak-ng \
-      fonts-dejavu-core libgl1 libglib2.0-0t64 ca-certificates \
+      fonts-dejavu-core libgl1 libglib2.0-0t64 ca-certificates curl unzip \
  && rm -rf /var/lib/apt/lists/* \
  && python3 -m venv /opt/venv
+
+# yt-dlp needs a JavaScript runtime (deno) plus yt-dlp-ejs to solve YouTube player
+# challenges; without them most YouTube formats are missing. Official release binary.
+ARG DENO_VERSION=2.9.8
+RUN case "$(dpkg --print-architecture)" in \
+      amd64) DENO_ARCH=x86_64 ;; arm64) DENO_ARCH=aarch64 ;; *) echo "unsupported arch" && exit 1 ;; \
+    esac \
+ && curl -fsSL -o /tmp/deno.zip \
+      "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${DENO_ARCH}-unknown-linux-gnu.zip" \
+ && unzip -q /tmp/deno.zip -d /usr/local/bin \
+ && chmod +x /usr/local/bin/deno \
+ && rm /tmp/deno.zip \
+ && deno --version
 
 WORKDIR /app
 COPY pyproject.toml ./

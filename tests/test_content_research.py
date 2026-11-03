@@ -66,8 +66,10 @@ def test_online_fallback_cards_from_fetched_text(settings, monkeypatch):
             "It had 83 locks and cost about 7 million dollars to build in total. "
             "Short line. ")
     monkeypatch.setattr(search, "wikipedia_search",
-                        lambda q, n=5: [{"url": "https://en.wikipedia.org/wiki/Erie_Canal", "title": "Erie Canal"}])
-    monkeypatch.setattr(search, "wikipedia_extract", lambda title: text + "\n== References ==\nRef 1999 junk.")
+                        lambda q, n=5, lang="en": [{"url": "https://en.wikipedia.org/wiki/Erie_Canal",
+                                                    "title": "Erie Canal"}])
+    monkeypatch.setattr(search, "wikipedia_extract", lambda title, lang="en": text + "\n== References ==\nRef 1999 junk.")
+    monkeypatch.setattr(researcher, "fetch_page_text", lambda url: "")
     settings.offline = False
     seats = FakeSeats(real_search=True)
     r = run_research(Brief(topic="Erie Canal", target_minutes=4), Brand(id="b"), seats, settings, NullLogger())

@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from ..config import Settings, list_ids
 from ..jobs import runner
+from ..jobs.lock import ProjectBusy
 from ..models import STAGES, Brief, InputMode, Project, VideoFormat
 from ..util import read_json, read_model, slug
 from .app import get_settings
@@ -37,7 +38,10 @@ def project_root(settings: Settings, project_id: str) -> Path:
 
 
 def load(settings: Settings, project_id: str) -> Project:
-    return read_model(project_root(settings, project_id) / "project.json", Project)
+    """project.json with paths rebased onto the current project root."""
+    from ..jobs.pipeline import load_project
+    project_root(settings, project_id)
+    return load_project(settings, project_id)
 
 
 def job_dict(job: runner.Job) -> dict[str, Any]:
@@ -94,7 +98,7 @@ def list_projects(settings: Settings = Depends(get_settings)) -> list[dict[str, 
 def get_project(project_id: str, settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """project.json with stage records, plus output URLs (cache busted) and job state."""
     root = project_root(settings, project_id)
-    data = read_json(root / "project.json")
+    data = load(settings, project_id).model_dump(mode="json")
     data["stage_order"] = STAGES
     data["final_url"] = media_url(project_id, root, root / "final.mp4") if (root / "final.mp4").exists() else None
     data["outputs"] = _outputs(project_id, root)
@@ -185,6 +189,8 @@ async def create(mode: str = Form(...), topic: str = Form(""), target_minutes: O
                            script, voiceover)
         proj = create_project(settings, pid, input_mode, brand_id=brand, fmt=fmt, target_minutes=minutes,
                               style_profile_id=style_profile or None, **kw)
+    except ProjectBusy as e:
+        raise HTTPException(409, str(e)) from e
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     runner.upsert_project_row(settings, proj)

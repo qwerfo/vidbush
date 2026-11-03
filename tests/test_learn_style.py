@@ -82,8 +82,8 @@ def test_classified_mix(tmp_path):
     cap = analyze.CaptionResult(detected=False)
     prof = build_profile("C", StyleProfile(id="b"), [3, 4, 2, 6], [s for s, _ in shots], labels, lb, cap,
                          {"mix": "classified"})
-    assert prof.visual_mix["footage"] == pytest.approx(100 * 7 / 15, abs=0.1)
-    assert prof.visual_mix["motion_graphic"] == pytest.approx(100 * 2 / 15, abs=0.1)
+    assert prof.visual_mix["footage"] == pytest.approx(50.0, abs=0.1)  # share of shot count, talking head as footage
+    assert prof.visual_mix["motion_graphic"] == pytest.approx(25.0, abs=0.1)
     assert not prof.letterbox.enabled and not prof.captions.enabled
 
 
@@ -153,3 +153,11 @@ def test_download_error_is_clear(tmp_path, monkeypatch):
     monkeypatch.setattr(yt_dlp, "YoutubeDL", Boom)
     with pytest.raises(LearnError, match="could not download"):
         fetch_source("https://example.com/v.mp4", s)
+
+
+def test_mix_is_count_share_with_screen_time_secondary():
+    from vidbush.learn.style_learner import screen_time_mix, visual_mix
+    labels = ["footage", "motion_graphic", "footage", "motion_graphic"]
+    durs = [3.0, 9.0, 3.0, 9.0]
+    assert visual_mix(durs, labels, {})["motion_graphic"] == pytest.approx(50.0)
+    assert screen_time_mix(durs, labels)["motion_graphic"] == pytest.approx(75.0)

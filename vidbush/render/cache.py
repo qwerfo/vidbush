@@ -4,19 +4,60 @@ segment_hash(shot, profile, caption_lines_in_window, settings) hashes every
 input that changes a segment's pixels, so editing one shot changes only that
 shot's hash. The segment lives at work/segments/<hash>.mp4 and is reused
 when that file exists. Bump RENDER_VERSION when rendering code changes output.
+
+Media files are keyed by content_fingerprint (size plus a hash of the first
+and last MiB, no name and no mtime), so restored, copied or re-downloaded
+files with the same bytes keep their segments, and a file rewritten in place
+gets a new key.
 """
 from __future__ import annotations
 
+import hashlib
 import random
+import threading
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from ..config import Settings
 from ..models import Shot, SourceKind, StyleProfile
-from ..util import file_fingerprint, stable_hash
+from ..util import stable_hash
 
-RENDER_VERSION = "seg-4"
+RENDER_VERSION = "seg-5"
 KB_KEYS = ("zoom0", "zoom1", "x0", "y0", "x1", "y1")
+FP_BLOCK = 1 << 20  # bytes hashed at each end of a file
+_FP_MEMO: dict[tuple[str, int, int], str] = {}
+_FP_LOCK = threading.Lock()
+
+
+def content_fingerprint(path: str | Path) -> str:
+    """Content key of a file: size plus sha256 of its first and last FP_BLOCK bytes ("missing" if absent).
+
+    Memoized in process by (path, size, mtime_ns), so repeated calls cost one stat.
+    """
+    p = Path(path)
+    try:
+        st = p.stat()
+    except OSError:
+        return "missing"
+    if not p.is_file():
+        return "missing"
+    memo_key = (str(p.resolve()), st.st_size, st.st_mtime_ns)
+    with _FP_LOCK:
+        hit = _FP_MEMO.get(memo_key)
+    if hit is not None:
+        return hit
+    h = hashlib.sha256(str(st.st_size).encode())
+    with open(p, "rb") as f:
+        h.update(f.read(FP_BLOCK))
+        if st.st_size > 2 * FP_BLOCK:
+            f.seek(st.st_size - FP_BLOCK)
+            h.update(f.read(FP_BLOCK))
+        elif st.st_size > FP_BLOCK:
+            h.update(f.read())
+    fp = f"{st.st_size}:{h.hexdigest()[:24]}"
+    with _FP_LOCK:
+        _FP_MEMO[memo_key] = fp
+    return fp
 
 
 def resolve_media(path: str, settings: Settings) -> Path:
@@ -87,7 +128,7 @@ def _candidate_part(shot: Shot, settings: Settings) -> Optional[dict[str, Any]]:
     if c is None:
         return None
     src = c.source.value if isinstance(c.source, SourceKind) else str(c.source)
-    return {"source": src, "media": c.media, "fp": file_fingerprint(resolve_media(c.local_path, settings)),
+    return {"source": src, "media": c.media, "fp": content_fingerprint(resolve_media(c.local_path, settings)),
             "in": round(c.in_point, 3), "out": round(c.out_point, 3), "crop": c.crop}
 
 
@@ -99,7 +140,7 @@ def segment_hash(shot: Shot, profile: StyleProfile, caption_lines_in_window: lis
     overlay = None
     if shot.overlay_path:
         overlay = {"spec": shot.overlay.model_dump(mode="json") if shot.overlay else None,
-                   "fp": file_fingerprint(resolve_media(shot.overlay_path, settings))}
+                   "fp": content_fingerprint(resolve_media(shot.overlay_path, settings))}
     lut = profile.colour.lut_path
     parts = {
         "v": RENDER_VERSION,
@@ -112,7 +153,7 @@ def segment_hash(shot: Shot, profile: StyleProfile, caption_lines_in_window: lis
         "captions": [caption_dict(ln) for ln in caption_lines_in_window] if profile.captions.enabled else [],
         "caption_style": profile.captions.model_dump(mode="json"),
         "letterbox": profile.letterbox.model_dump(mode="json"),
-        "colour": {"lut": lut, "fp": file_fingerprint(resolve_media(lut, settings)) if lut else None},
+        "colour": {"lut": lut, "fp": content_fingerprint(resolve_media(lut, settings)) if lut else None},
         "transition": {"in": shot.transition_in, "out": fade_out, "index0": shot.index == 0,
                        "d": profile.transitions.crossfade_duration},
         "render": {"w": r.width, "h": r.height, "fps": r.fps, "crf": r.crf, "preset": r.preset},

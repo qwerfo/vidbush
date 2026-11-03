@@ -18,7 +18,7 @@ dependencies = [
   "sqlmodel==0.0.48",
   "python-multipart",
   "jsonschema",
-  "yt-dlp==2026.10.26",
+  "yt-dlp[default]==2026.10.26",  # default extra brings yt-dlp-ejs (YouTube challenge solver)
   "scenedetect==0.7.2",
   "opencv-python-headless",
 ]

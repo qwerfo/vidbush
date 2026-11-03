@@ -108,7 +108,9 @@ def test_ai_candidate_prompt_and_files(make_ctx):
              must_avoid=["modern trucks"])
     prompt = ai_images.build_prompt(s)
     assert prompt.startswith("Workers in the Culebra Cut") and "steam shovel" in prompt
-    assert "no watermark" in prompt and "Do not include modern trucks" in prompt
+    assert "watermark" not in prompt.lower() and "modern trucks" not in prompt and " no " not in f" {prompt.lower()} "
+    neg = ai_images.negative_prompt(s)
+    assert "watermark" in neg and "modern trucks" in neg
     assert chr(0x2014) not in prompt
     c = ai_images.generate_ai_candidate(s, ctx)
     assert c.id == "shot_005_ai_image_1" and Path(c.local_path) == ctx.work / "ai" / "shot_005_1.png"
@@ -152,3 +154,28 @@ def test_ai_video_shot_without_real_seat_becomes_ai_image(make_ctx, salient_imag
     s.type = ShotType.ai_video
     out = prepare_visuals(ShotList(project_id="t1", duration=5, shots=[s]), ctx)
     assert out.shots[0].type == ShotType.ai_image
+
+
+def test_negative_prompt_moves_negations_and_skips_footage_terms():
+    s = Shot(id="shot_006", beat_id="b", start=0, end=5, duration=5, type=ShotType.ai_image, intent="x",
+             ai_prompt="Black and white photograph of a steamship at sea, 1910s. Natural light, no text, no logos.",
+             must_avoid=["modern container ships", "color footage from after 1950"])
+    prompt = ai_images.build_prompt(s)
+    assert prompt == "Black and white photograph of a steamship at sea, 1910s. Natural light."
+    neg = ai_images.negative_prompt(s)
+    assert "modern container ships" in neg and "footage" not in neg and "logos" in neg
+
+
+def test_negative_prompt_reaches_a_seat_that_accepts_it(make_ctx):
+    ctx = make_ctx()
+    seen = {}
+
+    def image(prompt, out_path, stage, negative_prompt=""):
+        seen["neg"] = negative_prompt
+        return ctx.seats.__class__.image(ctx.seats, prompt, out_path, stage)
+
+    ctx.seats.image = image  # type: ignore[method-assign]
+    s = Shot(id="shot_007", beat_id="b", start=0, end=5, duration=5, type=ShotType.ai_image, intent="Workers",
+             must_avoid=["modern trucks"])
+    ai_images.generate_ai_candidate(s, ctx)
+    assert "modern trucks" in seen["neg"]

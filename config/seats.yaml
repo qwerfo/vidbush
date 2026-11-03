@@ -1,8 +1,17 @@
 # Roles to providers. The code asks for a role; the first configured provider
-# that works is used. Fallback moves only the failed request.
+# that works is used. Fallback moves only the failed request; the first entry
+# stays first unless transport failures mark it down (probed again every 10 min).
 # A role with no configured provider runs in mock mode (marked in every report).
+# A role with a configured provider never silently uses mock: if every real
+# provider fails a request the stage fails (resume retries it), unless
+# allow_mock_fallback / VIDBUSH_ALLOW_MOCK_FALLBACK is true. 429s back off and retry.
 # Models are placeholders: set them to whatever is best and cheapest this month.
+# Model names starting with "your-" are placeholders and do not count as configured.
 # Use model_env to read the model name from .env instead of hardcoding it here.
+# Provider options: max_concurrency (parallel requests per provider),
+# image providers: cost_per_image, quality (gpt-image: low|medium|high, default low),
+# size, mode: chat (OpenRouter style image output from /chat/completions), aspect_ratio.
+# elevenlabs: model_preference (list used when the brand model is auto), language_models.
 
 roles:
   researcher:
@@ -42,5 +51,6 @@ providers:
   image_fallback: {type: openai_compat, base_url_env: IMAGE_FALLBACK_BASE_URL, key_env: IMAGE_FALLBACK_API_KEY,
                    options: {cost_per_image: 0.02}}
   video_primary:  {type: fal, base_url_env: VIDEO_BASE_URL, key_env: VIDEO_API_KEY}
-  elevenlabs:     {type: elevenlabs, base_url_env: ELEVENLABS_BASE_URL, key_env: ELEVENLABS_API_KEY}
+  elevenlabs:     {type: elevenlabs, base_url_env: ELEVENLABS_BASE_URL, key_env: ELEVENLABS_API_KEY,
+                   options: {max_concurrency: 2}}   # raise to your plan's concurrency limit
   web_search:     {type: tavily, key_env: SEARCH_API_KEY}   # set type to tavily, serper or brave

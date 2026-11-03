@@ -1,6 +1,9 @@
 id: default
 name: Default brand
-voice: {provider: elevenlabs, voice_id: "", model: auto, stability: 0.45, similarity: 0.8}
+# voice_id nPczCjzI2devNBz1zQrb is the ElevenLabs premade voice "Brian" (deep, calm American narrator),
+# available on every account, so an API key alone gives real narration. Replace it with your own voice id.
+# An empty voice_id uses ELEVENLABS_VOICE_ID from .env, then Brian.
+voice: {provider: elevenlabs, voice_id: "nPczCjzI2devNBz1zQrb", model: auto, stability: 0.45, similarity: 0.8}
 style_profile_id: documentary_default
 music_folder: fixtures/music
 intro_path: null

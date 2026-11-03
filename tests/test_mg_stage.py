@@ -44,3 +44,46 @@ def test_render_all_motion_and_cache(make_ctx) -> None:
     assert all(p.stat().st_mtime_ns == mtimes[p] for p in outs2)
     log = ctx.log.path.read_text()
     assert '"cached": 3' in log and "invalid bar_chart payload" in log
+
+
+def test_cache_key_includes_renderer_and_version(make_ctx) -> None:
+    from vidbush.mg import renderer as r
+    ctx = make_ctx()
+    spec = b.number_card_spec("10", "Ten", duration=2.0)
+    base = r.mg_key(spec, ctx.settings)
+    other = ctx.settings.model_copy(deep=True)
+    other.render.renderer = "remotion"
+    assert r.mg_key(spec, other) != base
+    assert r.mg_key(spec, ctx.settings) == base
+
+
+def test_failed_render_is_cached_as_fallback_and_retried(make_ctx, monkeypatch) -> None:
+    """A text-card fallback never lands under the real key; the next run retries and then replaces it."""
+    from vidbush.mg import renderer as r
+    from vidbush.render import mg_python
+    from vidbush.models import MotionKind
+    ctx = make_ctx()
+    ctx.settings.render.workers = 1
+    real = mg_python.render_spec_python
+    broken = {"on": True}
+
+    def flaky(spec, out, alpha, settings):  # noqa: ANN001
+        if broken["on"] and spec.kind != MotionKind.text_overlay:
+            raise RuntimeError("drawing bug")
+        return real(spec, out, alpha, settings)
+
+    monkeypatch.setattr(mg_python, "render_spec_python", flaky)
+    sl = ShotList(project_id="t1", width=320, height=180, duration=1.0, shots=[
+        Shot(id="s1", beat_id="b1", start=0, end=1, duration=1.0, type=ShotType.motion_graphic, intent="cost",
+             motion=b.number_card_spec("$375M", "Cost", duration=1.0))])
+    sl, outs = r.render_all_motion(sl, ctx)
+    assert outs[0].name.endswith(".fallback.mp4") and outs[0].exists()
+    planned = outs[0].with_name(outs[0].name.replace(".fallback", ""))
+    assert not planned.exists()
+    mtime = outs[0].stat().st_mtime_ns
+    sl, outs2 = r.render_all_motion(sl, ctx)
+    assert outs2 == outs and outs2[0].stat().st_mtime_ns == mtime, "old fallback reused while still failing"
+    broken["on"] = False
+    sl, outs3 = r.render_all_motion(sl, ctx)
+    assert outs3 == [planned] and planned.exists() and not outs[0].exists()
+    assert sl.shots[0].selected_candidate().local_path == str(planned)

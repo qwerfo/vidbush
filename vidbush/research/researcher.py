@@ -1,71 +1,107 @@
 """Research stage: sources to fact cards and visual anchors.
 
-Online, Wikipedia (search plus extracts) and the web search seat (when a key
-exists) feed page excerpts to the researcher seat (task "research"). Offline,
-or when the network fails, the seat still answers from canned fixtures in mock
-mode. With no usable answer, minimal unverified cards are built from the
-fetched text, else from the brief itself, so later stages always run. The
-fact check pass then drops contradicted cards.
+Online, Wikipedia in the brand language (search plus extracts) and the web
+search seat (queries built from the brief; the top result pages are fetched,
+not only snippets) feed page excerpts to the researcher seat (task
+"research"). The prompt budget is shared fairly between sources so web pages
+are not crowded out by long Wikipedia extracts. Offline, the seat answers from
+canned fixtures in mock mode.
+
+Contract with a real researcher seat (seats.is_real("researcher")):
+- citations are tied to fetched URLs: a source_url that was not fetched is
+  cleared and the card is capped at confidence 0.55 (general knowledge);
+- fewer than MIN_FACTS cards triggers one follow-up request (task
+  "research_more"); fewer than 5 anchors triggers one anchor request (task
+  "research_anchors"); the result is trimmed to MAX_FACTS cards (verified and
+  confident first) and 10 anchors (places with coordinates first);
+- a seat that fails on every real provider raises ProviderError, so the
+  stage fails and resume can retry it.
+With no usable answer, minimal unverified cards are built from the fetched
+text, else from the brief itself. The fact check pass then drops
+contradicted cards. A count still under the minimum is logged as a warning.
 """
 from __future__ import annotations
 
+import html
 import re
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from ..config import Settings
-from ..models import Brand, Brief, FactCard, Research, VisualAnchor
+from ..models import Brand, Brief, FactCard, Research, VideoFormat, VisualAnchor
+from ..providers.base import ProviderError
 from ..script import prompts
 from ..util import JsonLogger, no_em_dash
 from .factcheck import fact_check
 
 MAX_PAGES = 4
+MAX_WEB_PAGES = 3
 MAX_EXCERPT_CHARS = 9000
 MAX_PROMPT_CHARS = 30000
 MIN_FACTS, MAX_FACTS = 25, 60
+MIN_ANCHORS, MAX_ANCHORS = 5, 10
+GENERAL_CONFIDENCE = 0.55
 ANCHOR_KINDS = {"place", "date", "object", "person", "event", "number"}
 UNIT_WORDS = ("miles", "mile", "feet", "foot", "ft", "km", "kilometers", "meters", "yards", "tons", "people",
               "workers", "deaths", "men", "lives", "percent", "dollars", "years", "acres", "gallons", "ships")
+PAGE_USER_AGENT = "Vidbush/1.0 (self-hosted documentary research)"
 
 
 def run_research(brief: Brief, brand: Brand, seats: Any, settings: Settings, log: JsonLogger) -> Research:
-    """Fact cards, anchors and sources for a brief. Network failures are logged, never fatal."""
-    excerpts = {} if settings.offline else gather_sources(brief, seats, log)
-    data = _ask(brief, seats, excerpts, log)
+    """Fact cards, anchors and sources for a brief. Network failures are logged; real seat failures raise."""
+    lang = prompts.language_code(brand.language)
+    real = _is_real(seats, "researcher")
+    excerpts = {} if settings.offline else gather_sources(brief, seats, log, lang)
+    data = _ask(brief, brand, seats, excerpts)
     research = _from_seat(data, brief, excerpts) if data is not None else None
+    if research is not None and (real or excerpts):
+        tie_citations(research, excerpts)
+    if research is not None and real and len(research.facts) < MIN_FACTS:
+        _top_up(research, brief, brand, seats, excerpts, log)
     if research is None or not research.facts:
         log.warn("research seat gave no usable facts, using fallback cards", pages=len(excerpts))
         research = fallback_research(brief, excerpts)
     research.sources = _merge_sources(research, excerpts)
+    if real and len(research.anchors) < MIN_ANCHORS:
+        _ask_anchors(research, brief, brand, seats)
     _add_anchors(research, log)
     research = fact_check(research, seats, log, excerpts)
+    research = enforce_bounds(research, log)
     log.info("research done", facts=len(research.facts), anchors=len(research.anchors),
              sources=len(research.sources))
     return research
 
 
+def _is_real(seats: Any, role: str) -> bool:
+    try:
+        return bool(seats.is_real(role))
+    except AttributeError:
+        return False
+
+
 # ---------------------------------------------------------------- sources
 
-def gather_sources(brief: Brief, seats: Any, log: JsonLogger) -> dict[str, str]:
-    """{url: text}: Wikipedia extracts for the top results plus web search snippets."""
+def gather_sources(brief: Brief, seats: Any, log: JsonLogger, lang: str = "en") -> dict[str, str]:
+    """{url: text}: Wikipedia extracts (brand language) for the top results plus web pages and snippets."""
     from ..providers.search import wikipedia_extract, wikipedia_search
     out: dict[str, str] = {}
     titles: list[tuple[str, str]] = []
     for query in _queries(brief):
         try:
-            for r in wikipedia_search(query, n=3):
+            for r in wikipedia_search(query, n=3, lang=lang):
                 if r["url"] not in {u for u, _ in titles}:
                     titles.append((r["url"], r["title"]))
         except Exception as e:  # network errors are never fatal
             log.warn("wikipedia search failed", query=query, error=str(e)[:200])
     for url, title in titles[:MAX_PAGES]:
         try:
-            text = wikipedia_extract(title)
+            text = wikipedia_extract(title, lang=lang)
         except Exception as e:
             log.warn("wikipedia extract failed", title=title, error=str(e)[:200])
             continue
         if text:
             out[url] = f"{title}\n{_trim(text)}"
-    _web_snippets(brief, seats, out, log)
+    _web_sources(brief, seats, out, log)
     log.info("sources gathered", pages=len(out))
     return out
 
@@ -77,18 +113,62 @@ def _queries(brief: Brief) -> list[str]:
     return qs
 
 
-def _web_snippets(brief: Brief, seats: Any, out: dict[str, str], log: JsonLogger) -> None:
-    try:
-        if not seats.is_real("search"):
-            return
-        results = seats.web_search(f"{brief.topic} history facts", stage="research")
-    except Exception as e:
-        log.warn("web search failed", error=str(e)[:200])
+def web_queries(brief: Brief) -> list[str]:
+    """Web search queries built from the brief: topic with angle, plus a format specific query."""
+    first = f"{brief.topic} {brief.angle}".strip() if brief.angle else brief.topic
+    second = f"{brief.topic} ranked list" if brief.format == VideoFormat.top10 else f"{brief.topic} facts and figures"
+    return [first, second] if second != first else [first]
+
+
+def _web_sources(brief: Brief, seats: Any, out: dict[str, str], log: JsonLogger) -> None:
+    """Web search results: the top pages fetched in full, the rest kept as snippets."""
+    if not _is_real(seats, "search"):
         return
-    for r in results[:8]:
+    results: list[dict[str, str]] = []
+    for q in web_queries(brief):
+        results.extend(seats.web_search(q, stage="research"))  # ProviderError propagates (policy)
+    pages = 0
+    for r in results:
         url = r.get("url", "")
-        if url and url not in out and r.get("snippet"):
-            out[url] = f"{r.get('title', '')}\n{r['snippet']}"
+        if not url or url in out or _host(url).endswith("wikipedia.org"):
+            continue
+        text = ""
+        if pages < MAX_WEB_PAGES:
+            text = _safe_page(url, log)
+            pages += 1 if text else 0
+        text = text or r.get("snippet", "")
+        if text:
+            out[url] = f"{r.get('title', '') or _host(url)}\n{text}"
+
+
+def _safe_page(url: str, log: JsonLogger) -> str:
+    try:
+        return fetch_page_text(url)
+    except Exception as e:  # a page that will not load keeps its snippet
+        log.info("web page fetch failed", url=url, error=str(e)[:200])
+        return ""
+
+
+def fetch_page_text(url: str, max_chars: int = MAX_EXCERPT_CHARS) -> str:
+    """Readable text of an HTML page (network seam for tests); "" for non HTML."""
+    from ..providers.http import get_bytes
+    raw = get_bytes(url, headers={"User-Agent": PAGE_USER_AGENT}, timeout=20, max_bytes=3_000_000)
+    if raw[:5] == b"%PDF-":
+        return ""
+    return html_to_text(raw.decode("utf-8", errors="replace"))[:max_chars]
+
+
+def html_to_text(page: str) -> str:
+    """Strip scripts, styles, navigation and tags; collapse whitespace."""
+    page = re.sub(r"(?is)<(script|style|noscript|nav|header|footer|aside|form)[^>]*>.*?</\1>", " ", page)
+    page = re.sub(r"(?i)<br\s*/?>|</p>|</h\d>|</li>", "\n", page)
+    text = html.unescape(re.sub(r"<[^>]+>", " ", page))
+    lines = [re.sub(r"[ \t\r\f\v]+", " ", ln).strip() for ln in text.split("\n")]
+    return "\n".join(ln for ln in lines if len(ln.split()) >= 6)
+
+
+def _host(url: str) -> str:
+    return (urlparse(url).hostname or "").lower()
 
 
 def _trim(text: str) -> str:
@@ -98,25 +178,41 @@ def _trim(text: str) -> str:
     return text[:MAX_EXCERPT_CHARS]
 
 
-# ---------------------------------------------------------------- seat
-
-def _ask(brief: Brief, seats: Any, excerpts: dict[str, str], log: JsonLogger) -> Optional[Any]:
-    parts, budget = [], MAX_PROMPT_CHARS
+def excerpt_block(excerpts: dict[str, str], budget: int = MAX_PROMPT_CHARS) -> str:
+    """Excerpts for a prompt, the budget shared fairly: short sources keep all, long ones split the rest."""
+    items = sorted(excerpts.items(), key=lambda kv: len(kv[1]))
+    shares: dict[str, int] = {}
+    left = budget
+    for i, (url, body) in enumerate(items):
+        share = left // max(1, len(items) - i)
+        shares[url] = min(len(body), share)
+        left -= shares[url]
+    parts = []
     for url, body in excerpts.items():
         title, _, rest = body.partition("\n")
-        chunk = f"URL: {url}\nTITLE: {title}\n{rest[:max(0, budget)]}"
-        budget -= len(chunk)
-        parts.append(chunk)
-    text = "\n\n".join(parts)
+        parts.append(f"URL: {url}\nTITLE: {title}\n{rest[:max(0, shares[url] - len(title))]}")
+    return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------- seat
+
+def _ask(brief: Brief, brand: Brand, seats: Any, excerpts: dict[str, str]) -> Optional[Any]:
     user = prompts.RESEARCH_USER.format(topic=brief.topic, angle=brief.angle or "none",
                                         audience=brief.audience or "general", minutes=brief.target_minutes,
-                                        excerpts=text or "none fetched, use well established knowledge only",
+                                        language=prompts.language_line(brand.language),
+                                        excerpts=excerpt_block(excerpts) or "none fetched, use well established "
+                                                                            "knowledge only",
                                         min_facts=MIN_FACTS, max_facts=MAX_FACTS)
+    return _seat_json(seats, "research", user)
+
+
+def _seat_json(seats: Any, task: str, user: str) -> Optional[Any]:
+    """Researcher seat JSON. ProviderError (every real provider failed) propagates; other errors give None."""
     try:
-        return seats.llm_json("researcher", "research", prompts.RESEARCH_SYSTEM, user, stage="research",
-                              temperature=0.2)
-    except Exception as e:  # a seat failure falls back to minimal cards
-        log.warn("research seat failed", error=str(e)[:200])
+        return seats.llm_json("researcher", task, prompts.RESEARCH_SYSTEM, user, stage="research", temperature=0.2)
+    except ProviderError:
+        raise
+    except Exception:  # a malformed answer falls back to minimal cards
         return None
 
 
@@ -125,23 +221,113 @@ def _from_seat(data: Any, brief: Brief, excerpts: dict[str, str]) -> Optional[Re
     raw = data.get("facts") if isinstance(data, dict) else None
     if not isinstance(raw, list):
         return None
+    facts, id_map = parse_cards(raw, 0)
+    anchors = [a for a in (_anchor(x, id_map) for x in data.get("anchors") or []) if a is not None]
+    sources = [{"url": str(x.get("url", "")), "title": str(x.get("title", ""))}
+               for x in data.get("sources") or [] if isinstance(x, dict) and x.get("url")]
+    return Research(topic=brief.topic, facts=facts, anchors=anchors, sources=sources)
+
+
+def parse_cards(raw: list[Any], start: int) -> tuple[list[FactCard], dict[str, str]]:
+    """FactCards numbered f{start+1:02d}.. and a map from the seat's ids to ours."""
     facts: list[FactCard] = []
     id_map: dict[str, str] = {}
     for r in raw:
         if not isinstance(r, dict) or not str(r.get("claim", "")).strip():
             continue
-        fid = f"f{len(facts) + 1:02d}"
+        fid = f"f{start + len(facts) + 1:02d}"
         id_map[str(r.get("id", fid))] = fid
         facts.append(FactCard(
-            id=fid, claim=no_em_dash(str(r["claim"])).strip(), source_url=str(r.get("source_url", "")),
-            source_title=no_em_dash(str(r.get("source_title", ""))), confidence=_conf(r.get("confidence")),
+            id=fid, claim=no_em_dash(str(r["claim"])).strip(), source_url=str(r.get("source_url", "") or ""),
+            source_title=no_em_dash(str(r.get("source_title", "") or "")), confidence=_conf(r.get("confidence")),
             date=str(r.get("date", "") or ""), status=_status(r.get("status")),
             numbers=[n for n in r.get("numbers") or [] if isinstance(n, dict)] or extract_numbers(str(r["claim"])),
         ))
-    anchors = [a for a in (_anchor(x, id_map) for x in data.get("anchors") or []) if a is not None]
-    sources = [{"url": str(x.get("url", "")), "title": str(x.get("title", ""))}
-               for x in data.get("sources") or [] if isinstance(x, dict) and x.get("url")]
-    return Research(topic=brief.topic, facts=facts, anchors=anchors, sources=sources)
+    return facts, id_map
+
+
+def _norm_url(url: str) -> str:
+    u = urlparse(url.strip())
+    return f"{(u.hostname or '').lower().removeprefix('www.')}{u.path.rstrip('/')}"
+
+
+def tie_citations(research: Research, excerpts: dict[str, str]) -> int:
+    """Point each card at a fetched URL or mark it general knowledge. Returns how many were cleared."""
+    fetched = {_norm_url(u): u for u in excerpts}
+    cleared = 0
+    for f in research.facts:
+        match = fetched.get(_norm_url(f.source_url)) if f.source_url else None
+        if match:
+            f.source_url = match
+            f.source_title = f.source_title or excerpts[match].partition("\n")[0]
+            continue
+        if f.source_url:
+            cleared += 1
+        f.source_url, f.source_title = "", "general knowledge"
+        f.confidence = min(f.confidence, GENERAL_CONFIDENCE)
+    research.sources = [s for s in research.sources if _norm_url(s.get("url", "")) in fetched]
+    return cleared
+
+
+def _top_up(research: Research, brief: Brief, brand: Brand, seats: Any, excerpts: dict[str, str],
+            log: JsonLogger) -> None:
+    """One follow-up request when a real seat gave fewer than MIN_FACTS cards."""
+    need = MIN_FACTS - len(research.facts) + 5
+    known = "\n".join(f"{f.id}: {f.claim}" for f in research.facts)
+    user = prompts.RESEARCH_MORE_USER.format(topic=brief.topic, angle=brief.angle or "none", known=known,
+                                             language=prompts.language_line(brand.language),
+                                             excerpts=excerpt_block(excerpts) or "none fetched",
+                                             need=need, next_id=len(research.facts) + 1)
+    data = _seat_json(seats, "research_more", user)
+    raw = data.get("facts") if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        return
+    seen = {f.claim.lower() for f in research.facts}
+    extra = Research(topic=research.topic, facts=[c for c in parse_cards(raw, len(research.facts))[0]
+                                                  if c.claim.lower() not in seen])
+    tie_citations(extra, excerpts)
+    research.facts.extend(extra.facts)
+    log.info("research top up", asked=need, got=len(extra.facts), facts=len(research.facts))
+
+
+def _ask_anchors(research: Research, brief: Brief, brand: Brand, seats: Any) -> None:
+    """One anchor request when a real seat left fewer than MIN_ANCHORS anchors."""
+    facts = "\n".join(f"{f.id}: {f.claim}" for f in research.facts[:MAX_FACTS])
+    user = prompts.RESEARCH_ANCHORS_USER.format(topic=brief.topic, facts=facts or "none",
+                                                language=prompts.language_line(brand.language))
+    data = _seat_json(seats, "research_anchors", user)
+    rows = data.get("anchors") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return
+    ids = {f.id: f.id for f in research.facts}
+    have = {a.name.lower() for a in research.anchors}
+    for a in (_anchor(x, ids) for x in rows):
+        if a is not None and a.name.lower() not in have:
+            research.anchors.append(a)
+            have.add(a.name.lower())
+
+
+def enforce_bounds(research: Research, log: JsonLogger) -> Research:
+    """Trim to MAX_FACTS cards and MAX_ANCHORS anchors; warn when under the minimums."""
+    if len(research.facts) > MAX_FACTS:
+        rank = sorted(research.facts, key=lambda f: (f.status != "verified", -f.confidence))
+        keep = {f.id for f in rank[:MAX_FACTS]}
+        research.facts = [f for f in research.facts if f.id in keep]
+    known = {f.id for f in research.facts}
+    for a in research.anchors:
+        a.fact_ids = [f for f in a.fact_ids if f in known]
+    if len(research.anchors) > MAX_ANCHORS:
+        order = sorted(range(len(research.anchors)), key=lambda i: (not _mappable(research.anchors[i]), i))
+        keep_idx = set(order[:MAX_ANCHORS])
+        research.anchors = [a for i, a in enumerate(research.anchors) if i in keep_idx]
+    if len(research.facts) < MIN_FACTS or len(research.anchors) < MIN_ANCHORS:
+        log.warn("research below minimum", facts=len(research.facts), min_facts=MIN_FACTS,
+                 anchors=len(research.anchors), min_anchors=MIN_ANCHORS)
+    return research
+
+
+def _mappable(a: VisualAnchor) -> bool:
+    return a.kind == "place" and a.lat is not None and a.lon is not None
 
 
 def _conf(v: Any) -> float:
@@ -231,7 +417,7 @@ def _add_anchors(research: Research, log: JsonLogger) -> None:
             hits = _safe_places(find_places, a.name, log)
             if hits:
                 a.lat, a.lon = hits[0][1], hits[0][2]
-    if len(research.anchors) >= 5:
+    if len(research.anchors) >= MIN_ANCHORS:
         return
     have = {a.name.lower() for a in research.anchors}
     text = " ".join(f.claim for f in research.facts)
@@ -243,9 +429,22 @@ def _add_anchors(research: Research, log: JsonLogger) -> None:
                 have.add(name.lower())
     for f in research.facts:
         y = _year(f.claim) or _year(f.date)
-        if y and y not in have and len(research.anchors) < 10:
+        if y and y not in have and len(research.anchors) < MAX_ANCHORS:
             research.anchors.append(VisualAnchor(kind="date", name=y, detail=f.claim[:80], fact_ids=[f.id]))
             have.add(y)
+    _add_number_anchors(research, have)
+
+
+def _add_number_anchors(research: Research, have: set[str]) -> None:
+    """Number anchors (for number cards) from facts with figures while anchors are under the minimum."""
+    for f in research.facts:
+        if len(research.anchors) >= MIN_ANCHORS:
+            return
+        for n in f.numbers[:1]:
+            name = f"{n.get('value')} {n.get('unit', '')}".strip()
+            if n.get("value") is not None and name.lower() not in have:
+                research.anchors.append(VisualAnchor(kind="number", name=name, detail=f.claim[:80], fact_ids=[f.id]))
+                have.add(name.lower())
 
 
 def _safe_places(fn: Any, text: str, log: JsonLogger) -> list[tuple[str, float, float]]:

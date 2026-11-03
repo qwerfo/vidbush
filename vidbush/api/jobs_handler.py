@@ -36,7 +36,11 @@ def _run(settings: Settings, project_id: str, payload: dict[str, Any]) -> None:
 
 
 def _apply_ops(settings: Settings, job: Job, payload: dict[str, Any]) -> None:
-    """Apply EditOps and re-render. The EditResult goes to work/last_edit.json."""
+    """Apply EditOps and re-render. The EditResult goes to work/last_edit.json.
+
+    Idempotent on worker recovery: apply_and_render skips the ops when edit_plan.json already
+    records this job id, and only renders.
+    """
     from ..editor.ops import apply_and_render
     from ..jobs import pipeline
 
@@ -45,7 +49,7 @@ def _apply_ops(settings: Settings, job: Job, payload: dict[str, Any]) -> None:
     record: dict[str, Any] = {"job_id": job.id, "started_at": time.time(),
                               "ops": [o.model_dump(mode="json") for o in ops]}
     try:
-        result = apply_and_render(settings, job.project_id, ops, echo=False)
+        result = apply_and_render(settings, job.project_id, ops, echo=False, job_id=int(job.id))
     except Exception as e:
         record.update(ok=False, error=f"{type(e).__name__}: {e}"[:2000], finished_at=time.time())
         write_json(out, record)

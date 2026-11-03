@@ -102,17 +102,43 @@ def test_seats_mock_mode(settings, tmp_path: Path):
     assert (tmp_path / "cost.json").exists()
 
 
-def test_image_sticky_provider(settings, tmp_path, monkeypatch):
+def _image_env(settings):
     settings.offline = False
-    settings.env.update({"IMAGE_BASE_URL": "http://a", "IMAGE_API_KEY": "k", "IMAGE_FALLBACK_BASE_URL": "http://b",
-                         "IMAGE_FALLBACK_API_KEY": "k"})
+    settings.env.update({"IMAGE_BASE_URL": "http://a", "IMAGE_API_KEY": "k", "IMAGE_MODEL": "img-a",
+                         "IMAGE_FALLBACK_BASE_URL": "http://b", "IMAGE_FALLBACK_API_KEY": "k",
+                         "IMAGE_FALLBACK_MODEL": "img-b"})
+
+
+def test_image_refusal_moves_only_that_request(settings, tmp_path, monkeypatch):
+    _image_env(settings)
     seats = Seats(settings, CostTracker("p"))
     from vidbush.providers import image as image_mod
     order = []
 
     def fake(spec, prompt, out_path, cost):
         order.append(spec.name)
-        if spec.name == "image_primary":
+        if spec.name == "image_primary" and prompt == "bad":
+            raise RefusalError("content policy")
+        out_path.write_bytes(b"x")
+        return CallResult(value=out_path, provider=spec, mock=False, cost_usd=0.02)
+
+    monkeypatch.setattr(image_mod, "generate", fake)
+    seats.client.sleep = lambda s: None
+    for i, prompt in enumerate(["bad", "ok", "ok"]):
+        seats.image(prompt, tmp_path / f"{i}.png", "visuals")
+    assert order == ["image_primary", "image_fallback", "image_primary", "image_primary"]
+
+
+def test_image_down_primary_is_probed_back(settings, tmp_path, monkeypatch):
+    _image_env(settings)
+    seats = Seats(settings, CostTracker("p"))
+    from vidbush.providers import image as image_mod
+    order = []
+    state = {"down": True}
+
+    def fake(spec, prompt, out_path, cost):
+        order.append(spec.name)
+        if spec.name == "image_primary" and state["down"]:
             raise TransportError("down")
         out_path.write_bytes(b"x")
         return CallResult(value=out_path, provider=spec, mock=False, cost_usd=0.02)
@@ -120,7 +146,11 @@ def test_image_sticky_provider(settings, tmp_path, monkeypatch):
     monkeypatch.setattr(image_mod, "generate", fake)
     seats.client.sleep = lambda s: None
     seats.image("p", tmp_path / "1.png", "visuals")
-    assert seats._sticky["image"] == "image_fallback"
     order.clear()
     seats.image("p", tmp_path / "2.png", "visuals")
-    assert order[0] == "image_fallback"
+    assert order == ["image_fallback"]
+    state["down"] = False
+    base.HEALTH._down["image_primary:img-a"] -= base.PROBE_INTERVAL_S + 1
+    order.clear()
+    seats.image("p", tmp_path / "3.png", "visuals")
+    assert order == ["image_primary"]

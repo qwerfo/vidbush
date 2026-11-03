@@ -94,3 +94,22 @@ def test_format_number() -> None:
     assert b.format_number(22000, "people") == "22,000"
     assert b.format_number(40, "percent") == "40%"
     assert b.format_number(1.5e9) == "1.5B"
+
+
+def test_format_number_keeps_two_decimals() -> None:
+    assert b.format_number(3.25e6, "cubic yards") == "3.25 million"
+    assert b.format_number(2.75e9, "dollars") == "$2.75B"
+    assert b.format_number(49e6, "dollars") == "$49M"
+
+
+def test_recap_grid_carries_numbers() -> None:
+    spec = b.recap_grid_spec(["A", "B", "C"], numbers=[3, 2, 1])
+    assert spec.typed_payload().numbers == [3, 2, 1]
+    assert b.recap_grid_spec(["A", "B"], numbers=[1]).typed_payload().numbers is None
+
+
+def test_map_with_states_frames_them_without_shading() -> None:
+    spec = b.map_spec([], shaded=["Nevada", "Arizona"], title="Nevada and Arizona")
+    p = spec.typed_payload()
+    assert p.shaded_regions == [] and {lb.text for lb in p.labels} == {"NEVADA", "ARIZONA"}
+    assert 30 < p.center[0] < 42 and -120 < p.center[1] < -108 and p.zoom > 3
