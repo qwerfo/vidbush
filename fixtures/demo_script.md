@@ -42,7 +42,7 @@ Under Crowe's relentless pace, the work raced forward. Over the life of the proj
 
 President Franklin Roosevelt dedicated it in September 1935. The job was finished in 1936, roughly two years ahead of schedule.
 
-The dam rose 726 feet from bedrock, taller than a sixty story building. Behind it, the water slowly gathered into Lake Mead, which became the largest reservoir in the United States by capacity.
+The dam rose 726 feet from bedrock. The Washington Monument stands 555 feet. Behind it, the water slowly gathered into Lake Mead, which became the largest reservoir in the United States by capacity.
 
 ## Power for the West
 

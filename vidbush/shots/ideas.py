@@ -126,8 +126,47 @@ def _context_words(text: str, start: int, end: int, n: int = 3) -> tuple[str, st
     return " ".join(before), " ".join(after)
 
 
+_SMALL = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * (i + 2) for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())}
+_SCALES = {"hundred": 100, "thousand": 1000, "million": 1_000_000, "billion": 1_000_000_000}
+_SPELLED_RE = re.compile(r"\b(?:(?:%s)(?:[\s-]+|\s+and\s+)?)+\b" % "|".join(
+    sorted(list(_SMALL) + list(_TENS) + list(_SCALES), key=len, reverse=True)), re.I)
+
+
+def _words_value(words: list[str]) -> Optional[int]:
+    total, cur = 0, 0
+    for w in words:
+        if w in _SMALL:
+            cur += _SMALL[w]
+        elif w in _TENS:
+            cur += _TENS[w]
+        elif w == "hundred":
+            cur = max(cur, 1) * 100
+        elif w in _SCALES:
+            total += max(cur, 1) * _SCALES[w]
+            cur = 0
+    return total + cur if words else None
+
+
+def spelled_to_digits(text: str) -> str:
+    """'one hundred dollars' -> '$100', 'ninety percent' -> '90 percent'. Single 'one' and 'zero' stay words."""
+    def repl(m: re.Match) -> str:
+        raw = m.group(0)
+        words = [w for w in re.split(r"[\s-]+", raw.lower()) if w and w != "and"]
+        if len(words) == 1 and words[0] in ("one", "zero", "hundred", "thousand", "million", "billion"):
+            return raw
+        val = _words_value(words)
+        tail = " " if raw.endswith(" ") else ""
+        return f"{val:,}{tail}" if val is not None else raw
+    out = _SPELLED_RE.sub(repl, text)
+    return re.sub(r"\b([\d,]+) dollars\b", r"$\1", out)
+
+
 def extract_numbers(text: str) -> list[NumberMention]:
     """Quantities in text with normalised units; bare numbers inherit the unit used earlier in the sentence."""
+    text = spelled_to_digits(text)
     out: list[NumberMention] = []
     years = set(extract_years(text))
     for sentence in re.split(r"(?<=[.!?])\s+", text):
@@ -507,9 +546,52 @@ def _same_unit_groups(mentions: list[NumberMention]) -> dict[str, list[NumberMen
     return groups
 
 
+_VERBS = {"is", "was", "were", "are", "rose", "rises", "stands", "stood", "reached", "cost", "costs", "had",
+          "has", "took", "measured", "measures", "weighed", "weighs", "grew", "fell", "carried", "held", "holds",
+          "employed", "killed", "claimed", "spans", "spanned", "covered", "covers", "stretches", "stretched"}
+
+
+def _sentence_of(raw: str, text: str) -> str:
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        if raw in sent:
+            return sent
+    return ""
+
+
+_LEAD_RE = re.compile(r"^(Before|After|On|With|By|In|Under|Through|Via)\s+([^,]{3,40}),")
+
+
+def _subject(sentence: str) -> str:
+    """A leading phrase ('Before the canal'), else words up to the first verb, as a short chart label."""
+    lead = _LEAD_RE.match(sentence.strip())
+    if lead and len(lead.group(0).split()) <= 5:
+        return lead.group(0).rstrip(",")
+    words: list[str] = []
+    for w in _WORD_RE.findall(sentence):
+        if w.lower() in _VERBS or re.match(r"\d", w):
+            break
+        words.append(w)
+    return " ".join(words[:5])
+
+
+def _subject_labels(group: list[NumberMention], text: str) -> Optional[list[str]]:
+    sents = [_sentence_of(m.raw, text) for m in group]
+    if len(set(sents)) != len(sents) or not all(sents):
+        return None
+    labels = [_subject(s) for s in sents]
+    if not all(labels) or len(set(labels)) != len(labels):
+        return None
+    return [lab[:1].upper() + lab[1:] for lab in labels]
+
+
 def _chart_labels(group: list[NumberMention], text: str) -> list[str]:
     from ..mg.builders import format_number
-    if len(group) == 2 and re.search(r"\b(shrunk|shrank|fell|dropped|cut|rose|grew|from\b.*\bto)\b", text, re.I):
+    text = spelled_to_digits(text)
+    subjects = _subject_labels(group, text)
+    if subjects:
+        return subjects
+    same = len({_sentence_of(m.raw, text) for m in group}) == 1
+    if len(group) == 2 and same and re.search(r"\b(shrunk|shrank|fell|dropped|cut|rose|grew|from\b.*\bto)\b", text, re.I):
         return ["Before", "After"]
     labels = []
     for m in group:

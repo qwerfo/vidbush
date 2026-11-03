@@ -27,7 +27,7 @@ BAR_FRAME_SHARE = 0.7  # a row must be a bar in this share of frames
 COMMON_RATIOS = (2.76, 2.39, 2.35, 2.2, 2.0, 1.85)
 TEXT_EDGE_DENSITY = 0.035  # share of a row's pixels that are strong edges for a text row
 TEXT_FRAME_SHARE = 0.4  # captions must appear in this share of sampled frames
-INTER_EM_PER_INK = 1.25  # Inter: typical caption ink height (mixed case, outline included) is about 0.8 em
+INTER_EM_PER_INK = 1.4  # Inter: median caption ink height (mixed case, outline included) is about 0.7 em
 
 
 class DurationStats(BaseModel):

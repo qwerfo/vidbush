@@ -29,7 +29,7 @@ SHOTS: list[tuple[str, float, str]] = [
      "A jungle full of danger"),
     ("gradients=size=1280x720:rate=30:c0=#0b3d91:c1=#f2a541:speed=0.03", 4.2, ""),
     ("pal75bars=size=1280x720:rate=30,hue=H=t/2", 2.8, "Every ship paid a toll"),
-    ("zoneplate=size=640x360:rate=30:kt2=4:kx2=60:ky2=60", 5.4, "The locks lift ships high"),
+    ("colorspectrum=size=1280x720:rate=30,hue=h=t*25", 5.4, "The locks lift ships high"),
     ("rgbtestsrc=size=1280x720:rate=30", 3.6, "Steel gates weigh tons"),
     ("color=c=#7a1f1f:size=1280x720:rate=30,drawgrid=w=160:h=120:t=6:c=#e8b4a0", 2.2, "Fever took thousands"),
     ("sierpinski=size=1280x720:rate=30:type=triangle", 4.0, "Then came a new plan"),

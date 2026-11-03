@@ -60,11 +60,39 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
     ctx = _Assembler(script, spans, bcs, ideas, profile, rng)
     shots = ctx.assign(slots)
     shots = apply_rules(shots, ctx.ideas, ctx.idea_of, profile, ctx.rebind, ctx.overlay_for, frozenset(ctx.locked))
+    ensure_chart(shots, ctx, spans, log)
     sl = ShotList(project_id=project.id, duration=total, shots=shots)
     _finalize(sl, profile)
     log.info("shot list built", shots=len(sl.shots), ideas=len(ctx.ideas), llm_ideas=len(llm),
              duration=sl.duration, top10=top10)
     return sl, DirectorPlan(ideas=ctx.ideas)
+
+
+CHART_KINDS = (MotionKind.bar_chart, MotionKind.line_chart)
+
+
+def ensure_chart(shots: list[Shot], ctx: "_Assembler", spans: dict[str, tuple[float, float]], log: Any) -> None:
+    """Guarantee one data chart when any beat has chartable numbers: rebind the nearest free motion shot."""
+    if any(s.motion and s.motion.kind in CHART_KINDS for s in shots):
+        return
+    charts = [i for i in ctx.ideas if i.family == "motion" and i.motion and i.motion.kind in CHART_KINDS]
+    if not charts:
+        return
+    best: Optional[tuple[float, Shot, VisualIdea]] = None
+    for idea in charts:
+        b0, b1 = spans.get(idea.beat_id, (0.0, 0.0))
+        mid = (b0 + b1) / 2
+        for sh in shots:
+            if sh.type != ShotType.motion_graphic or sh.id in ctx.locked:
+                continue
+            gap = abs((sh.start + sh.end) / 2 - mid)
+            if best is None or gap < best[0]:
+                best = (gap, sh, idea)
+    if best is None or best[0] > 45.0:
+        return
+    _, shot, idea = best
+    ctx.rebind(shot, idea)
+    log.info("chart guaranteed", shot=shot.id, beat=idea.beat_id, gap_s=round(best[0], 1))
 
 
 # ---------------------------------------------------------------- timing helpers
