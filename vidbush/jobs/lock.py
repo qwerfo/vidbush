@@ -35,6 +35,8 @@ class ProjectBusy(RuntimeError):
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -44,6 +46,19 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _pid_alive_windows(pid: int) -> bool:
+    """os.kill(pid, 0) sends CTRL_C_EVENT on Windows, so query the process handle instead."""
+    import ctypes
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    code = ctypes.c_ulong()
+    ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+    kernel32.CloseHandle(handle)
+    return bool(ok) and code.value == 259  # STILL_ACTIVE
 
 
 def read_lock(path: Path) -> Optional[dict[str, Any]]:

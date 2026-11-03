@@ -20,6 +20,14 @@ calls one module entry point, and writes its output back to disk. The runner
 is skipped on resume when its record is `done` and all its outputs exist, so
 `python -m vidbush resume <id>` continues from the first unfinished stage.
 `VIDBUSH_FAIL_AT=<stage>` raises at the start of that stage (test hook).
+A stage that runs forces every stage that reads its output (`STAGE_INPUTS`
+in `vidbush/jobs/pipeline.py`), so a re-run never leaves stale downstream
+outputs. Edit ops persist their force set in `work/edit_plan.json` so a
+failed edit render is completed by the next resume. `output/<id>/.lock`
+(pid based, stale detection) keeps the CLI and the API worker from running
+the same project at once. Absolute paths stored in project and work files
+are rebased onto the current project root on load, so projects move freely
+between machines and between host and Docker.
 
 ## Files on disk (per project)
 
@@ -67,11 +75,11 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | script/parser.py | `parse_script(text, fmt=None) -> Script` | pasted scripts, any length, infers scene purposes and top10 |
 | audio/transcribe.py | `transcribe_words(audio, settings, log) -> list[Word] or None`, `transcribe_to_text(audio, settings, log, seats) -> str` | faster-whisper when available |
 | audio/narration.py | `narrate(script, brand, seats, settings, work_dir, log) -> Narration`, `narration_from_voiceover(audio, script, settings, work_dir, log) -> Narration`, `renarrate_beat(...)` | per-scene TTS, 40 ms crossfade stitch, alignment check, -16 LUFS |
-| shots/director.py | `build_shotlist(project, script, narration, research, profile, brand, seats, rng) -> (ShotList, DirectorPlan)` | ideas per beat, then pacing engine assigns slots |
+| shots/director.py | `build_shotlist(project, script, narration, research, profile, brand, seats, rng) -> (ShotList, DirectorPlan)` | ideas per beat (director seat called once per scene or batch of 8 beats, in parallel, shots/seat.py), then the pacing engine and assembler (shots/assembler.py) assign slots; at most 2 full screen cards and 16 s in a row; visual mix measured by shot count |
 | source/registry.py | `source_all(shotlist, ctx) -> ShotList`, `source_shot(shot, ctx, queries=None) -> list[Candidate]` | parallel adapters, cap 8, sidecars |
 | judge/director_loop.py | `judge_and_select(shotlist, ctx) -> ShotList` | score, select, re-query, convert to ai_image, never empty |
 | visuals/prepare.py | `prepare_visuals(shotlist, ctx) -> ShotList` | derived crops, optional DepthFlow and ai_video |
-| visuals/ai_images.py | `generate_ai_candidate(shot, ctx, prompt=None) -> Candidate` | image seat, sticky provider |
+| visuals/ai_images.py | `generate_ai_candidate(shot, ctx, prompt=None) -> Candidate` | image seat, configured provider order |
 | mg/renderer.py | `render_spec(spec, out_path, alpha, settings) -> Path`, `render_all_motion(shotlist, ctx) -> (ShotList, list[Path])` | python or remotion, cached by spec hash |
 | render/captions.py | `group_words(words, style) -> list[CaptionLine]`, `build_captions(narration, profile, out_root, settings) -> list[Path]`, `write_ass_window(lines, profile, t0, t1, path, w, h) -> Path`, `caption_geometry(profile, w, h) -> dict` | one line, 3 to 5 words, fixed band height |
 | audio/music.py | `build_mix(narration, script, shotlist, brand, profile, settings, work_dir, log, rng) -> Path` | writes work/mix.wav at -14 LUFS, ducked bed |
@@ -91,7 +99,9 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 motion stage renders it to `work/mg/<hash>.mp4` and adds a Candidate with
 `source=motion`, which becomes `shot.selected`. Overlay shots carry
 `shot.overlay`; the motion stage renders it with alpha to
-`work/mg/<hash>.mov` (qtrle, rgba) and sets `shot.overlay_path`.
+`work/mg/<hash>.mov` (qtrle, rgba) and sets `shot.overlay_path`. The motion
+cache key includes the renderer kind and a renderer version; degraded
+fallback renders are stored under a separate `.fallback` name.
 Data-driven graphics (maps, charts) always draw `source_note` in a corner.
 Palettes: `documentary_warm`, `documentary_cold`, `top10_bold`. Font: Inter
 (bundled in `assets/fonts`, OFL). Maps use Natural Earth data bundled in
@@ -131,7 +141,9 @@ stable hash of: the selected candidate (source, path fingerprint, in/out
 points, crop), shot type, duration, overlay spec and overlay clip
 fingerprint, Ken Burns parameters, the caption lines inside the shot window,
 the caption style, the letterbox and colour settings, and the render
-settings (size, fps, crf). A segment whose file exists is reused. A change
+settings (size, fps, crf). Media files are fingerprinted by content (size
+plus a hash of the first and last megabyte), never by mtime, so copying a
+project does not invalidate its cache. A segment whose file exists is reused. A change
 to one shot changes only that shot's hash, so only that segment re-renders.
 `work/render_stats.json` records how many segments were rendered and how
 many came from cache on the last assembly.
@@ -145,10 +157,16 @@ Code asks for a seat by role (`researcher`, `writer`, `director`, `judge`,
 transport errors, one attempt then fallback on refusal or 4xx, providers
 that fail on transport are marked down and probed again every 10 minutes,
 and every call (real or mock) is written to `cost_report.json`. Fallback
-moves only the failed request. The image seat is sticky per production so
-one video never mixes image styles unless the primary is down.
+moves only the failed request; the configured order is kept, so one video
+never mixes image styles unless the primary is down, and the 10 minute probe
+returns to the primary. 429 responses back off using Retry-After (up to 6
+attempts) and never mark a provider down. `options.max_concurrency` limits
+parallel requests per provider. If a role has a configured real provider and
+every real provider fails, the seat raises and the stage fails (resume
+retries later), unless `allow_mock_fallback` is true. A finished project that
+used mock for a role configured as real ends as `needs_review`.
 
-When a role has no configured provider, the mock provider answers: canned
+When a role has no configured provider (or offline mode is on), the mock provider answers: canned
 LLM fixtures from `fixtures/llm/<fixture_key>/<task>.json` (fixture key is
 `slug(topic)` for briefs, the file stem for scripts and voiceovers), or
 `None`, in which case every caller has a deterministic heuristic fallback.
