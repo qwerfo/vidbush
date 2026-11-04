@@ -171,7 +171,20 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
         return []
     if cacheable:
         cache_put(adapter.name, query, media, n, results, ctx.settings)
-    return results
+    return relevant(adapter.name, query, results, ctx)
+
+
+MIN_RELEVANCE = 0.34  # at least about one in three of the query's specific words
+
+
+def relevant(adapter: str, query: str, results: list[RawResult], ctx: "StageContext") -> list[RawResult]:
+    """Drop web results whose title and description share too few specific words with the query."""
+    if adapter == "local":
+        return results
+    keep = [r for r in results if base.relevance(query, r) >= MIN_RELEVANCE]
+    if len(keep) < len(results):
+        ctx.log.info("off-topic results dropped", source=adapter, query=query, dropped=len(results) - len(keep))
+    return keep
 
 
 def _cache_path(adapter: str, query: str, media: str, n: int, settings: Any) -> Path:
@@ -310,6 +323,9 @@ def _still_from_video(c: Candidate, out_dir: Path) -> Candidate:
                                 "flags": c.flags + ["frame_grab"]})
 
 
+MAX_STILL_ASPECT = 2.6  # wider stills (panoramas) lose too much to a 16:9 cover crop
+
+
 def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Iterable[str] = ()) -> list[Candidate]:
     """Assign final ids f"{shot.id}_{source}_{n}", extract keyframes, flag low resolution."""
     from .keyframes import extract_keyframes
@@ -327,6 +343,10 @@ def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Ite
             extract_keyframes(c, kf_dir)
         except Exception as e:  # noqa: BLE001 - a broken file is dropped, not fatal
             ctx.log.warn("keyframes failed, candidate dropped", shot=shot.id, candidate=c.id, error=str(e)[:200])
+            continue
+        if c.media == "image" and c.width and c.height and c.width / c.height > MAX_STILL_ASPECT:
+            ctx.log.info("still too thin for a 16:9 frame, dropped", shot=shot.id, candidate=c.id,
+                         size=f"{c.width}x{c.height}")
             continue
         if (c.media == "video" and min(c.width, c.height) < 720) or (c.media == "image" and c.width < 1280):
             c.flags = sorted(set(c.flags) | {"low_res"})

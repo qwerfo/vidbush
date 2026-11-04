@@ -57,6 +57,29 @@ def parse_commons(data: dict[str, Any], media: Media) -> list[RawResult]:
     return [r for _, r in sorted(out, key=lambda p: p[0])]
 
 
+TRANSCODE_SIZES = ("1080p", "720p")
+
+
+def transcode_urls(url: str) -> list[str]:
+    """Commons VP9 transcodes of an original video URL, largest first (originals can be gigabytes)."""
+    clean = url.split("?")[0]
+    m = re.match(r"(https://upload\.wikimedia\.org/wikipedia/commons)/([0-9a-f]/[0-9a-f]{2})/([^/]+)$", clean)
+    if not m:
+        return []
+    root, shard, name = m.groups()
+    return [f"{root}/transcoded/{shard}/{name}/{name}.{size}.vp9.webm" for size in TRANSCODE_SIZES]
+
+
+def _video_source(url: str, ext: str, settings: Settings, shot_duration: float, duration: float) -> Path:
+    """Prefer a 1080p or 720p transcode; fall back to the original file."""
+    for t_url in transcode_urls(url):
+        try:
+            return base.cached_video(t_url, ".webm", settings, shot_duration, duration=duration)
+        except Exception:  # noqa: BLE001 - a missing transcode is normal, try the next
+            continue
+    return base.cached_video(url, ext, settings, shot_duration, duration=duration)
+
+
 class WikimediaAdapter(BaseAdapter):
     name = "wikimedia"
     media = {"video", "image"}
@@ -74,7 +97,8 @@ class WikimediaAdapter(BaseAdapter):
         url = raw.download_url or raw.url
         ext = ext_from_url(url, ".webm" if raw.media == "video" else ".jpg")
         if raw.media == "video":
-            src = base.cached_video(url, ext, settings, shot.duration, duration=raw.duration)
+            src = _video_source(url, ext, settings, shot.duration, raw.duration)
+            ext = src.suffix
         else:
             src = cached_download(url, ext, settings, max_bytes=base.MAX_IMAGE_BYTES)
         dst = link_into(src, out_dir, f"wikimedia_{base.url_hash(src.name)}{ext}")

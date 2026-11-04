@@ -20,6 +20,8 @@ throttle overrides; the registry calls it once per sourcing run.
 """
 from __future__ import annotations
 
+import re
+
 import hashlib
 import os
 import shutil
@@ -35,12 +37,12 @@ from ..config import Settings
 from ..models import Candidate, Model, Shot, SourceKind
 from ..providers import http as provider_http
 from ..providers.base import RateLimitError, TransportError, http_error_to_exc
-from ..util import clamp, run, write_json
+from ..util import ToolError, clamp, run, write_json
 from . import throttle
 from .licence import licence_flags, normalise_licence
 
 Media = Literal["video", "image"]
-DEFAULT_USER_AGENT = "Vidbush/1.0 (self-hosted documentary tool; contact not set, see VIDBUSH_CONTACT)"
+DEFAULT_USER_AGENT = "Vidbush/1.0 (self-hosted documentary tool; +https://github.com/qwerfo/vidbush)"
 USER_AGENT = DEFAULT_USER_AGENT
 MAX_DOWNLOAD_BYTES = 400_000_000  # hard cap for any streamed download
 SECTION_OVER_BYTES = 150_000_000  # videos above this are read as a section, never downloaded whole
@@ -86,6 +88,39 @@ class SourceAdapter(Protocol):
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]: ...
 
 
+# ---------------------------------------------------------------- relevance
+
+GENERIC_WORDS = {
+    "footage", "archival", "archive", "film", "films", "video", "videos", "photo", "photos", "photograph",
+    "photographs", "image", "images", "picture", "historic", "historical", "history", "old", "vintage",
+    "black", "white", "aerial", "view", "shot", "scene", "documentary", "newsreel", "public", "domain",
+    "color", "colour", "early", "rare", "real", "original", "the", "and", "with", "from", "for", "into",
+}
+
+
+def _stem(word: str) -> str:
+    w = word.lower()
+    for suf in ("ing", "ion", "es", "s"):
+        if len(w) > 5 and w.endswith(suf):
+            return w[: -len(suf)]
+    return w
+
+
+def content_tokens(text: str) -> set[str]:
+    """Stemmed words of 3+ letters that are not generic footage words."""
+    return {_stem(w) for w in re.findall(r"[A-Za-z]{3,}", text or "") if w.lower() not in GENERIC_WORDS}
+
+
+def relevance(query: str, raw: "RawResult") -> float:
+    """Share of the query's specific words found in the result title, description and tags (0..1)."""
+    want = content_tokens(query)
+    if not want:
+        return 1.0
+    extra = raw.extra or {}
+    have = content_tokens(" ".join([raw.title, str(extra.get("description", "")), " ".join(map(str, extra.get("tags", []) or []))]))
+    return len(want & have) / len(want)
+
+
 # ---------------------------------------------------------------- network seams
 
 def user_agent_for(contact: str) -> str:
@@ -94,10 +129,20 @@ def user_agent_for(contact: str) -> str:
     return f"Vidbush/1.0 (self-hosted documentary tool; {contact})" if contact else DEFAULT_USER_AGENT
 
 
+HTTP_PROXY = ""  # ffmpeg does not read proxy env vars; passed explicitly when set
+YOUTUBE_COOKIES = ""  # path to a Netscape cookies.txt exported from a logged-in browser
+YOUTUBE_COOKIES_FROM_BROWSER = ""  # or a browser name yt-dlp reads cookies from: chrome, firefox, edge
+
+
 def configure(settings: Settings) -> None:
     """Set the User-Agent contact and the throttle overrides for this process."""
-    global USER_AGENT
+    global USER_AGENT, HTTP_PROXY
     USER_AGENT = user_agent_for(settings.key("VIDBUSH_CONTACT"))
+    global YOUTUBE_COOKIES, YOUTUBE_COOKIES_FROM_BROWSER
+    HTTP_PROXY = settings.key("HTTPS_PROXY") or settings.key("HTTP_PROXY")
+    cookies = settings.key("YOUTUBE_COOKIES")
+    YOUTUBE_COOKIES = str(settings.path(cookies)) if cookies else ""
+    YOUTUBE_COOKIES_FROM_BROWSER = settings.key("YOUTUBE_COOKIES_FROM_BROWSER")
     throttle.configure(settings.sources)
 
 
@@ -170,9 +215,10 @@ def _stream(url: str, dest: Path, headers: dict[str, str], timeout: float, max_b
 
 def ffmpeg_section(url: str, start: float, length: float, out: Path) -> Path:
     """Copy one section of a remote (or local) video without downloading the rest."""
+    proxy = ["-http_proxy", HTTP_PROXY] if HTTP_PROXY and "://" in url else []
     def call() -> Path:
         run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{length:.2f}",
-             "-user_agent", USER_AGENT, "-i", url, "-map", "0:v:0", "-c", "copy", "-avoid_negative_ts",
+             "-user_agent", USER_AGENT, *proxy, "-i", url, "-map", "0:v:0", "-c", "copy", "-avoid_negative_ts",
              "make_zero", str(out)], timeout=600)
         return out
     if "://" not in url:
@@ -227,7 +273,13 @@ def cached_section(url: str, start: float, length: float, settings: Settings, ex
         if dest.exists() and dest.stat().st_size > 0:
             return dest
         tmp = dest.with_name(dest.stem + ".part" + ext)
-        ffmpeg_section(url, start, length, tmp)
+        try:
+            ffmpeg_section(url, start, length, tmp)
+        except ToolError:
+            if "://" not in url:
+                raise
+            whole = cached_download(url, ext, settings, max_bytes=MAX_DOWNLOAD_BYTES)
+            ffmpeg_section(str(whole), start, length, tmp)
         tmp.replace(dest)
     return dest
 

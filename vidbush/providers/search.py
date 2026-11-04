@@ -30,11 +30,17 @@ def search(spec: ProviderSpec, query: str, n: int = 8) -> CallResult:
     return CallResult(value=items[:n], provider=spec, mock=False, cost_usd=0.005, units=1, unit_kind="queries")
 
 
+def _user_agent() -> str:
+    """Wikimedia rejects agents without contact info (429), so reuse the sourcing agent."""
+    from ..source.base import USER_AGENT
+    return USER_AGENT
+
+
 def wikipedia_search(query: str, n: int = 5, lang: str = "en") -> list[dict[str, Any]]:
     """Wikipedia API search, no key needed."""
     data = get_json(f"https://{lang}.wikipedia.org/w/api.php",
                     {"action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": n},
-                    headers={"User-Agent": "Vidbush/0.1 (self-hosted video tool)"})
+                    headers={"User-Agent": _user_agent()})
     out = []
     for r in data.get("query", {}).get("search", []):
         title = r.get("title", "")
@@ -46,6 +52,6 @@ def wikipedia_search(query: str, n: int = 5, lang: str = "en") -> list[dict[str,
 def wikipedia_extract(title: str, lang: str = "en") -> str:
     data = get_json(f"https://{lang}.wikipedia.org/w/api.php",
                     {"action": "query", "prop": "extracts", "explaintext": 1, "titles": title, "format": "json"},
-                    headers={"User-Agent": "Vidbush/0.1 (self-hosted video tool)"})
+                    headers={"User-Agent": _user_agent()})
     pages = data.get("query", {}).get("pages", {})
     return next(iter(pages.values()), {}).get("extract", "") if pages else ""

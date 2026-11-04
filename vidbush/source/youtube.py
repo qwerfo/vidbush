@@ -19,6 +19,8 @@ small gap (throttle host "youtube") to avoid bot checks.
 """
 from __future__ import annotations
 
+import logging
+
 import re
 import shutil
 from pathlib import Path
@@ -75,6 +77,12 @@ def _base_opts() -> dict[str, Any]:
     runtimes = js_runtimes()
     if runtimes:
         opts["js_runtimes"] = runtimes
+    if base.YOUTUBE_COOKIES:
+        opts["cookiefile"] = base.YOUTUBE_COOKIES
+    elif base.YOUTUBE_COOKIES_FROM_BROWSER:
+        opts["cookiesfrombrowser"] = (base.YOUTUBE_COOKIES_FROM_BROWSER,)
+    if base.HTTP_PROXY:
+        opts["proxy"] = base.HTTP_PROXY  # also handed to ffmpeg, which ignores proxy env vars
     return opts
 
 
@@ -171,6 +179,8 @@ class YoutubeAdapter(BaseAdapter):
         cfg = settings.sources
         info = ydl_extract(raw.url, {"skip_download": True})
         if max_height(info) < cfg.youtube_min_height:
+            logging.getLogger("vidbush.source").info("youtube %s skipped: %sp is below %sp", raw.url,
+                                                     max_height(info), cfg.youtube_min_height)
             return []
         a, b = section_for(float(info.get("duration") or raw.duration), shot)
         stem = base.cache_dir(settings) / base.url_hash(f"{raw.url}#{a:.0f}-{b:.0f}-{cfg.youtube_max_height}")
@@ -190,8 +200,10 @@ class YoutubeAdapter(BaseAdapter):
         lo, hi = settings.sources.youtube_min_height, settings.sources.youtube_max_height
         fmt = (f"bv*[height<={hi}][height>={lo}][ext=mp4]/bv*[height<={hi}][height>={lo}]/"
                f"b[height<={hi}][height>={lo}]")
-        return {"format": fmt, "format_sort": ["hdr:SDR", "res", "fps"], "download_ranges": download_range_func(None, [(a, b)]),
-                "force_keyframes_at_cuts": False, "retries": 3, "socket_timeout": settings.sources.timeout_s}
+        opts = {"format": fmt, "format_sort": ["hdr:SDR", "res", "fps"],
+                "download_ranges": download_range_func(None, [(a, b)]), "force_keyframes_at_cuts": False,
+                "retries": 3, "socket_timeout": settings.sources.timeout_s}
+        return opts
 
 
 def clean_title(title: str) -> str:
