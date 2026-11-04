@@ -54,6 +54,29 @@ output/<id>/
     profile_override.json   optional per-project StyleProfile delta (edit ops)
 ```
 
+## Batch queue (files on disk)
+
+```
+data/batches/<batch_id>/
+  state.json                BatchState: source, brand, cost_cap_usd, paused, status, items
+                            (input, mode, project_id, status, note, duration, cost, QA percent)
+  batch_report.md           one row per project (rewritten whenever an item changes)
+  batch_report.json         the same, machine readable, with a summary
+  .lock                     held by the runner (same lock module as projects)
+output/<id>/work/cost_cap.json   written when the per-run cost cap stopped the project
+```
+
+`vidbush/jobs/batch.py` discovers inputs (folder, non recursive, sorted; or a
+list file), runs items one at a time through `api/jobs_handler.run_pipeline`
+(the worker's own path: `create_project` then `run_project`), records a
+failed item and moves on, and checks the paused flag between projects.
+`vidbush/jobs/batch_report.py` writes the report. `vidbush/jobs/costcap.py`
+is the per-run cap: `run_project(..., cost_cap=usd)` (default None, no cap)
+checks `ctx.tracker.total_usd` after each stage and stops at that stage
+boundary with the project `needs_review` and `project.status_note` set; a
+plain `resume` finishes it. CLI: `batch`, `batch-status`, `batch-pause`,
+`batch-resume` (`vidbush/batch_cli.py`).
+
 ## Contracts
 
 All data contracts are pydantic models in `vidbush/models.py`. JSON schemas
@@ -180,3 +203,13 @@ candidates, edit ops, chat revisions, brands, settings and seat status, and
 serves the built UI from `ui/dist`. A worker pool (`vidbush/jobs/runner.py`)
 pulls jobs from a SQLite table in `data/vidbush.db`, one job per project at a
 time. Everything the UI does is also a CLI subcommand.
+
+Batches (`vidbush/api/routes_batches.py`): `GET /api/batches`,
+`GET /api/batches/{id}` (report rows plus state), `POST /api/batches`
+(`{source, brand, profile, format, minutes, cost_cap_usd, id_prefix,
+batch_id, start}`, source is a folder or list file on the server),
+`POST /api/batches/{id}/pause`, `POST /api/batches/{id}/resume`
+(`{retry_failed, cost_cap_usd}`). A batch runs as one worker job of kind
+`batch` whose `project_id` is `batch:<id>`, so it occupies one worker slot
+until the queue is empty or paused, and a server restart requeues it. The UI
+Queue page (`ui/src/pages/Queue.jsx`, `#/queue/<id>`) polls these routes.

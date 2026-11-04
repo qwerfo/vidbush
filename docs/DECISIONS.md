@@ -34,3 +34,10 @@ One line each: the decision and why.
 - The director may now propose map and chart overlays. These get the same coordinate and fact checks as motion ideas and render as insets. An inset map must draw a marker, a route or an arrow.
 - Heuristic fallback notes are recorded through `seats.note_fallback`, and only when the role has a configured real provider, because mock mode is already reported as mock. Each stage writes its notes to work/fallbacks.json and replaces its own earlier entries, so a re-run that succeeds clears them.
 - A director chunk counts as a fallback when the call fails or returns no valid idea. The script summary fallback is reported with scene id "all". A writer section counts when its beats come from fact claims.
+- Batch cost cap is checked after each stage against the project's cost_report total (which includes earlier runs), so a run stops at the next stage boundary, never mid stage; stopping inside a stage would leave half written outputs.
+- A capped project ends as needs_review with project.status_note and work/cost_cap.json; the batch shows it as capped. No new project status value, so the UI, API and final status logic stay unchanged.
+- No cap check after the last stage: the video is finished by then, so stopping saves nothing.
+- A batch runs as one worker job (kind batch, project_id batch:<id>) that runs its projects in sequence through jobs_handler.run_pipeline, so batches reuse the job table's crash recovery and the API worker's exact pipeline path.
+- Batch pause is a flag in state.json read between projects; the running project always finishes. A per-item resume uses the existing stage resume, so an interrupted batch never recreates a project it already started.
+- Batch project ids come from file stems like run (unique suffix _2, _3 within a batch) and replace an existing project of the same id, matching run.
+- Batch CLI uses flat names (batch, batch-status, batch-pause, batch-resume) so `batch <folder>` stays a single positional command.

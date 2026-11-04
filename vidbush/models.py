@@ -158,6 +158,7 @@ class Project(Model):
     paths: ProjectPaths
     style_profile_id: Optional[str] = None  # overrides brand default
     seed: int = 0  # bounded randomisation seed, fixed per project
+    status_note: str = ""  # why the status is what it is, e.g. the cost cap reason (jobs/costcap.py)
 
 
 # ---------------------------------------------------------------- research

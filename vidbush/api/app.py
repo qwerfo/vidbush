@@ -44,7 +44,8 @@ def create_app(settings: Settings, start_workers: bool = True, workers: Optional
     app = FastAPI(title="Vidbush", version="1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.pool = None
-    from . import routes_misc, routes_projects, routes_shots
+    from . import routes_batches, routes_misc, routes_projects, routes_shots
+    app.include_router(routes_batches.router, prefix="/api")
     app.include_router(routes_misc.router, prefix="/api")
     app.include_router(routes_projects.router, prefix="/api")
     app.include_router(routes_shots.router, prefix="/api")

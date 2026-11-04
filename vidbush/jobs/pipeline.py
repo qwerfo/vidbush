@@ -17,7 +17,7 @@ from ..config import Settings
 from ..models import (STAGES, Brief, InputMode, Project, ProjectPaths, StageRecord, StageStatus,
                       VideoFormat)
 from ..util import read_json, write_json
-from . import lock
+from . import costcap, lock
 from .context import StageContext, build_context
 from .paths import read_rebased, stored_root
 
@@ -120,22 +120,29 @@ def _outputs_exist(rec: StageRecord) -> bool:
 
 def run_project(settings: Settings, project_id: str, stages: Optional[dict[str, StageFn]] = None,
                 force: Iterable[str] = (), until: Optional[str] = None, echo: bool = True,
-                on_progress: Optional[Callable[[Project], None]] = None) -> Project:
+                on_progress: Optional[Callable[[Project], None]] = None,
+                cost_cap: Optional[float] = None) -> Project:
     """Run every pending stage in order under the project lock. Done stages with outputs on disk are
-    skipped; a stage that runs forces every stage downstream of it (STAGE_INPUTS)."""
+    skipped; a stage that runs forces every stage downstream of it (STAGE_INPUTS).
+
+    cost_cap (USD, None = no cap): checked after each stage against the project's cost total; when
+    crossed the run stops at that stage boundary and the project is marked needs_review (costcap.py)."""
     root = project_dir(settings, project_id)
     with lock.project_lock(root, project_id, owner=f"run_project {project_id}"):
-        return _run_locked(settings, project_id, stages, set(force), until, echo, on_progress)
+        return _run_locked(settings, project_id, stages, set(force), until, echo, on_progress, cost_cap)
 
 
 def _run_locked(settings: Settings, project_id: str, stages: Optional[dict[str, StageFn]], force: set[str],
-                until: Optional[str], echo: bool, on_progress: Optional[Callable[[Project], None]]) -> Project:
+                until: Optional[str], echo: bool, on_progress: Optional[Callable[[Project], None]],
+                cost_cap: Optional[float] = None) -> Project:
     from .stages import STAGE_FUNCS
     funcs = stages or STAGE_FUNCS
     project = load_project(settings, project_id)
     ctx = build_context(settings, project, echo=echo)
     project.status = "running"
+    costcap.reset(ctx)
     ctx.save_project()
+    capped = False
     for name in STAGES:
         rec = project.stages.setdefault(name, StageRecord(name=name))
         if not stage_applies(project, name):
@@ -147,9 +154,14 @@ def _run_locked(settings: Settings, project_id: str, stages: Optional[dict[str, 
         lock.touch(ctx.root)
         _run_stage(ctx, name, funcs[name], rec, on_progress)
         force |= downstream(name)
+        if cost_cap is not None and costcap.reached(ctx, name, cost_cap, force):
+            capped = True
+            break
         if until and name == until:
             break
-    if not until or until == STAGES[-1]:
+    if capped:
+        project.current_stage = None
+    elif not until or until == STAGES[-1]:
         project.status = final_status(ctx)
         project.current_stage = None
     ctx.save_project()

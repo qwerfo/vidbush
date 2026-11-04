@@ -43,3 +43,6 @@ render:
   target_lufs: -14
   true_peak: -1
   narration_lufs: -16
+
+batch:
+  cost_cap_usd: 5.0     # a batch run stops a project (needs_review) once it spent more; null = no cap, see docs/HANDOFF.md
