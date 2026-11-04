@@ -115,7 +115,7 @@ def test_image_refusal_moves_only_that_request(settings, tmp_path, monkeypatch):
     from vidbush.providers import image as image_mod
     order = []
 
-    def fake(spec, prompt, out_path, cost):
+    def fake(spec, prompt, out_path, cost, **kw):
         order.append(spec.name)
         if spec.name == "image_primary" and prompt == "bad":
             raise RefusalError("content policy")
@@ -136,7 +136,7 @@ def test_image_down_primary_is_probed_back(settings, tmp_path, monkeypatch):
     order = []
     state = {"down": True}
 
-    def fake(spec, prompt, out_path, cost):
+    def fake(spec, prompt, out_path, cost, **kw):
         order.append(spec.name)
         if spec.name == "image_primary" and state["down"]:
             raise TransportError("down")
