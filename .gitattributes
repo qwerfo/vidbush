@@ -1,0 +1,4 @@
+# Keep LF in the repo on every OS (Windows checkouts convert on disk only).
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
