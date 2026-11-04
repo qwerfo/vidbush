@@ -107,10 +107,12 @@ def _yaml(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
-def load_settings(root: Optional[Path] = None, overrides: Optional[dict[str, Any]] = None) -> Settings:
-    """Load .env, config/vidbush.yaml and config/seats.yaml into one Settings object."""
+def load_settings(root: Optional[Path] = None, overrides: Optional[dict[str, Any]] = None,
+                  use_dotenv: bool = True) -> Settings:
+    """Load .env, config/vidbush.yaml and config/seats.yaml into one Settings object.
+    use_dotenv=False ignores .env (tests must never see the operator's keys)."""
     root = Path(root or os.environ.get("VIDBUSH_ROOT") or REPO_ROOT)
-    env = load_dotenv(root / ".env")
+    env = load_dotenv(root / ".env") if use_dotenv else {}
     env.update({k: v for k, v in os.environ.items() if k.isupper()})
     app = _yaml(root / "config" / "vidbush.yaml")
     seats = _yaml(root / "config" / "seats.yaml")

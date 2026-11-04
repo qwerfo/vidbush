@@ -245,6 +245,9 @@ def test_openrouter_chat_image_mode(monkeypatch, tmp_path):
 def test_tts_default_voice_language_and_model(settings, monkeypatch, tmp_path):
     settings.offline = False
     settings.env.update({"ELEVENLABS_API_KEY": "k"})
+    # the module default preference, independent of what config/seats.yaml ships
+    settings.seats["providers"]["elevenlabs"].setdefault("options", {})["model_preference"] = tts.MODEL_PREFERENCE
+    tts._MODEL_CACHE.clear()
     seats = Seats(settings, CostTracker("p"))
     assert seats.voice_id(VoiceConfig()) == tts.DEFAULT_VOICE_ID
     settings.env["ELEVENLABS_VOICE_ID"] = "envvoice"

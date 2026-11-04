@@ -20,7 +20,7 @@ from . import tts as tts_mod
 from .base import ProviderError, ProviderSpec
 from .http import get_json
 
-PROBE_TIMEOUT_S = 30.0
+PROBE_TIMEOUT_S = 120.0  # Wellflow answers small requests in 30 to 100 s
 _RESULTS: dict[str, dict[str, Any]] = {}
 _LOCK = threading.Lock()
 
@@ -57,6 +57,29 @@ def _probe_tts(spec: ProviderSpec, voice_id: str) -> str:
     return f"voice {v.get('name', voice_id)} ok; auto model {model}"
 
 
+def _probe_elevate(spec: ProviderSpec) -> str:
+    base = (spec.base_url or "https://public-api.elevate.uno").rstrip("/")
+    data = get_json(f"{base}/v2/media/usage", headers={"Authorization": f"Bearer {spec.api_key}"},
+                    timeout=PROBE_TIMEOUT_S)
+    if not isinstance(data, dict) or data.get("success") is False:
+        raise ProviderError(f"Elevate usage: {str(data)[:200]}")
+    health = get_json(f"{base}/v2/media/health", timeout=PROBE_TIMEOUT_S)
+    status = (((health or {}).get("data") or {}).get("image") or {}).get("status", "unknown")
+    if status != "operational":
+        raise ProviderError(f"auth ok; Elevate image lane reports {status}")
+    return f"auth ok; image lane {status}"
+
+
+def _probe_algrow(spec: ProviderSpec) -> str:
+    base = (spec.base_url or "https://api.algrow.online").rstrip("/")
+    data = get_json(f"{base}/api/credits", headers={"Authorization": f"Bearer {spec.api_key}"},
+                    timeout=PROBE_TIMEOUT_S)
+    credits = (data or {}).get("credits") or {}
+    if "remaining" not in credits:
+        raise ProviderError(f"Algrow credits: {str(data)[:200]}")
+    return f"auth ok; {credits['remaining']} credits left"
+
+
 def probe_spec(role: str, spec: ProviderSpec, voice_id: str = "") -> str:
     """Send one tiny request for this role; returns a note or raises ProviderError."""
     from .seats import LLM_ROLES, VISION_ROLES
@@ -69,16 +92,23 @@ def probe_spec(role: str, spec: ProviderSpec, voice_id: str = "") -> str:
         return _probe_chat(spec, vision=role in VISION_ROLES)
     if spec.type == "openai_compat":
         return _probe_models(spec)
+    if spec.type == "elevate":
+        return _probe_elevate(spec)
+    if spec.type == "algrow":
+        return _probe_algrow(spec)
     raise ProviderError(f"no free probe for {spec.type}; not checked")
 
 
 def probe_seats(seats: Any, voice_id: str = "") -> dict[str, dict[str, Any]]:
-    """Probe the first configured provider of every role. Roles without one are reported as mock."""
+    """Probe every configured provider of every role. The role's entry is its first provider, the
+    rest are listed under "fallbacks" (a fallback is only useful if it works). No provider: mock."""
     from .seats import ROLES
     out: dict[str, dict[str, Any]] = {}
     for role in ROLES:
-        spec = next((p for p in seats.providers_for(role) if p.configured), None)
-        out[role] = _probe_one(role, spec, voice_id)
+        specs = [p for p in seats.providers_for(role) if p.configured]
+        out[role] = _probe_one(role, specs[0] if specs else None, voice_id)
+        if len(specs) > 1:
+            out[role]["fallbacks"] = [_probe_one(role, sp, voice_id) for sp in specs[1:]]
     with _LOCK:
         _RESULTS.update(out)
     return out

@@ -161,6 +161,16 @@ def _rate_limited(call: Any, url: str) -> Any:
     raise AssertionError("unreachable")
 
 
+_CHALLENGE_MARKS = ("just a moment", "cf-chl", "challenge-platform", "attention required", "captcha")
+
+
+def is_challenge(err: Exception) -> bool:
+    """True when a source answered with a bot check page (Cloudflare and the like). Vidbush never tries to
+    get past one: the source is skipped for the rest of the run instead."""
+    low = str(err).lower()
+    return ("403" in low or "503" in low or "429" in low) and any(m in low for m in _CHALLENGE_MARKS)
+
+
 def http_get_json(url: str, params: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None,
                   timeout: float = 20.0) -> Any:
     hdrs = {"User-Agent": USER_AGENT, **(headers or {})}

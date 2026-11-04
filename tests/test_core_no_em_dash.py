@@ -5,7 +5,7 @@ import os
 
 from vidbush.config import REPO_ROOT
 
-SKIP_DIRS = {".git", "node_modules", "output", "data", "__pycache__", ".pytest_cache"}
+SKIP_DIRS = {".git", "node_modules", "output", "data", "__pycache__", ".pytest_cache", ".venv", "venv"}
 EM = chr(0x2014).encode()
 
 

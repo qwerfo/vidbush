@@ -134,7 +134,7 @@ class Seats:
         return res
 
     def llm_json(self, role: str, task: str, system: str, user: str, stage: str,
-                 temperature: float = 0.6, timeout: float = 180.0) -> Optional[Any]:
+                 temperature: float = 0.6, timeout: float = llm_mod.DEFAULT_TIMEOUT_S) -> Optional[Any]:
         """JSON from an LLM role, or a canned fixture in mock mode, or None (caller uses heuristic)."""
         res = self._call(role, stage,
                          lambda spec: self._llm_estimate(
@@ -168,8 +168,9 @@ class Seats:
 
     # ------------------------------------------------------------ image
 
-    def image(self, prompt: str, out_path: Path, stage: str) -> tuple[Path, bool]:
-        """Generate a 1920x1080 PNG. The configured order is kept; only a failed request falls back."""
+    def image(self, prompt: str, out_path: Path, stage: str, negative_prompt: str = "") -> tuple[Path, bool]:
+        """Generate a 1920x1080 PNG. The configured order is kept; only a failed request falls back.
+        negative_prompt goes to the provider's own field, or into the prompt as prose when it has none."""
         cost = self.settings.cost
 
         def fn(spec: ProviderSpec) -> CallResult:
@@ -178,7 +179,7 @@ class Seats:
                 raise ProviderError(f"{spec.name} cost {est} above ceiling {cost.image_ceiling_usd}")
             if est > cost.image_warn_usd:
                 self.log.warn("image cost above warn level", provider=spec.name, cost=est)
-            r = image_mod.generate(spec, prompt, out_path, cost.image_per_image_usd)
+            r = image_mod.generate(spec, prompt, out_path, cost.image_per_image_usd, negative=negative_prompt)
             if r.cost_usd > cost.image_ceiling_usd:
                 self.log.warn("image cost above ceiling after the call", provider=spec.name, cost=r.cost_usd)
             return r

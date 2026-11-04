@@ -19,8 +19,10 @@ from ..models import Candidate, Shot, SourceKind
 from ..util import no_em_dash
 
 HOUSE_STYLE = ("Photographic documentary still, natural light, realistic detail, era-correct clothing, vehicles "
-               "and architecture, wide 16:9 composition, 35mm lens.")
-BASE_NEGATIVE = ["text", "captions", "watermark", "logos", "letters", "signature"]
+               "and architecture, wide 16:9 composition, 35mm lens. People appear only as anonymous figures, never "
+               "as the likeness of a named real person.")
+BASE_NEGATIVE = ["text", "captions", "watermark", "logos", "letters", "signature", "newspaper headlines",
+                 "news chyrons or TV station branding", "the likeness of a named real person"]
 _LEADING = re.compile(r"^(archival footage|footage|stock footage|historical photograph|photograph|photo|image|"
                       r"documentary photograph|wide establishing (archival )?footage|close detail photograph)"
                       r"\s+of\s+", re.I)

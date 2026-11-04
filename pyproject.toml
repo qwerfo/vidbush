@@ -10,7 +10,8 @@ requires-python = ">=3.11"
 dependencies = [
   "pydantic==2.13.5",
   "PyYAML==6.0.3",
-  "numpy==2.5.3",
+  "numpy==2.5.3; python_version >= \"3.12\"",
+  "numpy==2.4.6; python_version < \"3.12\"",  # numpy 2.5 dropped 3.11
   "pillow==12.3.0",
   "requests==2.34.2",
   "fastapi==0.162.0",

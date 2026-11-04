@@ -15,7 +15,7 @@ from typing import Callable, Literal, Optional, Sequence
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, features
 
 from .palettes import RGB, Palette, font_path
 
@@ -24,6 +24,15 @@ ELLIPSIS = "…"
 
 
 # ---------------------------------------------------------------- fonts and measuring
+
+# OpenType features (tabular figures) need libraqm, which Windows Pillow wheels lack; without it
+# Pillow raises KeyError, so features are dropped and digits fall back to proportional widths.
+_RAQM = features.check("raqm")
+
+
+def _feat(feats: Optional[list[str]]) -> Optional[list[str]]:
+    return feats if _RAQM else None
+
 
 @lru_cache(maxsize=256)
 def font(weight: str, size: int) -> ImageFont.FreeTypeFont:
@@ -36,7 +45,7 @@ def text_width(text: str, f: ImageFont.FreeTypeFont, tracking: float = 0.0,
     """Advance width of a single line including letter spacing (px)."""
     if not text:
         return 0.0
-    return f.getlength(text, features=features) + tracking * (len(text) - 1)
+    return f.getlength(text, features=_feat(features)) + tracking * (len(text) - 1)
 
 
 def wrap(text: str, f: ImageFont.FreeTypeFont, max_w: float, tracking: float = 0.0) -> list[str]:
@@ -120,11 +129,11 @@ def text_mask(text: str, f: ImageFont.FreeTypeFont, tracking: float = 0.0, pad: 
     img = Image.new("L", (max(1, w), asc + desc + 2 * pad), 0)
     d = ImageDraw.Draw(img)
     if tracking == 0.0:
-        d.text((pad, pad), text, font=f, fill=255, features=features)
+        d.text((pad, pad), text, font=f, fill=255, features=_feat(features))
     else:
         for i, ch in enumerate(text):
-            x = pad + f.getlength(text[:i], features=features) + tracking * i
-            d.text((x, pad), ch, font=f, fill=255, features=features)
+            x = pad + f.getlength(text[:i], features=_feat(features)) + tracking * i
+            d.text((x, pad), ch, font=f, fill=255, features=_feat(features))
     return np.asarray(img)
 
 
