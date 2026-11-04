@@ -302,7 +302,7 @@ def vision_recorder(score: float = 85.0):
     calls: list[list[str]] = []
 
     def vision_json(role: str, task: str, system: str, prompt: str, images: list[str], stage: str,
-                    intent: str = "") -> dict[str, Any]:
+                    intent: str = "", details: Any = None) -> dict[str, Any]:
         calls.append(list(images))
         return {"score": score, "reason": "fine", "rejects": [], "_mock": False}
 
