@@ -437,6 +437,7 @@ def source_all(shotlist: ShotList, ctx: "StageContext", force: bool = False) -> 
         futs = {s.id: pool.submit(_source_with_plan, s, plans[s.id], adapters, ctx, shot_media(s), set(), [])
                 for s in targets}
         results = {sid: f.result() for sid, f in futs.items()}
+    record_usage(ctx)  # still shots may have searched video sources again while fetching
     for s in targets:
         keep = [c for c in s.candidates if not force or c.source in GENERATED]
         s.candidates = keep + results[s.id]
@@ -491,10 +492,10 @@ def source_shot(shot: Shot, ctx: "StageContext", queries: Optional[list[str]] = 
     qs = shot_queries(shot, queries)
     with SearchPools(adapters) as pools:
         per = search_shot(shot, adapters, media, qs, ctx, pools)
-    record_usage(ctx)
     cap = ctx.settings.sources.max_candidates
     plan = plan_shot(interleave(per, [a.name for a in adapters]), _blocklist(ctx), set(), skip, cap + cap // 2)
     taken = {c.id for c in shot.candidates} | set(exclude_ids)
     cands = _source_with_plan(shot, plan, adapters, ctx, media, skip, taken)
+    record_usage(ctx)  # after the fetch: a still shot may search video sources again
     ctx.log.info("re-sourced shot", shot=shot.id, queries=qs, candidates=len(cands))
     return cands

@@ -4,6 +4,7 @@ Everything is offline: yt-dlp is replaced by canned info dicts and fake seams.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import threading
@@ -439,3 +440,119 @@ def test_search_usage_and_spent_budget_surface_in_qa_report(make_ctx, monkeypatc
     assert data["runs"][registry.run_id(ctx)]["usage"]["youtube"] == {"used": 1, "budget": 1, "refused": 1}
     assert any(n.startswith("YouTube searches used: 2 of") for n in report.notes)
     assert "warning: YouTube search budget spent" in qa.render_markdown(report)
+
+
+class StillAdapter(HintAdapter):
+    """An image source that finds nothing, so still shots fall back to video frames."""
+    name = "pexels"
+    media = {"image"}
+    search_hints = ()
+
+    def search(self, query: str, media: str, n: int, settings: Any, shot: Any = None) -> list[RawResult]:
+        return []
+
+
+def test_fallback_video_searches_of_still_shots_reach_the_usage_notes(make_ctx, monkeypatch) -> None:
+    ctx = make_ctx(mode="script")
+    video = HintAdapter()
+    monkeypatch.setattr(registry, "active_adapters", lambda c: [StillAdapter(), video])
+    still = Shot(id="s000", index=0, beat_id="b001", start=0, end=4, duration=4.0, type=ShotType.image,
+                 intent="harbour", queries=["harbour cranes"])
+    registry.source_all(ShotList(project_id="t1", duration=4, shots=[still]), ctx)
+    assert video.kwargs  # the fallback searched the video source after the search phase
+    assert qa.source_usage_notes(ctx) == [f"YouTube searches used: 1 of {throttle.DEFAULT_BUDGET['youtube']}"]
+    throttle.reset()
+    registry.source_shot(still, ctx)
+    data = json.loads((ctx.work / registry.SOURCE_NOTES).read_text(encoding="utf-8"))
+    assert data["runs"][registry.run_id(ctx)]["usage"]["youtube"]["used"] == 1
+
+
+# ---------------------------------------------------------------- review fixes
+
+def test_failed_cc_pass_still_runs_the_normal_pass(monkeypatch, online) -> None:
+    def fake_extract(target: str, opts: dict) -> dict:
+        if target.startswith("https://www.youtube.com/results"):
+            raise RuntimeError("bot check")
+        return {"entries": [entry("nnnnnnnnnn3")]}
+
+    monkeypatch.setattr(youtube, "ydl_extract", fake_extract)
+    res = youtube.YoutubeAdapter().search("canal locks", "video", 10, online, prefer_cc=True)
+    assert [r.extra["id"] for r in res] == ["nnnnnnnnnn3"]
+
+    def broken(target: str, opts: dict) -> dict:
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(youtube, "ydl_extract", broken)
+    with pytest.raises(RuntimeError):  # both passes failing still surfaces the error
+        youtube.YoutubeAdapter().search("canal locks", "video", 10, online, prefer_cc=True)
+
+
+def test_each_youtube_dl_gets_a_private_cookie_copy(monkeypatch, tmp_path) -> None:
+    import yt_dlp
+    operator = tmp_path / "cookies.txt"
+    operator.write_text("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc\n", encoding="utf-8")
+    original = operator.read_text(encoding="utf-8")
+    seen: list[Path] = []
+
+    class SavingYDL:
+        """Like yt-dlp: reads the cookiefile and truncates and rewrites it in place on close."""
+
+        def __init__(self, params: dict) -> None:
+            self.path = Path(params["cookiefile"])
+            seen.append(self.path)
+            self.loaded = self.path.read_text(encoding="utf-8") if self.path.exists() else None
+
+        def __enter__(self) -> "SavingYDL":
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            self.path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", SavingYDL)
+    with contextlib.ExitStack() as stack:  # overlapping instances, as with parallel downloads
+        open_ydls = [stack.enter_context(youtube.youtube_dl({"cookiefile": str(operator)})) for _ in range(3)]
+        assert all(y.loaded == original for y in open_ydls)
+        with youtube.youtube_dl({"cookiefile": str(operator)}) as late:
+            pass
+        assert late.loaded == original and all(y.path.read_text(encoding="utf-8") == original for y in open_ydls)
+    assert operator.read_text(encoding="utf-8") == original  # the operator's file is never written
+    assert operator not in seen and len(set(seen)) == len(seen)
+    assert not any(p.exists() for p in seen)  # copies are removed after each call
+    with youtube.youtube_dl({"cookiefile": str(tmp_path / "missing.txt")}) as ydl:
+        assert not ydl.path.exists() and ydl.path != tmp_path / "missing.txt"
+    with youtube.private_cookies({"quiet": True}) as params:
+        assert params == {"quiet": True}
+
+
+def test_window_start_accounts_for_the_keyframe_lead(tmp_path, tiny_mp4) -> None:
+    clip = tmp_path / "w.mp4"
+    clip.write_bytes(tiny_mp4)  # 4 s long
+    assert youtube.window_start(40.0, 42.0, clip) == pytest.approx(38.0, abs=0.05)  # 2 s before the cut
+    assert youtube.window_start(40.0, 50.0, clip) == 40.0  # shorter than asked: no lead
+    assert youtube.window_start(1.0, 2.0, clip) == 0.0  # never before the start of the video
+    assert youtube.window_start(5.0, 6.0, tmp_path / "missing.mp4") == 5.0
+    assert youtube.window_name("abc", 37.6, ".mp4") == "youtube_abc_38.mp4"
+
+
+def test_window_file_name_carries_the_true_start(monkeypatch, online, tmp_path, tiny_mp4) -> None:
+    from vidbush.judge.director_loop import _timeline
+    online.sources.youtube_windows = 1
+    monkeypatch.setattr(youtube, "ydl_extract", lambda t, o: info("aaaaaaaaaa1"))
+    windows: list[tuple[float, float]] = []
+
+    def fake_download(url: str, opts: dict, stem: Path) -> Path:
+        out = stem.with_suffix(".mp4")
+        out.write_bytes(tiny_mp4)
+        return out
+
+    def fake_windows(self: Any, url: str, wins: list, settings: Any) -> list:
+        windows.extend(wins)
+        return [(a, b, fake_download(url, {}, base.cache_dir(settings) / f"w{a:.0f}")) for a, b in wins]
+
+    monkeypatch.setattr(youtube.YoutubeAdapter, "_download_windows", fake_windows)
+    monkeypatch.setattr(base, "detect_scenes", lambda p: [(0.0, 4.0)])
+    monkeypatch.setattr(youtube, "probe_duration", lambda p: windows[0][1] - windows[0][0] + 3.4)
+    cands = youtube.YoutubeAdapter().fetch(raw_for("aaaaaaaaaa1"), tmp_path, make_shot(), online)
+    true_start = windows[0][0] - 3.4
+    family, offset = _timeline(cands[0])
+    assert family == "youtube_aaaaaaaaaa1" and offset == round(true_start)

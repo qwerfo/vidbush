@@ -21,7 +21,12 @@ window gets PADDING_S on both sides (clamped to the video), is downloaded
 as its own cached file at a capped height preferring h264 (avc1, which
 PySceneDetect and OpenCV decode) over av1 and vp9, and is cut into 3 to
 12 s clips on its own scene boundaries, so in and out points refer to the
-local file; about MAX_CLIPS_PER_VIDEO clips per video in total. Licence is
+local file; about MAX_CLIPS_PER_VIDEO clips per video in total. Windows are
+stream copied, so a file starts at the keyframe before the requested cut;
+window_start() measures that lead from the file's length and the file is
+named youtube_<id>_<true start s>, the offset the director loop adds to in
+points to compare windows of one video. If a Creative Commons pass fails the
+normal pass still runs. Licence is
 "Creative Commons Attribution" when yt-dlp reports it, else "Standard
 YouTube License" (flagged standard_youtube_licence, see source/licence.py).
 
@@ -32,7 +37,8 @@ yt-dlp; runtime_warning() explains what is missing so the registry can log
 it once per run. Without a runtime most formats disappear and every video
 looks like it has no 720p rendition. Cookies (settings.sources
 youtube_cookies_from_browser or youtube_cookie_file) go to every yt-dlp
-call. Searches, info extraction and caption fetches are serialised with a
+call; each YoutubeDL gets a private copy of the cookie file (yt-dlp rewrites
+it in place on close), so parallel calls never corrupt the operator's file. Searches, info extraction and caption fetches are serialised with a
 small gap (throttle host "youtube"); downloads of different videos run in
 parallel up to settings.sources.youtube_download_workers on their own
 semaphore, still paced by the same rate, and one video is never
@@ -40,16 +46,19 @@ downloaded twice at the same time.
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import re
 import shutil
+import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 from urllib.parse import quote_plus
 
 from ..config import Settings
 from ..models import Candidate, Shot
-from ..util import clamp
+from ..util import clamp, media_duration
 from . import base, throttle
 from .base import BaseAdapter, Media, RawResult, link_into, make_candidates
 from .local import tokens as keyword_tokens
@@ -75,6 +84,8 @@ QUERY_WEIGHT = 0.5
 CHAPTER_WEIGHT = 1.0
 CAPTION_EXTS = ("json3", "vtt")
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mkv"}
+MAX_KEYFRAME_LEAD_S = 15.0  # a stream copied window never starts more than this before the requested cut
+log = logging.getLogger(__name__)
 _BROWSER_SPEC = re.compile(r"(?P<name>[^+:]+)(?:\s*\+\s*(?P<keyring>[^:]+))?(?:\s*:\s*(?!:)(?P<profile>.+?))?"
                            r"(?:\s*::\s*(?P<container>.+))?")
 
@@ -159,11 +170,41 @@ def score_entry(entry: dict[str, Any]) -> Optional[float]:
 
 # ---------------------------------------------------------------- network seams
 
+@contextlib.contextmanager
+def private_cookies(params: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """params with cookiefile pointing at a private temporary copy, removed afterwards.
+
+    yt-dlp rewrites its cookiefile in place when a YoutubeDL closes; parallel
+    instances sharing one file can truncate it under each other. Each instance
+    gets its own copy instead, so the operator's file is only ever read.
+    """
+    src = params.get("cookiefile")
+    if not src or not isinstance(src, (str, Path)):
+        yield params
+        return
+    tmp = Path(tempfile.mkdtemp(prefix="vidbush_cookies_"))
+    try:
+        copy = tmp / "cookies.txt"
+        with contextlib.suppress(OSError):
+            shutil.copyfile(src, copy)  # a missing file stays missing, as yt-dlp expects
+        yield {**params, "cookiefile": str(copy)}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def youtube_dl(params: dict[str, Any]) -> Iterator[Any]:
+    """yt_dlp.YoutubeDL(params) with a private cookie file copy."""
+    import yt_dlp
+    with private_cookies(params) as private:
+        with yt_dlp.YoutubeDL(private) as ydl:
+            yield ydl
+
+
 def ydl_extract(target: str, opts: dict[str, Any]) -> dict[str, Any]:
     """yt-dlp extract_info without download, serial on the "youtube" slot (network seam for tests)."""
-    import yt_dlp
     with throttle.slot("youtube", max_wait=YDL_MAX_WAIT_S):
-        with yt_dlp.YoutubeDL({**_base_opts(), **opts}) as ydl:
+        with youtube_dl({**_base_opts(), **opts}) as ydl:
             return ydl.sanitize_info(ydl.extract_info(target, download=False))
 
 
@@ -172,10 +213,9 @@ def ydl_download(url: str, opts: dict[str, Any], dest_stem: Path) -> Path:
 
     Paced by the "youtube" rate but not serial: the caller holds the download semaphore.
     """
-    import yt_dlp
     full = {**_base_opts(), "outtmpl": f"{dest_stem}.%(ext)s", **opts}
     with throttle.paced("youtube", max_wait=YDL_MAX_WAIT_S):
-        with yt_dlp.YoutubeDL(full) as ydl:
+        with youtube_dl(full) as ydl:
             ydl.download([url])
     files = sorted(p for p in dest_stem.parent.glob(dest_stem.name + ".*") if not p.name.endswith((".part", ".ytdl")))
     if not files:
@@ -183,11 +223,18 @@ def ydl_download(url: str, opts: dict[str, Any], dest_stem: Path) -> Path:
     return files[0]
 
 
+def probe_duration(path: Path) -> float:
+    """Duration of a local media file in seconds, 0 when it cannot be read (seam for tests)."""
+    try:
+        return media_duration(path)
+    except Exception:  # noqa: BLE001 - an unreadable file only loses the start correction
+        return 0.0
+
+
 def ydl_fetch_text(url: str, opts: dict[str, Any]) -> str:
     """Text of a caption track URL through yt-dlp's opener (cookies, proxy), serial (network seam)."""
-    import yt_dlp
     with throttle.slot("youtube", max_wait=YDL_MAX_WAIT_S):
-        with yt_dlp.YoutubeDL({**_base_opts(), **opts}) as ydl:
+        with youtube_dl({**_base_opts(), **opts}) as ydl:
             return ydl.urlopen(url).read().decode("utf-8", "replace")
 
 
@@ -410,6 +457,22 @@ def choose_windows(info: dict[str, Any], shot: Shot, settings: Settings,
     return pad_windows(windows, duration)
 
 
+def window_start(a: float, b: float, path: Path) -> float:
+    """True source time of the first frame of a window file requested as (a, b).
+
+    Windows are stream copied (no re-encode), so the file starts at the
+    keyframe at or before a. Its end is cut at b, so any extra length is that
+    lead. Clamped to the plausible range; a when the file cannot be probed.
+    """
+    lead = probe_duration(path) - (b - a)
+    return a - clamp(lead, 0.0, min(a, MAX_KEYFRAME_LEAD_S))
+
+
+def window_name(vid: str, start: float, suffix: str) -> str:
+    """File name youtube_<id>_<start s>: the start the director loop reads as the window's source offset."""
+    return f"youtube_{vid}_{round(start)}{suffix}"
+
+
 def clip_quota(n_windows: int, total: int = MAX_CLIPS_PER_VIDEO) -> list[int]:
     """Clips per window so a video gives about total clips (at least one per window)."""
     n = max(1, n_windows)
@@ -440,14 +503,23 @@ class YoutubeAdapter(BaseAdapter):
         opts = {"extract_flat": "in_playlist", "skip_download": True, **cookie_opts(settings)}
         passes: list[list[RawResult]] = []
         if prefer_cc:
-            info = ydl_extract(cc_search_url(query), {**opts, "playlist_items": f"1:{SEARCH_N}"})
-            passes.append(parse_search(info, cc=True))
+            passes.append(self._cc_pass(query, opts))
         passes.append(parse_search(ydl_extract(f"ytsearch{SEARCH_N}:{query}", opts)))
         results = merge_passes(passes)[:n]
         if language:
             for r in results:
                 r.extra["lang"] = language
         return results
+
+    @staticmethod
+    def _cc_pass(query: str, opts: dict[str, Any]) -> list[RawResult]:
+        """Creative Commons filtered results; [] when that request fails, so the normal pass still runs."""
+        try:
+            info = ydl_extract(cc_search_url(query), {**opts, "playlist_items": f"1:{SEARCH_N}"})
+        except Exception as e:  # noqa: BLE001 - the CC pass is optional, the normal pass decides
+            log.warning("YouTube Creative Commons search failed, normal search only: %s", str(e)[:200])
+            return []
+        return parse_search(info, cc=True)
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         cfg = settings.sources
@@ -465,7 +537,7 @@ class YoutubeAdapter(BaseAdapter):
         vid = raw.extra.get("id", base.url_hash(raw.url))
         out: list[Candidate] = []
         for (a, b, src), quota in zip(files, clip_quota(len(files))):
-            dst = link_into(src, out_dir, f"youtube_{vid}_{int(a)}{src.suffix}")
+            dst = link_into(src, out_dir, window_name(vid, window_start(a, b, src), src.suffix))
             spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=quota)
             part = full.model_copy(update={"note": f"section {a:.0f}-{b:.0f} s of the source video"})
             out.extend(make_candidates(part, dst, shot, settings, spans=spans))
