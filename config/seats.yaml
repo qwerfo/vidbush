@@ -9,6 +9,11 @@
 # Model names starting with "your-" are placeholders and do not count as configured.
 # Use model_env to read the model name from .env instead of hardcoding it here.
 # Provider options: max_concurrency (parallel requests per provider),
+# LLM providers: max_tokens (optional output cap, unset by default so no cap is sent;
+# renamed to max_completion_tokens automatically for models that ask for it),
+# timeout_s (request timeout in seconds; replaces the role default, which is 600 for
+# writer and 180 for the other LLM roles unless the caller asks for longer).
+# A role entry may carry its own options, which override the provider options.
 # image providers: cost_per_image, quality (gpt-image: low|medium|high, default low),
 # size, mode: chat (OpenRouter style image output from /chat/completions), aspect_ratio.
 # elevenlabs: model_preference (list used when the brand model is auto), language_models.

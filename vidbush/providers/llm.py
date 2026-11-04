@@ -2,12 +2,18 @@
 
 Per-model request quirks are learned at runtime: when a model rejects a
 parameter we drop it and retry before treating the model as failing. No
-max_tokens cap is ever sent; prompts ask for concise output instead.
+max_tokens cap is sent by default; prompts ask for concise output instead. A
+cap is only sent when the operator sets options.max_tokens for the provider
+(or role entry) in config/seats.yaml. A reply cut off by the length limit
+(finish_reason "length" or "max_tokens") is continued once; a second cut, or
+a joined reply that is still not valid JSON, raises RefusalError so the
+request moves to the next provider without marking this one down.
 """
 from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import threading
 from pathlib import Path
@@ -16,6 +22,7 @@ from typing import Any, Optional
 from .base import CallResult, ProviderSpec, RefusalError
 from .http import post_json
 
+_LOG = logging.getLogger(__name__)
 _QUIRKS: dict[tuple[str, str], set[str]] = {}
 _QLOCK = threading.Lock()
 
@@ -27,8 +34,15 @@ _ADJUSTABLE = {
                     "unsupported parameter: temperature", "only the default (1) value"),
     "system_role": ("system role", "system message", "system_message", "role 'system'", 'role "system"', "role': 'system'",
                     "system prompt is not supported", "developer instruction"),
+    # a model that wants the newer token cap name: rename max_tokens to it
+    "max_completion_tokens": ("max_completion_tokens",),
 }
-_PARAM_QUIRK = {"response_format": "response_format", "temperature": "temperature"}
+_PARAM_QUIRK = {"response_format": "response_format", "temperature": "temperature",
+                "max_tokens": "max_completion_tokens"}
+# finish reasons that mean the reply was cut off by the output length limit
+_TRUNCATED = {"length", "max_tokens"}
+CONTINUE_PROMPT = ("Your previous reply was cut off. Continue exactly where it stopped, without repeating "
+                   "anything and without any preamble, so that appending your text completes the reply.")
 _POLICY_WORDS = ("safety", "content policy", "content_policy", "flagged", "moderation", "content_filter",
                  "violat", "prohibited")
 _PARAM_RE = re.compile(r'"param"\s*:\s*"([^"]+)"')
@@ -66,30 +80,71 @@ def _messages(system: str, user: Any, quirks: set[str]) -> list[dict[str, Any]]:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def max_tokens_option(spec: ProviderSpec) -> Optional[int]:
+    """options.max_tokens as a positive int, else None (invalid values are logged and ignored)."""
+    raw = spec.options.get("max_tokens")
+    if raw is None or raw == "":
+        return None
+    try:
+        val = int(raw) if not isinstance(raw, bool) and float(raw) == int(float(raw)) else 0
+    except (TypeError, ValueError, OverflowError):
+        val = 0
+    if val <= 0:
+        _LOG.warning("ignoring invalid max_tokens %r for provider %s", raw, spec.name)
+        return None
+    return val
+
+
 def chat(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperature: float = 0.6,
          timeout: float = 180.0) -> CallResult:
-    """Send one chat completion, adjusting the request per model on 400s."""
+    """Send one chat completion, adjusting the request per model on 400s and continuing one cut off reply."""
+    data = _post(spec, system, user, want_json, temperature, timeout, [])
+    if not _truncated(data):
+        return _result(spec, data, want_json)
+    partial = _content(data)
+    more = [{"role": "assistant", "content": partial}, {"role": "user", "content": CONTINUE_PROMPT}]
+    data2 = _post(spec, system, user, False, temperature, timeout, more)
+    if _truncated(data2):
+        raise RefusalError(f"reply truncated twice by the length limit on {spec.model}")
+    t1, c1 = _usage(data)
+    t2, c2 = _usage(data2)
+    return _build(spec, partial + _content(data2), want_json, t1 + t2, c1 + c2)
+
+
+def _post(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperature: float, timeout: float,
+          extra: list[dict[str, Any]]) -> dict[str, Any]:
+    """POST one request (extra messages appended), learning quirks from 400s for up to four tries."""
     url = spec.base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {spec.api_key}", "Content-Type": "application/json"}
     headers.update(spec.options.get("headers", {}))
+    cap = max_tokens_option(spec)
     last: Optional[Exception] = None
     for _ in range(4):
         q = _quirks(_qkey(spec))
-        body: dict[str, Any] = {"model": spec.model, "messages": _messages(system, user, q)}
+        body: dict[str, Any] = {"model": spec.model, "messages": _messages(system, user, q) + extra}
         if "temperature" not in q:
             body["temperature"] = temperature
         if want_json and "response_format" not in q:
             body["response_format"] = {"type": "json_object"}
+        if cap is not None:
+            body["max_completion_tokens" if "max_completion_tokens" in q else "max_tokens"] = cap
         body.update(spec.options.get("extra_body", {}))
         try:
-            data = post_json(url, body, headers, timeout=timeout)
+            return post_json(url, body, headers, timeout=timeout)
         except RefusalError as e:
             last = e
             if not _learn(_qkey(spec), str(e), q):
                 raise
-            continue
-        return _result(spec, data, want_json)
     raise RefusalError(f"request could not be adjusted for {spec.model}: {last}")
+
+
+def _truncated(data: dict[str, Any]) -> bool:
+    """True when choices[0].finish_reason says the output length limit cut the reply."""
+    try:
+        reason = data["choices"][0].get("finish_reason")
+    except (KeyError, IndexError, AttributeError, TypeError):
+        return False
+    return str(reason or "").lower() in _TRUNCATED
 
 
 def _learn(key: tuple[str, str], err: str, have: set[str]) -> bool:
@@ -108,16 +163,31 @@ def _learn(key: tuple[str, str], err: str, have: set[str]) -> bool:
     return False
 
 
-def _result(spec: ProviderSpec, data: dict[str, Any], want_json: bool) -> CallResult:
+def _content(data: dict[str, Any]) -> str:
+    """Assistant text of choices[0], joining list content parts."""
     try:
         text = data["choices"][0]["message"].get("content") or ""
-    except (KeyError, IndexError) as e:
+    except (KeyError, IndexError, AttributeError, TypeError) as e:
         raise RefusalError(f"no content in response: {str(data)[:200]}") from e
     if isinstance(text, list):
         text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
+    return str(text)
+
+
+def _usage(data: dict[str, Any]) -> tuple[float, float]:
+    """(total tokens, reported cost) of one response; zero when absent."""
     usage = data.get("usage") or {}
-    tokens = float(usage.get("total_tokens") or 0)
-    cost = float(usage.get("cost") or data.get("cost") or 0)
+    return float(usage.get("total_tokens") or 0), float(usage.get("cost") or data.get("cost") or 0)
+
+
+def _result(spec: ProviderSpec, data: dict[str, Any], want_json: bool) -> CallResult:
+    text = _content(data)
+    tokens, cost = _usage(data)
+    return _build(spec, text, want_json, tokens, cost)
+
+
+def _build(spec: ProviderSpec, text: str, want_json: bool, tokens: float, cost: float) -> CallResult:
+    """CallResult from reply text; JSON replies must parse or RefusalError is raised."""
     value: Any = text
     if want_json:
         value = parse_json_loose(text)

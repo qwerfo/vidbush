@@ -31,6 +31,9 @@ LLM_ROLES = {"researcher", "writer", "director", "editor"}
 VISION_ROLES = {"judge", "vision", "cheap_classifier"}
 IMAGE_DETAILS = {"high", "low", "auto"}  # OpenAI style image_url.detail values
 _BAD_DETAILS_LOGGED: set[str] = set()
+# per role default LLM timeout in seconds; long form writing needs minutes, others keep the old default
+DEFAULT_LLM_TIMEOUT_S = 180.0
+ROLE_TIMEOUT_S = {"writer": 600.0}
 
 
 class Seats:
@@ -140,19 +143,34 @@ class Seats:
             res.cost_usd = max(per_img, tokens)
         return res
 
+    def llm_timeout(self, role: str, spec: ProviderSpec, timeout: Optional[float] = None) -> float:
+        """Request timeout: options.timeout_s when set, else the larger of the caller's and the role default."""
+        opt = spec.options.get("timeout_s")
+        try:
+            if opt is not None and not isinstance(opt, bool) and float(opt) > 0:
+                return float(opt)
+        except (TypeError, ValueError):
+            pass
+        if opt is not None:
+            self.log.warn("ignoring invalid timeout_s", provider=spec.name, value=str(opt)[:40])
+        return max(float(timeout or 0), ROLE_TIMEOUT_S.get(role, DEFAULT_LLM_TIMEOUT_S))
+
     def llm_json(self, role: str, task: str, system: str, user: str, stage: str,
-                 temperature: float = 0.6, timeout: float = 180.0) -> Optional[Any]:
+                 temperature: float = 0.6, timeout: Optional[float] = None) -> Optional[Any]:
         """JSON from an LLM role, or a canned fixture in mock mode, or None (caller uses heuristic)."""
         res = self._call(role, stage,
                          lambda spec: self._llm_estimate(
                              llm_mod.chat(spec, system, user, want_json=True, temperature=temperature,
-                                          timeout=timeout)),
+                                          timeout=self.llm_timeout(role, spec, timeout))),
                          lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task)
         return res.value
 
-    def llm_text(self, role: str, task: str, system: str, user: str, stage: str) -> Optional[str]:
+    def llm_text(self, role: str, task: str, system: str, user: str, stage: str,
+                 timeout: Optional[float] = None) -> Optional[str]:
+        """Plain text from an LLM role (same timeout rule as llm_json)."""
         res = self._call(role, stage,
-                         lambda spec: self._llm_estimate(llm_mod.chat(spec, system, user, want_json=False)),
+                         lambda spec: self._llm_estimate(llm_mod.chat(
+                             spec, system, user, want_json=False, timeout=self.llm_timeout(role, spec, timeout))),
                          lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task)
         v = res.value
         if isinstance(v, dict):
