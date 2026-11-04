@@ -18,7 +18,7 @@ FIXTURE = REPO_ROOT / "fixtures" / "reference_video.mp4"
 
 
 def _settings(root: Path):
-    s = load_settings(REPO_ROOT)
+    s = load_settings(REPO_ROOT, use_dotenv=False)
     s.offline = True
     s.output_folder, s.data_folder, s.source_cache_folder = str(root / "out"), str(root / "data"), str(root / "cache")
     shutil.copytree(Path(s.config_folder), root / "config")

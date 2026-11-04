@@ -10,6 +10,7 @@ from PIL import Image
 
 from vidbush.models import CaptionStyle, Narration, StyleProfile, Word
 from vidbush.render import captions as cap
+from vidbush.render.ffmpeg_cmds import subtitles
 from vidbush.util import run
 
 TEXT = ("The canal opened in 1914. Ships no longer had to sail around Cape Horn, "
@@ -134,7 +135,7 @@ def test_burned_caption_pixels_in_band(tmp_path: Path, settings: Any, letterbox:
     png = tmp_path / "f.png"
     fonts = settings.path("assets/fonts")
     run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=1920x1080:d=2:r=30", "-vf",
-         f"ass={ass}:fontsdir={fonts}", "-ss", "1.0", "-frames:v", "1", str(png)])
+         subtitles(ass, fonts), "-ss", "1.0", "-frames:v", "1", str(png)])
     img = np.asarray(Image.open(png).convert("L"))
     ys, xs = np.nonzero(img > 128)
     assert len(ys) > 2000

@@ -14,7 +14,7 @@ from vidbush.models import Brief, InputMode, VideoFormat
 @pytest.fixture
 def settings(tmp_path: Path):
     """Offline settings writing output and data under tmp_path."""
-    s = load_settings(REPO_ROOT)
+    s = load_settings(REPO_ROOT, use_dotenv=False)
     s.offline = True
     s.output_folder = str(tmp_path / "output")
     s.data_folder = str(tmp_path / "data")
