@@ -168,14 +168,19 @@ def downstream(stage: str) -> set[str]:
 
 
 def final_status(ctx: StageContext) -> str:
-    """done, or needs_review when real seats exist but QA reports that some role used mock."""
+    """done, or needs_review when real seats exist but QA reports that some role used mock, or that some
+    writer section or director chunk shipped from heuristics although a real provider was configured."""
     qa = ctx.out_path("qa_report.json")
     if ctx.settings.offline or not qa.exists():
         return "done"
     try:
-        mock_used = read_json(qa).get("mock_used") or []
+        data = read_json(qa)
+        mock_used = data.get("mock_used") or []
+        heuristic = data.get("heuristic_fallbacks") or []
     except (OSError, ValueError, AttributeError):
         return "done"
+    if heuristic:
+        return "needs_review"
     real = any(v.get("real") for v in ctx.seats.status().values())
     return "needs_review" if mock_used and real else "done"
 

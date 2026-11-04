@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import SHOT_TYPES, Narration, QAReport, QAShot, Shot, ShotList, ShotType, SourceKind
+from ..models import SHOT_TYPES, FallbackNote, Narration, QAReport, QAShot, Shot, ShotList, ShotType, SourceKind
 from ..util import ToolError, media_duration, read_json, run, write_json
 from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, parse_verdict
 
@@ -250,6 +250,27 @@ def animation_share(shotlist: ShotList) -> dict[str, float]:
             "inset_overlays": round(100.0 * insets / n, 1)}
 
 
+def heuristic_fallbacks(ctx: Any) -> list[FallbackNote]:
+    """Writer sections and director chunks that fell back to heuristics with a real provider configured
+    (work/fallbacks.json, written by the script and shotlist stages)."""
+    work = getattr(ctx, "work", None)
+    path = Path(work) / "fallbacks.json" if work else None
+    if path is None or not path.exists():
+        return []
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return []
+    out: list[FallbackNote] = []
+    for stage in ("script", "shotlist"):
+        for item in data.get(stage) or []:
+            try:
+                out.append(FallbackNote(**item))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def _nc_nd(shotlist: ShotList) -> list[str]:
     seen: dict[str, list[str]] = {}
     label: dict[str, str] = {}
@@ -288,6 +309,7 @@ def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, 
                       animation_target={k: round(v, 1) for k, v in ctx.profile.animation_target().items()},
                       animation_achieved=animation_share(shotlist),
                       caption_word_match=match, attribution_count=attributed, mock_used=sorted(mocks),
+                      heuristic_fallbacks=heuristic_fallbacks(ctx),
                       nc_nd_assets=_nc_nd(shotlist), notes=list(notes))
     report.notes += review_notes(report, ctx)
     return report
@@ -313,6 +335,10 @@ def review_notes(r: QAReport, ctx: Any) -> list[str]:
         out.append(f"{len(r.nc_nd_assets)} NC or ND licensed assets: confirm the licence before a monetised upload")
     if r.mock_used:
         out.append(f"mock seats used ({', '.join(r.mock_used)}): this render is a placeholder preview")
+    if r.heuristic_fallbacks:
+        where = ", ".join(f"{n.role} {n.scene_id}" for n in r.heuristic_fallbacks)
+        out.append(f"{len(r.heuristic_fallbacks)} parts fell back to heuristics while a real provider is configured "
+                   f"({where}): review those scenes, then rerun the stage with resume --force")
     return out
 
 
@@ -334,9 +360,13 @@ def render_markdown(r: QAReport, offset: float = 0.0) -> str:
           f"- Accepted without a match: **{r.pct_no_match_accepted}%** (target at most {NO_MATCH_TARGET_PCT:g}%)",
           f"- Caption coverage {r.caption_coverage:.1%}, caption word match {r.caption_word_match:.1%}",
           f"- Attributed assets: {r.attribution_count}; NC or ND assets: {len(r.nc_nd_assets)}",
-          f"- Mock seats: {', '.join(r.mock_used) or 'none'}", ""]
+          f"- Mock seats: {', '.join(r.mock_used) or 'none'}",
+          f"- Heuristic fallbacks with a real provider: {len(r.heuristic_fallbacks)}", ""]
     if r.notes:
         md += ["## Notes", ""] + [f"- {n}" for n in r.notes] + [""]
+    if r.heuristic_fallbacks:
+        md += ["## Heuristic fallbacks (needs review)", "", "| Scene | Role | Stage | Reason |", "|---|---|---|---|"]
+        md += [f"| {n.scene_id} | {n.role} | {n.stage} | {_cell(n.reason)} |" for n in r.heuristic_fallbacks] + [""]
     md += ["## Visual mix (share of shot count)", "",
            "| Type | Target % | Shots % | Screen time % | Count | Min s | Max s | Mean s |",
            "|---|---|---|---|---|---|---|---|"]

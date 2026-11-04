@@ -46,6 +46,7 @@ class Seats:
         self._lock = threading.Lock()
         self.mock_roles: set[str] = set()
         self.fallback_roles: set[str] = set()
+        self.heuristic_notes: list[dict[str, str]] = []
 
     # ------------------------------------------------------------ resolution
 
@@ -112,6 +113,24 @@ class Seats:
         self.client._record(role, stage, mock.MOCK_SPEC, ok=True, latency=0.0, note=note or "mock", mock=True,
                             units=res.units, unit_kind=res.unit_kind)
         return res
+
+    def note_fallback(self, role: str, stage: str, scene_id: str, reason: str) -> None:
+        """Record that heuristics made a scene's part of the work although `role` has a configured real
+        provider. Mock mode is already reported as mock, so a role without a real provider is ignored.
+        The stage writes these to work/fallbacks.json; QA lists them and the project ends needs_review."""
+        if not self.is_real(role):
+            return
+        with self._lock:
+            self.heuristic_notes.append({"role": role, "stage": stage, "scene_id": scene_id, "reason": reason})
+        self.log.warn("heuristic fallback with a real provider configured", role=role, stage=stage,
+                      scene=scene_id, reason=reason[:200])
+
+    def take_fallbacks(self, stage: str) -> list[dict[str, str]]:
+        """Remove and return the notes recorded for one stage."""
+        with self._lock:
+            mine = [n for n in self.heuristic_notes if n["stage"] == stage]
+            self.heuristic_notes = [n for n in self.heuristic_notes if n["stage"] != stage]
+        return mine
 
     def used_mock_with_real_seats(self) -> bool:
         """True when some seat was real but some role used mock: the project should end needs_review."""

@@ -751,6 +751,15 @@ class QAShot(Model):
     post_render_score: Optional[float] = None
 
 
+class FallbackNote(Model):
+    """A part of the video a real provider should have made but heuristics made instead."""
+
+    role: str  # writer, director
+    stage: str  # script, shotlist
+    scene_id: str  # s01.., or "all" for whole-script context such as the director's script summary
+    reason: str = ""
+
+
 class QAReport(Model):
     project_id: str
     threshold: float
@@ -768,6 +777,8 @@ class QAReport(Model):
     caption_word_match: float
     attribution_count: int
     mock_used: list[str] = Field(default_factory=list)
+    # Sections a configured real provider failed on that shipped from heuristics (sets needs_review).
+    heuristic_fallbacks: list[FallbackNote] = Field(default_factory=list)
     nc_nd_assets: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
