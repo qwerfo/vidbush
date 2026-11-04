@@ -22,7 +22,7 @@ from ..util import ToolError, media_duration, read_json, run, write_json
 from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, parse_verdict
 
 QA_FLAGS = ("mock", "nc_nd", "standard_youtube_licence", "anachronism", "low_res", "no_match_accepted",
-            "held_frame", "missing_media")
+            "held_frame", "missing_media", "segment_repeat")
 SOURCE_NOTES = "source_notes.json"
 SOURCE_LABELS = {"youtube": "YouTube"}
 NO_MATCH_TARGET_PCT = 1.0

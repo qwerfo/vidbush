@@ -1,13 +1,17 @@
 """Segment dedupe rule in the selection scorer: banned within a scene and next shot, penalised across scenes."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from test_editor_helpers import PID, build_edit_project, load_shotlist
 from vidbush.config import REPO_ROOT
+from vidbush.editor.ops import apply_ops
 from vidbush.judge import director_loop as dl
-from vidbush.models import Candidate, Shot, ShotList, ShotType, SourceKind
+from vidbush.models import Candidate, EditOp, EditOpName, Shot, ShotList, ShotType, SourceKind
+from vidbush.visuals.derive import vary_repeated_video
 
 ASSETS = REPO_ROOT / "fixtures" / "sample_assets"
 URL = "https://www.youtube.com/watch?v=abc123"
@@ -44,8 +48,21 @@ class _Log:
 
 
 class _Ctx:
-    def __init__(self) -> None:
+    def __init__(self, threshold: float = 60.0) -> None:
         self.log = _Log()
+        self.settings = SimpleNamespace(judge=SimpleNamespace(threshold=threshold))
+
+
+@pytest.fixture(autouse=True)
+def no_ai(monkeypatch):
+    """Offline: AI still generation adds nothing unless a test swaps in a generator."""
+    calls: list[str] = []
+    monkeypatch.setattr(dl, "_add_ai", lambda shot, ctx: calls.append(shot.id))
+    return calls
+
+
+def pexels(cid: str, score: float, n: int = 1) -> Candidate:
+    return vid(cid, score, 0.0, url=f"https://pexels/{n}", path=f"/w/pexels_{n}.mp4", source=SourceKind.pexels)
 
 
 def select(shots: list[Shot], threshold: float = 60.0) -> tuple[list[Shot], _Ctx]:
@@ -177,3 +194,85 @@ def test_usage_records_scene_and_index(scene):
     usage.add(vid("a", 90, 10.0), 0.0, scene, 4)
     assert usage.picks[-1].scene_id == scene and usage.picks[-1].index == 4
     assert usage.banned(vid("b", 90, 11.0), "other")  # previous shot always banned
+
+
+def test_banned_passing_segment_loses_to_allowed_sub_threshold_candidate(no_ai):
+    shots = [shot(0, "s1", [vid("a", 95, 10.0)]), shot(1, "s1", [pexels("b_px", 80)]),
+             shot(2, "s1", [vid("c", 95, 10.0), pexels("c_px", 55, 2)])]
+    out, ctx = select(shots)
+    assert out[2].selected == "c_px" and "no_match_accepted" in out[2].flags
+    assert ctx.log.warnings == [] and no_ai == []
+
+
+def test_consecutive_banned_passing_segment_loses_to_sub_threshold_alternative():
+    out, _ = select([shot(0, "s1", [vid("a", 95, 10.0)]), shot(1, "s1", [vid("b", 95, 10.5), pexels("alt", 50)])])
+    assert out[1].selected == "alt"
+
+
+def test_ai_still_generated_when_only_banned_segments_remain(monkeypatch):
+    def add_ai(s: Shot, ctx: Any) -> None:
+        s.candidates.append(still("ai", 72).model_copy(update={"source": SourceKind.ai_image}))
+
+    monkeypatch.setattr(dl, "_add_ai", add_ai)
+    out, _ = select([shot(0, "s1", [vid("a", 95, 10.0)]), shot(1, "s1", [vid("b", 95, 10.0)])])
+    assert out[1].selected == "ai" and out[1].flags == []
+
+
+def test_kept_repeat_is_flagged_for_qa(no_ai):
+    out, ctx = select([shot(0, "s1", [vid("a", 95, 10.0)]), shot(1, "s1", [vid("b", 95, 10.0)])])
+    assert out[1].selected == "b" and no_ai == ["shot_001"]
+    assert {"no_match_accepted", dl.SEGMENT_REPEAT_FLAG} <= set(out[1].flags) and ctx.log.warnings
+    dl._apply(out[1], out[1].candidates[0], False, [])
+    assert dl.SEGMENT_REPEAT_FLAG not in out[1].flags
+
+
+def test_enforce_segment_rule_bans_the_next_shot_and_the_scene():
+    nxt = shot(2, "s1", [vid("n", 95, 10.0)])
+    nxt.selected = "n"
+    edited = shot(1, "s1", [vid("e", 95, 10.5), pexels("e_px", 70)])
+    edited.selected = "e"
+    sl = ShotList(project_id="t1", duration=15.0, shots=[shot(0, "s0", [pexels("p", 90, 3)]), edited, nxt])
+    sl.shots[0].selected = "p"
+    assert dl.enforce_segment_rule(sl, edited, _Ctx())
+    assert edited.selected == "e_px"
+    assert not dl.enforce_segment_rule(sl, edited, _Ctx())  # now clear: left alone
+
+
+def test_editor_resource_does_not_repeat_the_previous_shots_segment(settings, monkeypatch):
+    work = build_edit_project(settings)
+    prev = load_shotlist(work).by_id("shot_006").selected_candidate()
+
+    def source_shot(s: Shot, ctx: Any, queries: Any = None, exclude_ids: Any = ()) -> list[Candidate]:
+        alt = prev.model_copy(update={"id": f"{s.id}_pexels_1", "url": "https://pexels/77",
+                                      "source": SourceKind.pexels})
+        return [prev.model_copy(update={"id": f"{s.id}_local_9"}), alt]
+
+    def judge(sl: ShotList, ctx: Any) -> ShotList:
+        for s in sl.shots:
+            scores = {f"{s.id}_local_9": 95.0, f"{s.id}_pexels_1": 75.0}
+            for c in s.candidates:
+                c.score = scores.get(c.id, 10.0)
+            s.selected = f"{s.id}_local_9"  # a one-shot selection cannot see shot_006
+        return sl
+
+    monkeypatch.setattr("vidbush.source.registry.source_shot", source_shot)
+    monkeypatch.setattr("vidbush.judge.director_loop.judge_and_select", judge)
+    res = apply_ops(settings, PID, [EditOp(op=EditOpName("change_type"), args={"shot_id": "shot_007",
+                                                                               "type": "footage"})])
+    assert not res.errors, res.errors
+    assert load_shotlist(work).by_id("shot_007").selected == "shot_007_pexels_1"
+
+
+def test_vary_repeated_video_never_shifts_onto_a_banned_segment(monkeypatch):
+    monkeypatch.setattr("vidbush.visuals.derive._clip_length", lambda c, cache: 40.0)
+    clip = lambda cid, t: vid(cid, 90, t, path="/w/clip.mp4", source=SourceKind.local)  # noqa: E731
+    shots = [shot(0, "A", [clip("s0", 0.0)]), shot(1, "A", [pexels("s1", 90)]),
+             shot(2, "B", [clip("s2", 5.0)]), shot(3, "B", [clip("s3", 0.0)])]
+    for s in shots:
+        s.selected = s.candidates[0].id
+        s.candidates[0].out_point = s.candidates[0].in_point + 5.0
+    sl = ShotList(project_id="t1", duration=20.0, shots=shots)
+    assert vary_repeated_video(sl, None) == 1
+    s3 = sl.shots[3].selected_candidate()
+    assert not dl.same_segment(s3, sl.shots[2].selected_candidate())
+    assert s3.in_point == 10.0 and s3.out_point == 15.0

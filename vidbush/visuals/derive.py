@@ -177,7 +177,12 @@ def _dims(c: Candidate) -> tuple[int, int]:
 
 
 def vary_repeated_video(shotlist: ShotList, ctx: Any) -> int:
-    """Each later use of one clip window starts after the earlier uses, wrapping inside its own file."""
+    """Each later use of one clip window starts after the earlier uses, wrapping inside its own file.
+
+    A shifted start that would repeat a segment of a neighbouring shot or of the
+    shot's own scene (the judge's ban) is skipped for the next free one; with none
+    free the shot keeps its selection.
+    """
     changed = 0
     cache: dict[str, float] = {}
     for run in _runs(shotlist.shots, "video", nearby=len(shotlist.shots)):
@@ -190,12 +195,40 @@ def vary_repeated_video(shotlist: ShotList, ctx: Any) -> int:
             span = (_clip_length(own, cache) if own else 0.0) - shot.duration
             if own is None or span <= 0.5:
                 continue
-            start = round(offset if offset <= span + 1e-6 else offset % span, 3)
-            _replace_selected(shot, own.model_copy(update={"in_point": start,
-                                                           "out_point": round(start + shot.duration, 3)}))
-            offset = start + shot.duration
+            moved = _free_shift(own, shot, offset, span, _segment_guard(shotlist.shots, shot))
+            if moved is None:
+                continue
+            _replace_selected(shot, moved)
+            offset = moved.in_point + shot.duration
             changed += 1
     return changed
+
+
+def _wrap(offset: float, span: float) -> float:
+    return round(offset if offset <= span + 1e-6 else offset % span, 3)
+
+
+def _free_shift(own: Candidate, shot: Shot, offset: float, span: float,
+                guard: list[Candidate]) -> Optional[Candidate]:
+    """own moved to the first start from offset (stepping a shot length, wrapped) clear of every guard segment."""
+    from ..judge.director_loop import SEGMENT_GAP_S, same_segment
+    step = max(shot.duration, SEGMENT_GAP_S)
+    for k in range(int(span // step) + 2):
+        start = _wrap(offset + k * step, span)
+        moved = own.model_copy(update={"in_point": start, "out_point": round(start + shot.duration, 3)})
+        if not any(same_segment(moved, g) for g in guard):
+            return moved
+    return None
+
+
+def _segment_guard(shots: list[Shot], shot: Shot) -> list[Candidate]:
+    """Selections shot must not repeat: the shots directly before and after, and the rest of its scene."""
+    picks = [(i, s) for i, s in enumerate(shots) if s.type != ShotType.motion_graphic and s.selected_candidate()]
+    here = next(i for i, s in enumerate(shots) if s is shot)
+    before = [s for i, s in picks if i < here][-1:]
+    after = [s for i, s in picks if i > here][:1]
+    same = [s for i, s in picks if i != here and s.scene_id == shot.scene_id]
+    return [s.selected_candidate() for s in before + after + same]  # type: ignore[misc]
 
 
 def _clip_length(c: Candidate, cache: dict[str, float]) -> float:
