@@ -17,7 +17,7 @@ self-contained: you do not need any earlier conversation to use it.
 | A4 `python -m vidbush serve` | UI and API on port 8080. Create a project, watch stages and log, play the video, open a shot, swap it: only that segment re-renders. Checked in headless Chromium with no console errors. |
 | A5 `revise demo "make the first 30 seconds faster and replace shot 7 with an AI image"` | Maps to `retime_section [0, 30] x0.7` then `change_type shot_007 -> ai_image`, applies both, re-renders only changed segments. |
 | A6 `learn-style fixtures/reference_video.mp4 test_profile` | Finds 12 shots, the 2.39 letterbox and the caption band; writes `config/style_profiles/test_profile.yaml`. |
-| A7 pytest | 620+ unit tests plus the slow demo integration test (`tests/test_integration_demo.py`), which runs the demo twice and asserts the second assembly renders 0 segments. |
+| A7 pytest | 700+ unit tests plus the slow demo integration test (`tests/test_integration_demo.py`), which runs the demo twice and asserts the second assembly renders 0 segments. |
 | A8 crash and resume | `VIDBUSH_FAIL_AT=judge` stops the run at stage 8; `resume demo` skips intake through sourcing and finishes. |
 | A9 Docker | Image builds (ubuntu 24.04 base), `docker compose up` serves the UI and API on 8080, and a project rendered inside the container. |
 | A10 em dash | Zero in the repo; `tests/test_core_no_em_dash.py` guards it. |
