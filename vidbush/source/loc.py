@@ -85,6 +85,10 @@ class LocAdapter(BaseAdapter):
     name = "loc"
     media = {"video", "image"}
 
+    def timeout(self, settings: Settings) -> float:
+        """loc.gov search often takes 20 to 40 s; a short timeout loses most of its results."""
+        return max(settings.sources.timeout_s, 60.0)
+
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
         url = FILMS if media == "video" else PHOTOS

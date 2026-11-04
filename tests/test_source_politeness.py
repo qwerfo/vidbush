@@ -238,3 +238,22 @@ def test_commons_transcode_urls() -> None:
     urls = transcode_urls("https://upload.wikimedia.org/wikipedia/commons/7/78/A_b.webm?utm_source=x")
     assert urls[0].endswith("/transcoded/7/78/A_b.webm/A_b.webm.1080p.vp9.webm")
     assert transcode_urls("https://example.com/a.webm") == []
+
+
+def test_youtube_bot_check_disables_youtube(monkeypatch) -> None:
+    from vidbush.source import youtube
+    youtube.BOT_BLOCK.clear()
+    youtube.note_bot_block(RuntimeError("ERROR: [youtube] x: Sign in to confirm you're not a bot"))
+    assert youtube.BOT_BLOCK.is_set()
+    assert youtube.YoutubeAdapter().search("q", "video", 3, None) == []
+    youtube.BOT_BLOCK.clear()
+
+
+def test_era_mismatch_drops_modern_titles_for_historical_shots() -> None:
+    from vidbush.models import Shot, ShotType
+    from vidbush.source.base import RawResult
+    from vidbush.source.registry import era_mismatch
+    shot = Shot(id="s", beat_id="b", start=0, end=4, duration=4, type=ShotType.footage,
+                intent="Archival footage of Thomas Jefferson and a canal in New York, 1810s.")
+    assert era_mismatch(shot, RawResult(source="loc", url="u", title="Thomas Jefferson Building: 2019 Book Festival"))
+    assert not era_mismatch(shot, RawResult(source="loc", url="u", title="Pilot boats in New York harbor 1903"))

@@ -59,6 +59,13 @@ were never run live because of the sandbox:
 Run `python -m vidbush doctor --probe` once your keys are in: it sends one tiny
 request per configured role and tells you exactly which seat works.
 
+Verified live after the build (internet granted): Archive, Library of Congress
+and NASA search and download, YouTube search, Whisper transcription (a
+voiceover with no script produced a full video). YouTube downloads need
+cookies from servers and VPS IPs: set `YOUTUBE_COOKIES` or
+`YOUTUBE_COOKIES_FROM_BROWSER` in `.env`. Set `VIDBUSH_CONTACT` to your email
+so Wikipedia and Wikimedia do not rate limit you.
+
 ### Stubbed or partial
 
 - DepthFlow: wired, off by default, untested (the CLI was not installable here). Ken Burns is used instead.

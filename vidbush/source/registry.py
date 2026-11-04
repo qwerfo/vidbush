@@ -171,7 +171,23 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
         return []
     if cacheable:
         cache_put(adapter.name, query, media, n, results, ctx.settings)
-    return relevant(adapter.name, query, results, ctx)
+    return [r for r in relevant(adapter.name, query, results, ctx) if not era_mismatch(shot, r)]
+
+
+def shot_era(shot: Shot) -> Optional[int]:
+    """Earliest year or decade named in the shot's intent and queries (1810s -> 1810), or None."""
+    text = " ".join([shot.intent, *shot.queries])
+    years = [int(y) for y in re.findall(r"\b(1[5-9]\d\d|20\d\d)s?\b", text)]
+    return min(years) if years else None
+
+
+def era_mismatch(shot: Shot, raw: RawResult) -> bool:
+    """A historical shot (before 1950) never takes a result whose title is dated 1990 or later."""
+    era = shot_era(shot)
+    if era is None or era >= 1950:
+        return False
+    years = [int(y) for y in re.findall(r"\b(19\d\d|20\d\d)\b", raw.title)]
+    return any(y >= 1990 for y in years)
 
 
 MIN_RELEVANCE = 0.34  # at least about one in three of the query's specific words

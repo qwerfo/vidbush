@@ -20,6 +20,7 @@ small gap (throttle host "youtube") to avoid bot checks.
 from __future__ import annotations
 
 import logging
+import threading
 
 import re
 import shutil
@@ -155,6 +156,19 @@ def section_for(duration: float, shot: Shot) -> tuple[float, float]:
     return start - PADDING_S, start + want + PADDING_S
 
 
+BOT_BLOCK = threading.Event()  # set when YouTube demands sign-in; YouTube is skipped for the rest of the process
+BOT_MARKERS = ("confirm you", "not a bot", "sign in to confirm")
+
+
+def note_bot_block(err: Exception) -> None:
+    """Remember a bot check so the run stops wasting requests on YouTube."""
+    if any(m in str(err).lower() for m in BOT_MARKERS) and not BOT_BLOCK.is_set():
+        BOT_BLOCK.set()
+        logging.getLogger("vidbush.source").warning(
+            "YouTube asked to sign in (bot check). YouTube is skipped for this run. "
+            "Set YOUTUBE_COOKIES or YOUTUBE_COOKIES_FROM_BROWSER in .env to fix it.")
+
+
 class YoutubeAdapter(BaseAdapter):
     name = "youtube"
     media = {"video"}
@@ -170,12 +184,21 @@ class YoutubeAdapter(BaseAdapter):
 
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
-        if media != "video":
+        if media != "video" or BOT_BLOCK.is_set():
             return []
         info = ydl_extract(f"ytsearch10:{query}", {"extract_flat": "in_playlist", "skip_download": True})
         return parse_search(info)[:n]
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
+        if BOT_BLOCK.is_set():
+            return []
+        try:
+            return self._fetch(raw, out_dir, shot, settings)
+        except Exception as e:
+            note_bot_block(e)
+            raise
+
+    def _fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         cfg = settings.sources
         info = ydl_extract(raw.url, {"skip_download": True})
         if max_height(info) < cfg.youtube_min_height:
