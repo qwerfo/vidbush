@@ -33,6 +33,7 @@ LOGO_EDGE_SHARE = 0.06  # a logo box must hold at least this share of edge pixel
 LOGO_CONTRAST = 12.0  # and this grey level spread
 LOGO_STABLE_SHARE = 0.5  # at least this share of the box stays within logo_max_diff on every keyframe
 LOGO_RING_MOVING = 0.5  # at least this share of the ring around the box must change between keyframes
+LINE_GAP = 1.5  # boxes on one row join a line when the gap between them is at most this many text heights
 STATIC_SHARE = 0.75  # when this share of the frame centre is stable the clip is static, no logo test
 PREFILTER_WORKERS = 4
 LABELS = ("burned_in_captions", "channel_logo", "talking_head")
@@ -54,16 +55,31 @@ def _cv2() -> Any:
 
 
 def ocr_engine() -> Any:
-    """RapidOCR built once per process behind a lock; the weights ship inside the wheel."""
+    """RapidOCR built once per process behind a lock; the weights ship inside the wheel.
+
+    A failed build is remembered and raised as ImportError from then on, so the text check is
+    skipped with one warning per process instead of being rebuilt (and logged) for every candidate.
+    """
     with _LOCK:
         if not _OCR:
-            from rapidocr_onnxruntime import RapidOCR
-            try:
-                _OCR.append(RapidOCR(det_model_path=None, det_limit_side_len=WORK_WIDTH, det_limit_type="max",
-                                     use_angle_cls=False))
-            except (TypeError, KeyError):  # another wheel version with other option names
-                _OCR.append(RapidOCR())
-        return _OCR[0]
+            _OCR.append(_build_ocr())
+        engine = _OCR[0]
+    if isinstance(engine, BaseException):
+        raise ImportError(f"OCR engine unavailable: {engine}") from engine
+    return engine
+
+
+def _build_ocr() -> Any:
+    """A RapidOCR instance, or the exception that stopped it from being built."""
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        try:
+            return RapidOCR(det_model_path=None, det_limit_side_len=WORK_WIDTH, det_limit_type="max",
+                            use_angle_cls=False)
+        except (TypeError, KeyError):  # another wheel version with other option names
+            return RapidOCR()
+    except Exception as e:  # noqa: BLE001  missing wheel, models or runtime: all mean no OCR this process
+        return e
 
 
 def face_cascade() -> Any:
@@ -106,19 +122,42 @@ def load_frames(paths: list[str], width: int = WORK_WIDTH) -> list[np.ndarray]:
 
 # ---------------------------------------------------------------- text
 
-def subtitle_lines(boxes: list[tuple[Box, float]], w: int, h: int, cfg: PrefilterConfig) -> list[Box]:
-    """Lines of confident text in the band whose union spans text_min_width of the frame width."""
-    band = [b for b, conf in boxes if conf >= cfg.text_min_confidence and (b[1] + b[3]) / 2 >= cfg.text_band_top * h]
-    lines: list[list[float]] = []
-    for x0, y0, x1, y1 in sorted(band, key=lambda b: (b[1] + b[3]) / 2):
-        cy = (y0 + y1) / 2
-        for ln in lines:
-            if ln[1] <= cy <= ln[3]:  # same line: centre inside an existing line's vertical span
-                ln[0], ln[2] = min(ln[0], x0), max(ln[2], x1)
+def _rows(band: list[Box]) -> list[list[Box]]:
+    """Boxes grouped into rows: a box joins a row when its vertical centre falls inside the row's span."""
+    rows: list[tuple[list[float], list[Box]]] = []
+    for b in sorted(band, key=lambda b: (b[1] + b[3]) / 2):
+        cy = (b[1] + b[3]) / 2
+        for span, members in rows:
+            if span[0] <= cy <= span[1]:
+                span[0], span[1] = min(span[0], b[1]), max(span[1], b[3])
+                members.append(b)
                 break
         else:
-            lines.append([x0, y0, x1, y1])
-    return [tuple(ln) for ln in lines if ln[2] - ln[0] >= cfg.text_min_width * w]  # type: ignore[misc]
+            rows.append(([b[1], b[3]], [b]))
+    return [members for _span, members in rows]
+
+
+def _runs(row: list[Box]) -> list[Box]:
+    """A row split into runs of horizontally close boxes; a gap wider than LINE_GAP text heights splits it."""
+    out: list[list[float]] = []
+    for x0, y0, x1, y1 in sorted(row):
+        ln = out[-1] if out else None
+        if ln is not None and x0 - ln[2] <= LINE_GAP * max(ln[3] - ln[1], y1 - y0):
+            ln[1], ln[2], ln[3] = min(ln[1], y0), max(ln[2], x1), max(ln[3], y1)
+        else:
+            out.append([x0, y0, x1, y1])
+    return [(a, b, c, d) for a, b, c, d in out]
+
+
+def subtitle_lines(boxes: list[tuple[Box, float]], w: int, h: int, cfg: PrefilterConfig) -> list[Box]:
+    """Lines of confident, horizontally contiguous text in the band spanning text_min_width of the frame.
+
+    Separate words at the same height (a corner bug and a timestamp) stay separate lines, so two
+    small marks far apart never add up to one wide subtitle.
+    """
+    band = [b for b, conf in boxes if conf >= cfg.text_min_confidence and (b[1] + b[3]) / 2 >= cfg.text_band_top * h]
+    lines = [ln for row in _rows(band) for ln in _runs(row)]
+    return [ln for ln in lines if ln[2] - ln[0] >= cfg.text_min_width * w]
 
 
 def read_text(frame: np.ndarray, cfg: PrefilterConfig) -> list[tuple[Box, float]]:

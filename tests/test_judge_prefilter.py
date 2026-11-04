@@ -144,6 +144,28 @@ def test_subtitle_lines_merge_boxes_on_one_line():
     assert pf.subtitle_lines(low_conf, W, H, cfg) == []
 
 
+def test_far_apart_words_on_one_row_are_not_one_subtitle():
+    cfg = PrefilterConfig()
+    rec, stamp = ((21.0, 327.0, 61.0, 350.0), 0.65), ((544.0, 327.0, 616.0, 350.0), 0.70)
+    assert pf.subtitle_lines([rec, stamp], W, H, cfg) == []  # a camcorder REC bug and a date stamp
+    assert pf.subtitle_lines([stamp, rec], W, H, cfg) == []  # order of the OCR boxes does not matter
+    mid = ((70.0, 328.0, 300.0, 349.0), 0.9)
+    lines = pf.subtitle_lines([stamp, mid, rec], W, H, cfg)
+    assert lines == [(21.0, 327.0, 300.0, 350.0)]  # a near word still joins the line, the far one does not
+
+
+def corner_marks(im: Image.Image) -> Image.Image:
+    d = ImageDraw.Draw(im)
+    for x, text in ((40, "REC"), (W - 60, "12 25 87")):
+        d.text((x, H - 22), text, font=font(18), fill="white", stroke_width=2, stroke_fill="black", anchor="mm")
+    return im
+
+
+def test_corner_bug_and_timestamp_on_one_row_accepted(tmp_path):
+    frames = [corner_marks(scene(i)) for i in (1, 2, 3)]
+    assert check(tmp_path, "marks", frames, PrefilterConfig(logo=False)) is None
+
+
 def test_single_still_never_text_rejected(tmp_path):
     reason = check(tmp_path, "still", [subtitle(scene(1), LINES[0])], media="image")
     assert reason is None
@@ -275,6 +297,29 @@ def test_missing_dependency_skips_check_and_warns_once(tmp_path, monkeypatch):
     assert [ln for ln in log.lines if ln[0] == "warn"] == [
         ("warn", "prefilter check skipped, dependency missing", {"check": "text", "error": "no rapidocr"})]
     assert all(c.score is None and c.reject_reason is None for c in cands)
+
+
+def test_broken_ocr_build_is_remembered_and_warns_once(tmp_path, monkeypatch):
+    builds: list[int] = []
+
+    class BrokenOCR:
+        def __init__(self, *a: Any, **kw: Any) -> None:
+            builds.append(1)
+            raise RuntimeError("onnxruntime refused the model")
+
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", types.SimpleNamespace(RapidOCR=BrokenOCR))
+    monkeypatch.setattr(pf, "_OCR", [])
+    monkeypatch.setattr(pf, "_WARNED", set())
+    log = Log()
+    frames = [subtitle(scene(i), LINES[i - 1]) for i in (1, 2, 3)]
+    cands = [video(save(tmp_path, f"bad{n}", frames), cid=f"c{n}") for n in range(3)]
+    assert pf.apply_prefilter(cands, None, log) == []
+    warns = [ln for ln in log.lines if ln[0] == "warn"]
+    assert len(warns) == 1 and warns[0][1] == "prefilter check skipped, dependency missing"
+    assert warns[0][2]["check"] == "text" and "onnxruntime refused the model" in warns[0][2]["error"]
+    assert len(builds) == 1  # built once, never retried per candidate
+    with pytest.raises(ImportError):
+        pf.ocr_engine()
 
 
 def test_apply_prefilter_marks_hard_reject_and_logs_counts(tmp_path):
