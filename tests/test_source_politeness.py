@@ -94,7 +94,7 @@ def test_user_agent_carries_contact(settings) -> None:
     finally:
         settings.env.pop("VIDBUSH_CONTACT")
         base.configure(settings)
-    assert "VIDBUSH_CONTACT" in base.USER_AGENT
+    assert "github.com/qwerfo/vidbush" in base.USER_AGENT  # default carries a contact URL
 
 
 # ---------------------------------------------------------------- streamed downloads
@@ -223,3 +223,18 @@ def test_youtube_runtime_detection(monkeypatch) -> None:
     monkeypatch.setattr(youtube.shutil, "which", lambda n: None)
     assert youtube.js_runtimes() == {} and "js_runtimes" not in youtube._base_opts()
     assert "deno" in youtube.runtime_warning()
+
+
+def test_relevance_drops_off_topic_titles() -> None:
+    from vidbush.source.base import RawResult, relevance
+    q = "Panama Canal construction footage"
+    assert relevance(q, RawResult(source="archive", url="u", title="Panama Canal Construction in 1912")) == 1.0
+    assert relevance(q, RawResult(source="archive", url="u", title="SpanishPod Archive")) == 0.0
+    assert relevance(q, RawResult(source="wikimedia", url="u", title="State of the Union Address 2010")) == 0.0
+
+
+def test_commons_transcode_urls() -> None:
+    from vidbush.source.wikimedia import transcode_urls
+    urls = transcode_urls("https://upload.wikimedia.org/wikipedia/commons/7/78/A_b.webm?utm_source=x")
+    assert urls[0].endswith("/transcoded/7/78/A_b.webm/A_b.webm.1080p.vp9.webm")
+    assert transcode_urls("https://example.com/a.webm") == []

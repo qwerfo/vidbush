@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-whisper = ["faster-whisper==1.2.1"]
+whisper = ["faster-whisper==1.2.1", "av==16.1.0"]  # av 17+ removed an argument faster-whisper 1.2.1 passes
 dev = ["pytest==9.2.0", "httpx"]
 
 [project.scripts]
