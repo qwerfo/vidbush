@@ -45,6 +45,8 @@ output/<id>/
   inputs/                   copies of the operator's input files
   work/
     research.json outline.json script.json narration.json director_plan.json
+    script_summary.json     director's one paragraph summary of the script (keyed by script hash)
+    fallbacks.json          heuristic fallbacks per stage while a real provider was configured
     shotlist.json captions.json mix.wav mix.json
     narration/              per-scene tts audio + narration.wav
     mg/                     rendered motion graphics (<hash>.mp4, overlays <hash>.mov)
@@ -98,7 +100,7 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | script/parser.py | `parse_script(text, fmt=None) -> Script` | pasted scripts, any length, infers scene purposes and top10 |
 | audio/transcribe.py | `transcribe_words(audio, settings, log) -> list[Word] or None`, `transcribe_to_text(audio, settings, log, seats) -> str` | faster-whisper when available |
 | audio/narration.py | `narrate(script, brand, seats, settings, work_dir, log) -> Narration`, `narration_from_voiceover(audio, script, settings, work_dir, log) -> Narration`, `renarrate_beat(...)` | per-scene TTS, 40 ms crossfade stitch, alignment check, -16 LUFS |
-| shots/director.py | `build_shotlist(project, script, narration, research, profile, brand, seats, rng) -> (ShotList, DirectorPlan)` | ideas per beat (director seat called once per scene or batch of 8 beats, in parallel, shots/seat.py), then the pacing engine and assembler (shots/assembler.py) assign slots; at most 2 full screen cards and 16 s in a row; visual mix measured by shot count |
+| shots/director.py | `build_shotlist(project, script, narration, research, profile, brand, seats, rng) -> (ShotList, DirectorPlan)` | ideas per beat (director seat called once per scene or batch of 8 beats, in sequence, shots/seat.py; every call carries the script summary from work/script_summary.json, the previous two chunks' ideas, the visual anchors so far and the next beat), then the pacing engine and assembler (shots/assembler.py) assign slots; at most 2 full screen cards and 16 s in a row, and at most one free full screen card per `pacing.card_spacing_s` (45 s) outside the hook and recap; visual mix measured by shot count from `StyleProfile.shot_mix()` |
 | source/registry.py | `source_all(shotlist, ctx) -> ShotList`, `source_shot(shot, ctx, queries=None) -> list[Candidate]` | parallel adapters, cap 8, sidecars |
 | judge/director_loop.py | `judge_and_select(shotlist, ctx) -> ShotList` | score, select, re-query, convert to ai_image, never empty |
 | visuals/prepare.py | `prepare_visuals(shotlist, ctx) -> ShotList` | derived crops, optional DepthFlow and ai_video |
@@ -122,7 +124,9 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 motion stage renders it to `work/mg/<hash>.mp4` and adds a Candidate with
 `source=motion`, which becomes `shot.selected`. Overlay shots carry
 `shot.overlay`; the motion stage renders it with alpha to
-`work/mg/<hash>.mov` (qtrle, rgba) and sets `shot.overlay_path`. The motion
+`work/mg/<hash>.mov` (qtrle, rgba) and sets `shot.overlay_path`. A map or
+chart overlay renders as an inset panel over the picture (`vidbush/mg/inset.py`,
+always the Python renderer). The motion
 cache key includes the renderer kind and a renderer version; degraded
 fallback renders are stored under a separate `.fallback` name.
 Data-driven graphics (maps, charts) always draw `source_note` in a corner.
@@ -147,7 +151,21 @@ one by setting `render.renderer` in `config/vidbush.yaml`.
 | ai_video | generated clip | optional |
 | motion_graphic | rendered MotionSpec | none |
 
-### Captions geometry
+#### Visual mix semantics
+
+`StyleProfile.visual_mix` holds the picture mix (footage, footage_overlay,
+image, image_overlay, ai_image, ai_video) plus two animation numbers:
+`full_screen_cards` (motion_graphic shots) and `animated_overlays` (maps,
+charts, callouts, arrows and lower thirds over footage or stills). Animated
+overlays are counted on top of the shot they decorate: `shot_mix()` adds
+them to footage_overlay and image_overlay in the footage to still ratio of
+the picture mix. Documentary default: footage 20, footage_overlay 42.2,
+image 7, image_overlay 18.8, motion_graphic 12. The old `motion_graphic` key
+is read as `full_screen_cards`. QA reports the shot type mix against
+`shot_mix()` and an animation table (full screen cards, shots with an
+overlay, map and chart insets).
+
+## Captions geometry
 
 With letterbox on (2.39:1 at 1920x1080) the active picture is 1920x803 and
 each band is 138 px. Captions sit in the bottom band, vertical center at
@@ -182,7 +200,11 @@ that fail on transport are marked down and probed again every 10 minutes,
 and every call (real or mock) is written to `cost_report.json`. Fallback
 moves only the failed request; the configured order is kept, so one video
 never mixes image styles unless the primary is down, and the 10 minute probe
-returns to the primary. 429 responses back off using Retry-After (up to 6
+returns to the primary. A writer section or director chunk that falls back to
+heuristics while its role has a real provider is recorded with
+`seats.note_fallback(role, stage, scene_id, reason)`; the stage writes the
+notes to `work/fallbacks.json`, QA lists them under `heuristic_fallbacks` and
+the project ends `needs_review`. 429 responses back off using Retry-After (up to 6
 attempts) and never mark a provider down. `options.max_concurrency` limits
 parallel requests per provider. If a role has a configured real provider and
 every real provider fails, the seat raises and the stage fails (resume

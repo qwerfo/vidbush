@@ -142,3 +142,20 @@ def test_qa_animation_share_counts_overlays_on_top_of_their_shot() -> None:
         shot(0, ShotType.footage), shot(1, ShotType.footage_overlay, inset),
         shot(2, ShotType.image_overlay, b.lower_third_spec("Colon")), shot(3, ShotType.motion_graphic)])
     assert animation_share(sl) == {"full_screen_cards": 25.0, "overlay_shots": 50.0, "inset_overlays": 25.0}
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_map_and_chart_insets_get_room(seed: int) -> None:
+    from vidbush.shots.assembler import INSET_GAP_S
+    from vidbush.shots.assembler import motion_signature
+    script = doc_script(n_scenes=8, beats_per_scene=7)
+    sl, _plan = build_shotlist(project(), script, narrate(script), None, profile(), brand(), None,
+                               random.Random(seed))
+    insets = [s for s in sl.shots if s.overlay is not None and s.overlay.kind.value in ("map", "bar_chart", "line_chart")]
+    assert insets
+    starts = [s.start for s in insets]
+    assert all(b2 - a >= INSET_GAP_S - 1.0 for a, b2 in zip(starts, starts[1:])), starts
+    sigs = [motion_signature(s.overlay) for s in insets]
+    for i, sig in enumerate(sigs):
+        later = [insets[j].start - insets[i].start for j in range(i + 1, len(sigs)) if sigs[j] == sig]
+        assert all(d >= 180.0 for d in later)

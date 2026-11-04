@@ -238,6 +238,11 @@
           "default": 0.25,
           "title": "Jitter",
           "type": "number"
+        },
+        "card_spacing_s": {
+          "default": 45.0,
+          "title": "Card Spacing S",
+          "type": "number"
         }
       },
       "title": "PacingProfile",

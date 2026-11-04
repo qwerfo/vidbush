@@ -1,5 +1,34 @@
 {
   "$defs": {
+    "FallbackNote": {
+      "description": "A part of the video a real provider should have made but heuristics made instead.",
+      "properties": {
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string"
+        },
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "stage",
+        "scene_id"
+      ],
+      "title": "FallbackNote",
+      "type": "object"
+    },
     "QAShot": {
       "properties": {
         "shot_id": {
@@ -113,6 +142,20 @@
       "title": "Mix Achieved",
       "type": "object"
     },
+    "animation_target": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Animation Target",
+      "type": "object"
+    },
+    "animation_achieved": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Animation Achieved",
+      "type": "object"
+    },
     "pacing": {
       "additionalProperties": {
         "additionalProperties": {
@@ -140,6 +183,13 @@
         "type": "string"
       },
       "title": "Mock Used",
+      "type": "array"
+    },
+    "heuristic_fallbacks": {
+      "items": {
+        "$ref": "#/$defs/FallbackNote"
+      },
+      "title": "Heuristic Fallbacks",
       "type": "array"
     },
     "nc_nd_assets": {

@@ -33,6 +33,8 @@ KIND_WINDOW_S = 60.0
 KIND_PENALTY = 0.5
 MAP_SHARE = 0.35
 REUSE_PENALTY = 0.9
+INSET_GAP_S = 15.0  # seconds between two map or chart insets
+INSET_REPEAT_S = 180.0  # the same inset is not shown again within this
 
 
 class _BeatLocator:
@@ -71,6 +73,7 @@ class _Assembler:
         self.sig_usage: dict[str, int] = {}
         self.motion_log: list[tuple[float, MotionKind]] = []
         self.card_log: list[tuple[float, MotionSpec]] = []
+        self.inset_log: list[float] = []
         self.map_places: set[str] = set()
         self.by_key: dict[tuple[str, str], list[int]] = {}
         for i, idea in enumerate(ideas):
@@ -204,6 +207,7 @@ class _Assembler:
                 shot.type = PLAIN_OF[shot.type]  # nothing honest to overlay (call to action beat)
             elif shot.overlay.kind in INSET_KINDS:
                 self.card_log.append((slot.start, shot.overlay))
+                self.inset_log.append(slot.start)
         return shot
 
     # -------------------------------------------------------- callbacks for rules.py
@@ -241,11 +245,16 @@ class _Assembler:
                                                                               shot.must_show)
 
     def insets(self, beat_id: str, at: float) -> list[MotionSpec]:
-        """The beat's map and chart ideas as transparent insets. A map is offered only when it shows a place
-        no map (card or inset) showed in the last KIND_WINDOW_S: a map earns its place when the narration
-        moves between places, not on every beat that names one."""
+        """The beat's map and chart ideas as transparent insets.
+
+        An inset is information the viewer has to read, so it needs room: none within INSET_GAP_S of
+        another inset, the same map or chart not again within INSET_REPEAT_S, and a map only when it shows
+        a place no map showed in the last KIND_WINDOW_S (a map earns its place when the narration moves
+        between places, not on every beat that names one)."""
+        if any(0 < abs(at - t) < INSET_GAP_S for t in self.inset_log):
+            return []
         recent = [sp for t, sp in self.card_log if 0 <= at - t < KIND_WINDOW_S]
-        shown = {motion_signature(sp) for sp in recent}
+        shown = {motion_signature(sp) for t, sp in self.card_log if 0 <= at - t < INSET_REPEAT_S}
         places = set().union(*[map_places(sp) for sp in recent]) if recent else set()
         out: list[MotionSpec] = []
         for i in self.by_key.get((beat_id, "motion"), []):

@@ -26,6 +26,7 @@ One line each: the decision and why.
 - A map or chart used as an overlay renders as an inset panel (45 percent of the frame width, upper right, larger type). Insets always use the Python renderer, even when Remotion is configured, because Remotion has no inset composition.
 - A free map or chart card removed by the spacing cap keeps its content as an inset on footage of its beat, so the information stays on screen.
 - An inset map is offered only when it shows a place that no map showed in the last 60 s. Without that limit the Panama scripts put a map on about 20 of 70 shots.
+- Insets are kept at least 15 s apart, and the same map or chart is not shown again within 3 minutes. An inset is information the viewer has to read, and the first demo render put one on 43 percent of shots, back to back in the opening.
 - MG_RENDER_VERSION is now mg-3, because chart value labels now always fit inside the plot and cached charts must re-render.
 - Acceptance adds three checks: cards_sparing (full screen cards at most 25 percent of shots), overlays_on_picture, and inset_map_or_chart.
 - Director chunks now run one after another instead of four in parallel, because each call needs the ideas chosen before it. This costs wall time on long scripts: about one call per 8 beats, in sequence.
