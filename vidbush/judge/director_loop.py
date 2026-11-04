@@ -15,7 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..models import Candidate, Script, Shot, ShotList, ShotType, SourceKind
-from .judge import JUDGE_MOCK_FLAG, score_many
+from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, score_many
+from .prefilter import apply_prefilter
 
 SOURCED_TYPES = {ShotType.footage, ShotType.footage_overlay, ShotType.image, ShotType.image_overlay}
 AI_TYPES = {ShotType.ai_image, ShotType.ai_video}
@@ -52,7 +53,7 @@ def judge_and_select(shotlist: ShotList, ctx: Any) -> ShotList:
     threshold = float(ctx.settings.judge.threshold)
     active = [s for s in shotlist.shots if s.type != ShotType.motion_graphic]
     _seed_ai(active, ctx)
-    score_many([(s, c) for s in active for c in s.candidates if c.score is None], ctx)
+    _prefilter_and_score([(s, c) for s in active for c in s.candidates if c.score is None], ctx)
     for s in active:
         s.attempts = max(s.attempts, 1)
     failing = [s for s in active if not _passing(s, threshold)]
@@ -69,6 +70,12 @@ def judge_and_select(shotlist: ShotList, ctx: Any) -> ShotList:
 
 
 # ---------------------------------------------------------------- helpers: scoring state
+
+def _prefilter_and_score(pairs: list[tuple[Shot, Candidate]], ctx: Any, workers: int = JUDGE_WORKERS) -> None:
+    """Local pre-filter first (hard rejects get score 0), then the vision judge on what is still unscored."""
+    apply_prefilter([c for _, c in pairs], ctx.settings, ctx.log)
+    score_many([(s, c) for s, c in pairs if c.score is None], ctx, workers=workers)
+
 
 def _ok(c: Candidate, threshold: float) -> bool:
     return c.reject_reason is None and c.score is not None and c.score >= threshold
@@ -113,7 +120,7 @@ def _add_ai(shot: Shot, ctx: Any) -> None:
     take = 1 + sum(1 for c in shot.candidates if c.source == SourceKind.ai_image)
     cand = _generate(shot, ctx, take)
     shot.candidates.append(cand)
-    score_many([(shot, cand)], ctx, workers=1)
+    _prefilter_and_score([(shot, cand)], ctx, workers=1)
 
 
 # ---------------------------------------------------------------- attempts 2 and 3+
@@ -146,7 +153,7 @@ def _requery(shot: Shot, ctx: Any) -> str:
     queries = requery_queries(shot, ctx, reasons)
     new = _source(shot, ctx, queries)
     added = add_candidates(shot, new)
-    score_many([(shot, c) for c in added], ctx, workers=2)
+    _prefilter_and_score([(shot, c) for c in added], ctx, workers=2)
     shot.queries = _dedupe(shot.queries + queries, 24)
     ctx.log.info("requery", shot=shot.id, queries=queries, new_candidates=len(added))
     return f"requery ({', '.join(queries[:3])}) found {len(added)} new"
