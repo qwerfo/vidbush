@@ -28,7 +28,7 @@ from ..util import ToolError, run, stable_hash, write_json
 
 OVERLAY_SHOT_TYPES = {ShotType.footage_overlay, ShotType.image_overlay, ShotType.ai_image, ShotType.ai_video}
 REMOTION_DIR = "renderer"
-MG_RENDER_VERSION = "mg-2"
+MG_RENDER_VERSION = "mg-3"  # mg-3: map and chart insets, chart value label room
 
 
 def renderer_kind(settings: Any) -> str:
@@ -55,7 +55,8 @@ def render_spec(spec: MotionSpec, out_path: Path, alpha: bool, settings: Any,
     when given, else logged); that python render goes to degraded_path when given.
     """
     out_path = Path(out_path)
-    if renderer_kind(settings) == "remotion":
+    from .inset import is_inset
+    if renderer_kind(settings) == "remotion" and not is_inset(spec):  # insets are a python composition
         try:
             return render_remotion(spec, out_path, alpha, settings)
         except Exception as e:  # noqa: BLE001  any remotion failure falls back

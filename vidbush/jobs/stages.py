@@ -9,8 +9,24 @@ import shutil
 from pathlib import Path
 
 from ..models import (DirectorPlan, InputMode, Narration, Research, Script, ShotList, VideoFormat)
-from ..util import write_json
+from ..util import read_json, write_json
 from .context import StageContext
+
+FALLBACKS_FILE = "fallbacks.json"
+
+
+def record_fallbacks(ctx: StageContext, stage: str) -> Path:
+    """Write the stage's heuristic fallback notes to work/fallbacks.json, replacing that stage's old ones,
+    so a re-run that succeeds clears them and QA always reads the current state."""
+    path = ctx.work / FALLBACKS_FILE
+    try:
+        data = read_json(path) if path.exists() else {}
+    except (OSError, ValueError):
+        data = {}
+    take = getattr(ctx.seats, "take_fallbacks", None)
+    data[stage] = take(stage) if callable(take) else []
+    write_json(path, data)
+    return path
 
 
 def stage_intake(ctx: StageContext) -> list[str]:
@@ -77,6 +93,7 @@ def stage_script(ctx: StageContext) -> list[str]:
     if not p.title or p.title == Path(p.script_path or p.voiceover_path or "").stem:
         p.title = script.title or p.title
     ctx.save_project()
+    record_fallbacks(ctx, "script")
     return [str(ctx.save("script", script))]
 
 
@@ -96,6 +113,7 @@ def stage_shotlist(ctx: StageContext) -> list[str]:
     shotlist, plan = build_shotlist(ctx.project, ctx.load("script", Script), ctx.load("narration", Narration),
                                     research, ctx.profile, ctx.brand, ctx.seats, ctx.rng("shotlist"))
     ctx.save("plan", plan)
+    record_fallbacks(ctx, "shotlist")
     return [str(ctx.save("shotlist", shotlist))]
 
 

@@ -14,6 +14,9 @@ Real mode (seats.is_real("writer")): a script under MIN_LENGTH_RATIO of the
 outline's target words is retried once (whole script, or each short
 section, with a "too short" note); still short raises ScriptTooShort so the
 stage fails. A writer that fails on every real provider raises ProviderError.
+A section that still ships from fact-claim heuristics is reported through
+seats.note_fallback with its scene id, so QA lists it and the project ends
+needs_review instead of shipping it silently.
 """
 from __future__ import annotations
 
@@ -42,22 +45,33 @@ def write_script(outline: Outline, research: Research, brief: Brief, brand: Bran
     facts = {f.id: f for f in research.facts if f.status != "contradicted"}
     whole = total <= SINGLE_CALL_MAX_WORDS and len(outline.sections) <= SINGLE_CALL_MAX_SECTIONS
     real = _is_real(seats)
-    title, scenes = _draft(outline, facts, brief, brand, seats, whole, "")
+    heuristic: set[int] = set()
+    title, scenes = _draft(outline, facts, brief, brand, seats, whole, "", heuristic)
     if real and script_words(scenes) < MIN_LENGTH_RATIO * total:
         note = prompts.TOO_SHORT.format(got=script_words(scenes), want=total)
         if whole:
-            title, scenes = _draft(outline, facts, brief, brand, seats, True, note)
+            heuristic.clear()
+            title, scenes = _draft(outline, facts, brief, brand, seats, True, note, heuristic)
         else:
-            scenes = _retry_short_sections(outline, scenes, facts, brief, brand, seats)
+            scenes = _retry_short_sections(outline, scenes, facts, brief, brand, seats, heuristic)
         if script_words(scenes) < MIN_LENGTH_RATIO * total:
             raise ScriptTooShort(f"script has {script_words(scenes)} words for a target of {total} "
                                  f"(under {int(MIN_LENGTH_RATIO * 100)} percent after one retry)")
+    for i in sorted(heuristic):
+        _note_fallback(seats, f"s{i + 1:02d}", "writer answer for this section was missing or unusable; "
+                                               "beats were assembled from fact claims")
     return renumber(Script(title=no_em_dash(title or outline.title or brief.topic).strip(), format=outline.format,
                            scenes=scenes))
 
 
 def script_words(scenes: list[Scene]) -> int:
     return sum(len(b.text.split()) for sc in scenes for b in sc.beats)
+
+
+def _note_fallback(seats: Any, scene_id: str, reason: str) -> None:
+    fn = getattr(seats, "note_fallback", None)
+    if callable(fn):
+        fn("writer", "script", scene_id, reason)
 
 
 def _is_real(seats: Any) -> bool:
@@ -68,8 +82,8 @@ def _is_real(seats: Any) -> bool:
 
 
 def _draft(outline: Outline, facts: dict[str, FactCard], brief: Brief, brand: Brand, seats: Any, whole: bool,
-           note: str) -> tuple[str, list[Scene]]:
-    """One pass over the outline: (title, scenes)."""
+           note: str, heuristic: Optional[set[int]] = None) -> tuple[str, list[Scene]]:
+    """One pass over the outline: (title, scenes). Indices of sections built from heuristics go in heuristic."""
     title = outline.title or brief.topic
     raw_scenes: list[Optional[dict]] = [None] * len(outline.sections)
     if whole:
@@ -82,6 +96,8 @@ def _draft(outline: Outline, facts: dict[str, FactCard], brief: Brief, brand: Br
         if raw is None and not whole:
             raw = _ask_section(seats, brief, brand, outline, i, facts, scenes, note)
         scenes.append(_scene(sec, raw, facts, brief, i, outline))
+        if heuristic is not None and (raw is None or not _beats_from_raw(raw, facts)):
+            heuristic.add(i)
     return title, scenes
 
 
@@ -110,7 +126,7 @@ def _scene(sec: OutlineSection, raw: Optional[dict], facts: dict[str, FactCard],
 
 
 def _retry_short_sections(outline: Outline, scenes: list[Scene], facts: dict[str, FactCard], brief: Brief,
-                          brand: Brand, seats: Any) -> list[Scene]:
+                          brand: Brand, seats: Any, heuristic: Optional[set[int]] = None) -> list[Scene]:
     """Rewrite, once, every section under MIN_LENGTH_RATIO of its own target."""
     out = list(scenes)
     for i, sec in enumerate(outline.sections):
@@ -121,6 +137,8 @@ def _retry_short_sections(outline: Outline, scenes: list[Scene], facts: dict[str
         raw = _ask_section(seats, brief, brand, outline, i, facts, out[:i], note)
         if raw is not None:
             out[i] = _scene(sec, raw, facts, brief, i, outline)
+            if heuristic is not None and _beats_from_raw(raw, facts):
+                heuristic.discard(i)
     return out
 
 

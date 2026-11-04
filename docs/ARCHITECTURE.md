@@ -45,6 +45,8 @@ output/<id>/
   inputs/                   copies of the operator's input files
   work/
     research.json outline.json script.json narration.json director_plan.json
+    script_summary.json     director's one paragraph summary of the script (keyed by script hash)
+    fallbacks.json          heuristic fallbacks per stage while a real provider was configured
     shotlist.json captions.json mix.wav mix.json
     narration/              per-scene tts audio + narration.wav
     mg/                     rendered motion graphics (<hash>.mp4, overlays <hash>.mov)
@@ -53,6 +55,29 @@ output/<id>/
     render_stats.json       {"rendered": n, "cached": m, "segments": total}
     profile_override.json   optional per-project StyleProfile delta (edit ops)
 ```
+
+## Batch queue (files on disk)
+
+```
+data/batches/<batch_id>/
+  state.json                BatchState: source, brand, cost_cap_usd, paused, status, items
+                            (input, mode, project_id, status, note, duration, cost, QA percent)
+  batch_report.md           one row per project (rewritten whenever an item changes)
+  batch_report.json         the same, machine readable, with a summary
+  .lock                     held by the runner (same lock module as projects)
+output/<id>/work/cost_cap.json   written when the per-run cost cap stopped the project
+```
+
+`vidbush/jobs/batch.py` discovers inputs (folder, non recursive, sorted; or a
+list file), runs items one at a time through `api/jobs_handler.run_pipeline`
+(the worker's own path: `create_project` then `run_project`), records a
+failed item and moves on, and checks the paused flag between projects.
+`vidbush/jobs/batch_report.py` writes the report. `vidbush/jobs/costcap.py`
+is the per-run cap: `run_project(..., cost_cap=usd)` (default None, no cap)
+checks `ctx.tracker.total_usd` after each stage and stops at that stage
+boundary with the project `needs_review` and `project.status_note` set; a
+plain `resume` finishes it. CLI: `batch`, `batch-status`, `batch-pause`,
+`batch-resume` (`vidbush/batch_cli.py`).
 
 ## Contracts
 
@@ -75,7 +100,7 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | script/parser.py | `parse_script(text, fmt=None) -> Script` | pasted scripts, any length, infers scene purposes and top10 |
 | audio/transcribe.py | `transcribe_words(audio, settings, log) -> list[Word] or None`, `transcribe_to_text(audio, settings, log, seats) -> str` | faster-whisper when available |
 | audio/narration.py | `narrate(script, brand, seats, settings, work_dir, log) -> Narration`, `narration_from_voiceover(audio, script, settings, work_dir, log) -> Narration`, `renarrate_beat(...)` | per-scene TTS, 40 ms crossfade stitch, alignment check, -16 LUFS |
-| shots/director.py | `build_shotlist(project, script, narration, research, profile, brand, seats, rng) -> (ShotList, DirectorPlan)` | ideas per beat (director seat called once per scene or batch of 8 beats, in parallel, shots/seat.py), then the pacing engine and assembler (shots/assembler.py) assign slots; at most 2 full screen cards and 16 s in a row; visual mix measured by shot count |
+| shots/director.py | `build_shotlist(project, script, narration, research, profile, brand, seats, rng) -> (ShotList, DirectorPlan)` | ideas per beat (director seat called once per scene or batch of 8 beats, in sequence, shots/seat.py; every call carries the script summary from work/script_summary.json, the previous two chunks' ideas, the visual anchors so far and the next beat), then the pacing engine and assembler (shots/assembler.py) assign slots; at most 2 full screen cards and 16 s in a row, and at most one free full screen card per `pacing.card_spacing_s` (45 s) outside the hook and recap; visual mix measured by shot count from `StyleProfile.shot_mix()` |
 | source/registry.py | `source_all(shotlist, ctx) -> ShotList`, `source_shot(shot, ctx, queries=None) -> list[Candidate]` | parallel adapters, cap 8, sidecars |
 | judge/director_loop.py | `judge_and_select(shotlist, ctx) -> ShotList` | score, select, re-query, convert to ai_image, never empty |
 | visuals/prepare.py | `prepare_visuals(shotlist, ctx) -> ShotList` | derived crops, optional DepthFlow and ai_video |
@@ -99,7 +124,9 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 motion stage renders it to `work/mg/<hash>.mp4` and adds a Candidate with
 `source=motion`, which becomes `shot.selected`. Overlay shots carry
 `shot.overlay`; the motion stage renders it with alpha to
-`work/mg/<hash>.mov` (qtrle, rgba) and sets `shot.overlay_path`. The motion
+`work/mg/<hash>.mov` (qtrle, rgba) and sets `shot.overlay_path`. A map or
+chart overlay renders as an inset panel over the picture (`vidbush/mg/inset.py`,
+always the Python renderer). The motion
 cache key includes the renderer kind and a renderer version; degraded
 fallback renders are stored under a separate `.fallback` name.
 Data-driven graphics (maps, charts) always draw `source_note` in a corner.
@@ -124,7 +151,21 @@ one by setting `render.renderer` in `config/vidbush.yaml`.
 | ai_video | generated clip | optional |
 | motion_graphic | rendered MotionSpec | none |
 
-### Captions geometry
+#### Visual mix semantics
+
+`StyleProfile.visual_mix` holds the picture mix (footage, footage_overlay,
+image, image_overlay, ai_image, ai_video) plus two animation numbers:
+`full_screen_cards` (motion_graphic shots) and `animated_overlays` (maps,
+charts, callouts, arrows and lower thirds over footage or stills). Animated
+overlays are counted on top of the shot they decorate: `shot_mix()` adds
+them to footage_overlay and image_overlay in the footage to still ratio of
+the picture mix. Documentary default: footage 20, footage_overlay 42.2,
+image 7, image_overlay 18.8, motion_graphic 12. The old `motion_graphic` key
+is read as `full_screen_cards`. QA reports the shot type mix against
+`shot_mix()` and an animation table (full screen cards, shots with an
+overlay, map and chart insets).
+
+## Captions geometry
 
 With letterbox on (2.39:1 at 1920x1080) the active picture is 1920x803 and
 each band is 138 px. Captions sit in the bottom band, vertical center at
@@ -159,7 +200,11 @@ that fail on transport are marked down and probed again every 10 minutes,
 and every call (real or mock) is written to `cost_report.json`. Fallback
 moves only the failed request; the configured order is kept, so one video
 never mixes image styles unless the primary is down, and the 10 minute probe
-returns to the primary. 429 responses back off using Retry-After (up to 6
+returns to the primary. A writer section or director chunk that falls back to
+heuristics while its role has a real provider is recorded with
+`seats.note_fallback(role, stage, scene_id, reason)`; the stage writes the
+notes to `work/fallbacks.json`, QA lists them under `heuristic_fallbacks` and
+the project ends `needs_review`. 429 responses back off using Retry-After (up to 6
 attempts) and never mark a provider down. `options.max_concurrency` limits
 parallel requests per provider. If a role has a configured real provider and
 every real provider fails, the seat raises and the stage fails (resume
@@ -180,3 +225,13 @@ candidates, edit ops, chat revisions, brands, settings and seat status, and
 serves the built UI from `ui/dist`. A worker pool (`vidbush/jobs/runner.py`)
 pulls jobs from a SQLite table in `data/vidbush.db`, one job per project at a
 time. Everything the UI does is also a CLI subcommand.
+
+Batches (`vidbush/api/routes_batches.py`): `GET /api/batches`,
+`GET /api/batches/{id}` (report rows plus state), `POST /api/batches`
+(`{source, brand, profile, format, minutes, cost_cap_usd, id_prefix,
+batch_id, start}`, source is a folder or list file on the server),
+`POST /api/batches/{id}/pause`, `POST /api/batches/{id}/resume`
+(`{retry_failed, cost_cap_usd}`). A batch runs as one worker job of kind
+`batch` whose `project_id` is `batch:<id>`, so it occupies one worker slot
+until the queue is empty or paused, and a server restart requeues it. The UI
+Queue page (`ui/src/pages/Queue.jsx`, `#/queue/<id>`) polls these routes.

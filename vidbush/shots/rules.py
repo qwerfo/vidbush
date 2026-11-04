@@ -9,13 +9,17 @@ preserving swaps inside a family, trim long text cards toward the motion
 graphic min, break runs of full screen cards (more than two in a row or about
 16 s) by turning one into footage, and drop overlay text repeated within 30 s
 (another overlay, or the plain sibling type). Shot times stay contiguous.
+space_cards() (run last by the director) keeps at most one free full screen
+card per profile.pacing.card_spacing_s outside the hook and recap: a card
+that breaks it becomes footage, and a map or chart card moves onto that
+footage as an inset overlay so the information stays on screen.
 """
 from __future__ import annotations
 
 from typing import Callable, Optional
 
 from ..models import OVERLAY_TYPES, MotionKind, MotionSpec, Shot, ShotType, StyleProfile, VisualIdea
-from .pacing import MAX_MG_RUN, MAX_MG_RUN_S, bounds
+from .pacing import MAX_MG_RUN, MAX_MG_RUN_S, bounds, card_too_close
 
 MIN_SHOT = 1.5
 FRAMINGS = ("full", "tight", "detail")
@@ -284,9 +288,14 @@ def break_card_runs(shots: list[Shot], ideas: list[VisualIdea], rebind: Rebind, 
 # ---------------------------------------------------------------- overlay text
 
 def _overlay_key(spec: MotionSpec) -> str:
+    """What the viewer reads: the title or label; an untitled map or chart inset by what it draws."""
     p = spec.payload
     text = p.get("title") or p.get("label") or ""
-    return " ".join(str(text).lower().split())
+    key = " ".join(str(text).lower().split())
+    if not key and spec.kind in (MotionKind.map, MotionKind.bar_chart, MotionKind.line_chart):
+        drawn = [m.get("label", "") for m in p.get("markers", [])] + list(p.get("labels", []) or [])
+        key = f"{spec.kind.value}:{' '.join(sorted(str(d).lower() for d in drawn if isinstance(d, str)))}"
+    return key
 
 
 def dedupe_overlays(shots: list[Shot], overlay_pool: OverlayPool, locked: frozenset[str] = frozenset()) -> None:
@@ -324,3 +333,51 @@ def dedupe_overlays(shots: list[Shot], overlay_pool: OverlayPool, locked: frozen
             s.type, s.overlay = typ, spec
             used.append((_overlay_key(spec), s.start, s.end))
             lost[typ] -= 1
+
+
+# ---------------------------------------------------------------- card spacing
+
+INSET_CARD_KINDS = {MotionKind.map, MotionKind.bar_chart, MotionKind.line_chart}
+
+
+def space_cards(shots: list[Shot], profile: StyleProfile, exempt: list[tuple[float, float]], ideas: list[VisualIdea],
+                rebind: Rebind, footage_for: FootageFor, overlay_for: OverlayFor,
+                locked: frozenset[str] = frozenset()) -> int:
+    """At most one full screen card per card_spacing_s outside the exempt ranges; returns cards demoted.
+
+    Locked cards (number cards, title card, recap) always stay and count against their neighbours.
+    """
+    spacing = profile.pacing.card_spacing_s
+    if spacing <= 0:
+        return 0
+    kept = [s.start for s in shots if s.type == ShotType.motion_graphic and s.id in locked]
+    demoted = 0
+    for k, s in enumerate(shots):
+        if s.type != ShotType.motion_graphic or s.id in locked:
+            continue
+        if not card_too_close(s.start, kept, spacing, exempt):
+            kept.append(s.start)
+            continue
+        if demote_card(shots, k, ideas, rebind, footage_for, overlay_for):
+            demoted += 1
+        else:
+            kept.append(s.start)
+    return demoted
+
+
+def demote_card(shots: list[Shot], k: int, ideas: list[VisualIdea], rebind: Rebind, footage_for: FootageFor,
+                overlay_for: OverlayFor) -> bool:
+    """Turn a free card into footage of its beat; a map or chart rides on it as an inset overlay."""
+    shot = shots[k]
+    spec = shot.motion
+    idx = footage_for(shot)
+    if idx is None:
+        return False
+    shot.type = ShotType.footage
+    rebind(shot, ideas[idx], idx)
+    if spec is not None and spec.kind in INSET_CARD_KINDS:
+        shot.type = ShotType.footage_overlay
+        shot.overlay = spec.model_copy(update={"background": "transparent"})
+    elif not _creates_run(shots, k, ShotType.footage_overlay):
+        _set_type(shot, ShotType.footage_overlay, overlay_for)
+    return True

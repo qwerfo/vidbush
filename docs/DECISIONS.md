@@ -76,3 +76,29 @@ One line each: the decision and why.
 - max_tokens is read from provider or role options in seats.yaml and never sent unless set to a positive int; a 400 pointing at max_completion_tokens teaches a rename quirk. The SPEC line now says no cap by default.
 - LLM timeouts resolve per role (writer 600 s, others 180 s); a caller asking for longer wins, and options.timeout_s replaces the role default outright.
 - A reply with finish_reason length or max_tokens is continued once (partial as an assistant message plus a continue prompt, no response_format); a second truncation or unparseable joined JSON raises RefusalError, which fails over to the next provider without marking the first one down. Usage of both calls is summed.
+
+## Visual mix, director context and batch queue (parallel lane)
+
+- Visual mix: animation is split into `full_screen_cards` and `animated_overlays` keys inside `visual_mix`. Overlays are counted on top of the shot they decorate, so they are added to footage_overlay and image_overlay in the picture's footage to still ratio (41 to 17). The documentary default becomes footage 20, footage_overlay 42.2, image 7, image_overlay 18.8, motion_graphic 12: the reference's raw shares stay exact and the total stays 100.
+- Old profiles that use the `motion_graphic` key read it as `full_screen_cards`, so learned and older profiles keep working. The learner now writes `full_screen_cards` with `animated_overlays` 0, because a classifier already counts the overlays it sees as overlay shots.
+- The top10 profile uses 20 full screen cards and 22 overlays (42 in total). Its number cards are full screen by design and are always kept.
+- The 45 s card spacing is enforced twice: as a planner penalty, and in a final `space_cards` pass after the chart guarantee. Structural cards (number cards, title card, recap) are never removed and count against free cards near them. When the cap and the mix disagree, the cap wins.
+- A map or chart used as an overlay renders as an inset panel (45 percent of the frame width, upper right, larger type). Insets always use the Python renderer, even when Remotion is configured, because Remotion has no inset composition.
+- A free map or chart card removed by the spacing cap keeps its content as an inset on footage of its beat, so the information stays on screen.
+- An inset map is offered only when it shows a place that no map showed in the last 60 s. Without that limit the Panama scripts put a map on about 20 of 70 shots.
+- Insets are kept at least 15 s apart, and the same map or chart is not shown again within 3 minutes. An inset is information the viewer has to read, and the first demo render put one on 43 percent of shots, back to back in the opening.
+- MG_RENDER_VERSION is now mg-3, because chart value labels now always fit inside the plot and cached charts must re-render.
+- Acceptance adds three checks: cards_sparing (full screen cards at most 25 percent of shots), overlays_on_picture, and inset_map_or_chart.
+- Director chunks now run one after another instead of four in parallel, because each call needs the ideas chosen before it. This costs wall time on long scripts: about one call per 8 beats, in sequence.
+- The script summary comes from the director seat (task `script_summary`). It is cached in work/script_summary.json, keyed by a hash of the script, so a re-run of the shot list does not pay for it again. Its fallback is the title plus the first sentence of every scene.
+- The visual anchors so far are the research anchors that the chosen ideas mention. Script and voiceover projects have no research, so they get the recent must_show subjects instead.
+- The director may now propose map and chart overlays. These get the same coordinate and fact checks as motion ideas and render as insets. An inset map must draw a marker, a route or an arrow.
+- Heuristic fallback notes are recorded through `seats.note_fallback`, and only when the role has a configured real provider, because mock mode is already reported as mock. Each stage writes its notes to work/fallbacks.json and replaces its own earlier entries, so a re-run that succeeds clears them.
+- A director chunk counts as a fallback when the call fails or returns no valid idea. The script summary fallback is reported with scene id "all". A writer section counts when its beats come from fact claims.
+- Batch cost cap is checked after each stage against the project's cost_report total (which includes earlier runs), so a run stops at the next stage boundary, never mid stage; stopping inside a stage would leave half written outputs.
+- A capped project ends as needs_review with project.status_note and work/cost_cap.json; the batch shows it as capped. No new project status value, so the UI, API and final status logic stay unchanged.
+- No cap check after the last stage: the video is finished by then, so stopping saves nothing.
+- A batch runs as one worker job (kind batch, project_id batch:<id>) that runs its projects in sequence through jobs_handler.run_pipeline, so batches reuse the job table's crash recovery and the API worker's exact pipeline path.
+- Batch pause is a flag in state.json read between projects; the running project always finishes. A per-item resume uses the existing stage resume, so an interrupted batch never recreates a project it already started.
+- Batch project ids come from file stems like run (unique suffix _2, _3 within a batch) and replace an existing project of the same id, matching run.
+- Batch CLI uses flat names (batch, batch-status, batch-pause, batch-resume) so `batch <folder>` stays a single positional command.

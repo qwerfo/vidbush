@@ -1,7 +1,10 @@
 id: top10_default
 name: Top 10 default
 palette: top10_bold
-visual_mix: {footage: 20, footage_overlay: 21, image: 7, image_overlay: 10, motion_graphic: 42, ai_image: 0, ai_video: 0}
+# Share of shot count. full_screen_cards are motion_graphic shots; animated_overlays (maps, charts,
+# callouts, arrows, lower thirds) ride on top of footage and image shots and add to their overlay share.
+visual_mix: {footage: 20, footage_overlay: 21, image: 7, image_overlay: 10, full_screen_cards: 20,
+             animated_overlays: 22, ai_image: 0, ai_video: 0}
 pacing:
   footage: {min: 3, max: 7, mean: 4.8}
   footage_overlay: {min: 3, max: 7, mean: 5.0}
@@ -13,6 +16,7 @@ pacing:
   hook_seconds: 60
   hook_multiplier: 0.7
   jitter: 0.25
+  card_spacing_s: 45  # at most one full screen card per 45 s outside the hook and recap
 captions: {enabled: true, font: Inter, weight: ExtraBold, size: 64, color: "#FFFFFF", outline_color: "#000000",
            outline: 4, shadow: 0, highlight_color: "#FFD84A", uppercase: false, min_words: 3, max_words: 5,
            position: bottom_band, band_height: 0.5}

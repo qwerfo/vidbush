@@ -4,9 +4,11 @@ import Projects from "./pages/Projects.jsx";
 import Project from "./pages/Project.jsx";
 import Brands from "./pages/Brands.jsx";
 import SettingsPage from "./pages/Settings.jsx";
+import Queue from "./pages/Queue.jsx";
 
 const NAV = [
   ["projects", "Projects"],
+  ["queue", "Queue"],
   ["brands", "Brands"],
   ["settings", "Settings"],
 ];
@@ -18,6 +20,7 @@ export default function App() {
   if (page === "p" && arg) body = <Project id={arg} key={arg} />;
   else if (page === "brands") body = <Brands initial={arg} />;
   else if (page === "settings") body = <SettingsPage />;
+  else if (page === "queue") body = <Queue initial={arg} key={arg || "queue"} />;
   else body = <Projects />;
   return (
     <div className="app">

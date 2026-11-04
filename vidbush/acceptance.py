@@ -65,8 +65,23 @@ def check_project(settings: Settings, project_id: str, min_minutes: float = 3.0)
     checks["chart"] = bool({"bar_chart", "line_chart"} & kinds)
     checks["title_card"] = "title_card" in kinds
     checks["every_shot_selected"] = all(s.selected for s in sl.shots)
+    checks.update(_animation_checks(sl, facts))
     checks.update(_text_checks(root))
     return {"ok": all(checks.values()), "checks": checks, "facts": facts}
+
+
+CARD_SHARE_MAX = 25.0  # percent of shots; above this the video reads as a slideshow of cards
+
+
+def _animation_checks(sl: ShotList, facts: dict[str, Any]) -> dict[str, bool]:
+    """Animation moves over the picture: full screen cards stay a minority and some map or chart rides on
+    footage or a still as an inset."""
+    from .judge.qa import animation_share
+    anim = animation_share(sl)
+    facts["animation"] = anim
+    return {"cards_sparing": anim["full_screen_cards"] <= CARD_SHARE_MAX,
+            "overlays_on_picture": anim["overlay_shots"] >= anim["full_screen_cards"],
+            "inset_map_or_chart": anim["inset_overlays"] > 0}
 
 
 def _text_checks(root: Path) -> dict[str, bool]:

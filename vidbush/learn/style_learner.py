@@ -20,7 +20,7 @@ from typing import Any, Optional
 import cv2
 
 from ..config import Settings, load_style_profile, save_yaml
-from ..models import SHOT_TYPES, PacingProfile, StyleProfile, TypePacing
+from ..models import CARDS_KEY, OVERLAYS_KEY, SHOT_TYPES, PacingProfile, StyleProfile, TypePacing
 from ..providers.base import CostTracker
 from ..providers.seats import Seats
 from ..util import slug
@@ -123,8 +123,9 @@ def _measured(st: DurationStats, floor: float) -> TypePacing:
 
 
 def _default_mean(profile: StyleProfile) -> float:
-    total = sum(profile.visual_mix.values()) or 1.0
-    return sum(profile.pacing.for_type(t).mean * w for t, w in profile.visual_mix.items() if t in SHOT_TYPES) / total
+    mix = profile.shot_mix()
+    total = sum(mix.values()) or 1.0
+    return sum(profile.pacing.for_type(t).mean * w for t, w in mix.items() if t in SHOT_TYPES) / total
 
 
 def build_pacing(base: StyleProfile, durations: list[float], labels: Optional[list[str]],
@@ -150,7 +151,8 @@ def build_pacing(base: StyleProfile, durations: list[float], labels: Optional[li
 
 
 def visual_mix(durations: list[float], labels: list[str], default: dict[str, float]) -> dict[str, float]:
-    """Share of shot count per shot type in percent (the planner's unit). Talking heads count as footage.
+    """Share of shot count per shot type in percent (the planner's unit), with motion graphics reported as
+    full_screen_cards and animated_overlays 0. Talking heads count as footage.
 
     durations is kept for the call signature; screen time is reported in provenance, not in the mix.
     """
@@ -162,7 +164,12 @@ def visual_mix(durations: list[float], labels: list[str], default: dict[str, flo
     total = sum(acc.values())
     if total <= 0:
         return dict(default)
-    return {t: round(100.0 * v / total, 1) for t, v in acc.items()}
+    out = {t: round(100.0 * v / total, 1) for t, v in acc.items()}
+    # A classifier sees whole frames: a motion graphic shot is a full screen card, and overlays it saw are
+    # already counted in the overlay types, so no extra animated overlays are added on top.
+    out[CARDS_KEY] = out.pop("motion_graphic", 0.0)
+    out[OVERLAYS_KEY] = 0.0
+    return out
 
 
 def screen_time_mix(durations: list[float], labels: list[str]) -> dict[str, float]:

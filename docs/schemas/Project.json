@@ -280,6 +280,11 @@
       "default": 0,
       "title": "Seed",
       "type": "integer"
+    },
+    "status_note": {
+      "default": "",
+      "title": "Status Note",
+      "type": "string"
     }
   },
   "required": [

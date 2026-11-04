@@ -214,3 +214,11 @@ legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
   .table.projects th:nth-child(6), .table.projects td:nth-child(6) { display: none; }
 }
 .panel textarea { width: 100%; }
+
+/* batch queue */
+.pill-capped, .pill-paused, .pill-interrupted { background: rgba(242, 179, 61, .15); color: var(--warn); }
+.pill-skipped { background: #2a3038; color: var(--muted); }
+.table.queue td.note { max-width: 320px; word-break: break-word; }
+.table.queue { font-size: 13px; }
+.side-list a .pill { margin-left: 6px; }
+.table-wrap { overflow-x: auto; }

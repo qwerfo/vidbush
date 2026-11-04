@@ -101,6 +101,12 @@ class CostTracker:
             if self.path:
                 write_json(self.path, self.report)
 
+    @property
+    def total_usd(self) -> float:
+        """Running total of every recorded call (includes earlier runs of the project)."""
+        with self._lock:
+            return float(self.report.total_usd)
+
     def finalize(self, minutes: float) -> CostReport:
         with self._lock:
             self.report.per_minute_usd = round(self.report.total_usd / max(minutes, 0.01), 5)

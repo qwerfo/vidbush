@@ -150,7 +150,8 @@ def test_planner_mix_still_within_five_points_by_count() -> None:
     for seed in (0, 4, 9):
         slots = plan_slots(nar.duration + 1.0, profile(), random.Random(seed), nar.words)
         shares = type_shares([s.type for s in slots])
-        assert abs(shares.get("motion_graphic", 0) - 42) <= 5
+        for t, target in profile().shot_mix().items():
+            assert abs(shares.get(t, 0) - target) <= 5, (seed, t, shares)
 
 
 # ---------------------------------------------------------------- overlays

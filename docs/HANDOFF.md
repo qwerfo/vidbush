@@ -17,13 +17,19 @@ self-contained: you do not need any earlier conversation to use it.
 | A4 `python -m vidbush serve` | UI and API on port 8080. Create a project, watch stages and log, play the video, open a shot, swap it: only that segment re-renders. Checked in headless Chromium with no console errors. |
 | A5 `revise demo "make the first 30 seconds faster and replace shot 7 with an AI image"` | Maps to `retime_section [0, 30] x0.7` then `change_type shot_007 -> ai_image`, applies both, re-renders only changed segments. |
 | A6 `learn-style fixtures/reference_video.mp4 test_profile` | Finds 12 shots, the 2.39 letterbox and the caption band; writes `config/style_profiles/test_profile.yaml`. |
-| A7 pytest | 700+ unit tests plus the slow demo integration test (`tests/test_integration_demo.py`), which runs the demo twice and asserts the second assembly renders 0 segments. |
+| A7 pytest | 750+ unit tests plus the slow demo integration test (`tests/test_integration_demo.py`), which runs the demo twice and asserts the second assembly renders 0 segments. |
 | A8 crash and resume | `VIDBUSH_FAIL_AT=judge` stops the run at stage 8; `resume demo` skips intake through sourcing and finishes. |
 | A9 Docker | Image builds (ubuntu 24.04 base), `docker compose up` serves the UI and API on 8080, and a project rendered inside the container. |
 | A10 em dash | Zero in the repo; `tests/test_core_no_em_dash.py` guards it. |
 
-Project status values are `done`, `needs_review` (finished, but some role you
-configured as real fell back to mock), and `failed`.
+Project status values are `done`, `needs_review` and `failed`. A project ends
+`needs_review` when it finished but one of these happened:
+
+- a role you configured as real fell back to mock;
+- a writer section or director chunk fell back to heuristics while a real
+  provider was configured (listed by scene id under "Heuristic fallbacks" in
+  `qa_report.md`);
+- a batch cost cap stopped the run (section 4b).
 
 ### What is mock in the demo (and why)
 
@@ -247,6 +253,102 @@ The whisper model (about 150 MB) downloads on first use.
   `sources.allow_youtube` in `config/vidbush.yaml`, or `YOUTUBE_ENABLED` in `.env`.
 - **Outputs:** `output/<project_id>/`. Logs: `data/logs/<project_id>.jsonl`.
 
+## 4a. Visual mix, card spacing and director context
+
+The style profile splits animation into two numbers in `visual_mix`:
+
+- `full_screen_cards`: title, number, chart or map as a full frame.
+- `animated_overlays`: maps, charts, callouts, arrows and lower thirds moving
+  over footage or a still. They are counted on top of the shot they decorate.
+
+Documentary default: `{footage: 20, footage_overlay: 21, image: 7,
+image_overlay: 10, full_screen_cards: 12, animated_overlays: 30}`. That turns
+into these shot targets: footage 20, footage with overlay 42.2, image 7,
+image with overlay 18.8, full screen cards 12 (percent of shots).
+
+A map or chart over the picture is drawn as a framed inset panel in the
+upper right. `pacing.card_spacing_s: 45` allows at most one free full screen
+card per 45 seconds outside the hook and the recap (0 turns it off). Top 10
+number cards always stay. Old profiles with a `motion_graphic` key still
+load; that number is read as full screen cards. `qa_report.md` has an
+Animation table: cards, shots with an overlay, and map and chart insets.
+
+Every director call sees:
+
+- a one paragraph summary of the whole script, cached in
+  `work/script_summary.json`;
+- the ideas chosen for the previous two chunks;
+- the visual anchors used so far;
+- the next beat's narration.
+
+Director calls therefore run one after another, not in parallel.
+
+## 4b. Batch queue (many videos overnight)
+
+Put briefs (`.md` with a `topic` front matter), scripts (`.md` or `.txt`)
+and voiceovers (`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`) in one folder and run
+them one after another for one brand. A script with the same name as a
+voiceover (`narration.mp3` plus `narration.md`) is that voiceover's script,
+not a separate video. Sub folders are not read. Instead of a folder you can
+pass a list file: one path per line, blank lines and `# comments` ignored,
+relative paths are relative to the list file.
+
+Windows (PowerShell):
+
+```powershell
+python -m vidbush batch briefs --brand default
+python -m vidbush batch briefs\tonight.txt --brand history --cost-cap 3 --id-prefix ep_
+python -m vidbush batch-status
+python -m vidbush batch-status <batch_id>
+python -m vidbush batch-pause <batch_id>
+python -m vidbush batch-resume <batch_id>
+```
+
+Docker:
+
+```bash
+docker compose exec vidbush python -m vidbush batch /app/data/briefs --brand default
+```
+
+```bash
+docker compose exec vidbush python -m vidbush batch-status
+```
+
+(Put the folder somewhere the container sees, for example `./data/briefs`
+on the host, which is `/app/data/briefs` inside.)
+
+- Optional flags of `batch`: `--profile`, `--format`, `--minutes` (same as
+  `run`), `--cost-cap <usd>`, `--id-prefix <text>`, `--batch-id <id>`,
+  `--plan` (queue and print the plan, do not run), `--quiet`. Project ids
+  come from the file names like `run` (a second file with the same name gets
+  `_2`). An existing project with the same id is replaced, like `run`.
+- **Cost cap:** each project run stops once its cost (from
+  `cost_report.json`) passes the cap, default `batch.cost_cap_usd: 5.0` in
+  `config/vidbush.yaml` (`--cost-cap 0` or `null` in the config means no cap).
+  The check happens between stages, so a run stops at the next stage
+  boundary and can spend a little more than the cap inside the stage that
+  crossed it. The project ends as `needs_review` with the reason in
+  `project.json` (`status_note`), `work/cost_cap.json` and the log, and the
+  batch shows it as `capped`. Finish it later with
+  `python -m vidbush resume <id>` (no cap) or `resume <id> --cost-cap 10`.
+  `batch-resume <batch_id> --retry-failed --cost-cap 10` requeues every
+  failed and capped project of a batch with a higher cap.
+- **Failures** do not stop the batch: the error is recorded and the next
+  project starts.
+- **Pause** takes effect between projects: the project that is running
+  finishes, then the batch stops. `batch-resume` continues from the first
+  unfinished project; a project that was interrupted (Ctrl+C, crash, server
+  restart) resumes from its own first unfinished stage.
+- **Report:** `data/batches/<batch_id>/batch_report.md` (and
+  `batch_report.json`), one row per project: id, input, mode, status
+  (queued, running, done, needs_review, capped, failed, skipped), duration,
+  total cost, cost per minute, QA percent above the judge threshold, note.
+  The path is printed at the end.
+- **UI:** the Queue page (http://localhost:8080/#/queue) shows the same
+  table, refreshes itself, and has New batch (a folder or list file path on
+  the machine that runs Vidbush), Pause and Resume. A batch started from the
+  UI runs in the server's worker and continues after a server restart.
+
 ## 5. Cost expectations per finished minute (real providers)
 
 The demo made these calls for 4.3 minutes of video: 1 research, 1 outline,
@@ -308,7 +410,13 @@ Known gaps:
 - No live provider has been exercised (sandbox). Expect small request-shape
   fixes on first contact; the per-model quirk learner handles the common ones.
 - The heuristic fallbacks (used only when no LLM answers) give thin scripts
-  and generic shot intents. With a real LLM they are not used.
+  and generic shot intents. With a real LLM they are not used. If one is
+  used anyway, QA names the scene and the project ends needs_review.
+- Director calls now run in sequence (they carry the previous ideas), so the
+  shot list stage takes longer on long scripts than before.
+- The map and chart inset look was checked on single frames only. Judge it
+  on a real render and tune `INSET_FRACTION` in `vidbush/mg/inset.py` if
+  needed.
 - The bundled music is generated by code (CC0) and only checked by metrics,
   not by ear. Use your own library for real videos.
 - The local pre-filter (section 8) catches burned-in subtitles, static corner
@@ -329,6 +437,8 @@ Next three improvements, in order:
    `judge.prefilter` thresholds.
 3. **Batch and schedule:** a queue page that takes a list of briefs per brand
    and renders overnight, with a per-run cost cap.
+   The queue, cost cap and Queue page are now built (section 4b); what is
+   left is a schedule (start a batch at a set time).
 
 ## 8. Footage quality and YouTube options (new)
 

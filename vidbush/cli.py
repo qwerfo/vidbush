@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 import yaml
 
+from .batch_cli import BATCH_COMMANDS, add_batch_parsers
 from .config import Settings, load_settings
 from .models import Brief, InputMode, VideoFormat
 
@@ -71,7 +72,8 @@ def cmd_demo(settings: Settings, args: argparse.Namespace) -> int:
 
 def cmd_resume(settings: Settings, args: argparse.Namespace) -> int:
     from .jobs.pipeline import run_project
-    proj = run_project(settings, args.project, force=args.force or [], echo=not args.quiet)
+    proj = run_project(settings, args.project, force=args.force or [], echo=not args.quiet,
+                       cost_cap=getattr(args, "cost_cap", None))
     return _report(settings, proj)
 
 
@@ -247,6 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
     rs.add_argument("project")
     rs.add_argument("--force", nargs="*", help="stages to rerun even if done")
     rs.add_argument("--quiet", action="store_true")
+    rs.add_argument("--cost-cap", type=float, default=None, help="stop (needs_review) once the project spent this many USD")
     sv = sub.add_parser("serve", help="start the API and UI")
     sv.add_argument("--host", default="0.0.0.0")
     sv.add_argument("--port", type=int, default=8080)
@@ -272,6 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     ck = sub.add_parser("check", help="verify a finished project against the acceptance checks")
     ck.add_argument("project")
     ck.add_argument("--min-minutes", type=float, default=3.0)
+    add_batch_parsers(sub)
     return p
 
 
@@ -310,6 +314,7 @@ COMMANDS = {"demo": cmd_demo, "run": cmd_run, "resume": cmd_resume, "serve": cmd
             "regenerate": _shot_cmd("regenerate_ai", "operator asked for an AI image", prompt_delta="prompt"),
             "duration": _shot_cmd("set_duration", "operator set the duration", seconds="seconds"),
             "remove-overlay": _shot_cmd("remove_overlay", "operator removed the overlay")}
+COMMANDS.update(BATCH_COMMANDS)
 
 
 def main(argv: Optional[list[str]] = None) -> int:

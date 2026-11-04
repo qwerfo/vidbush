@@ -60,4 +60,9 @@ export const api = {
   brand: (id) => request("GET", `/api/brands/${enc(id)}`),
   saveBrand: (id, data) => request("PUT", `/api/brands/${enc(id)}`, data),
   styleProfiles: () => request("GET", "/api/style_profiles"),
+  batches: () => request("GET", "/api/batches"),
+  batch: (id) => request("GET", `/api/batches/${enc(id)}`),
+  createBatch: (body) => request("POST", "/api/batches", body),
+  pauseBatch: (id) => request("POST", `/api/batches/${enc(id)}/pause`),
+  resumeBatch: (id, body = {}) => request("POST", `/api/batches/${enc(id)}/resume`, body),
 };

@@ -91,5 +91,6 @@ def style_profiles(settings: Settings = Depends(get_settings)) -> list[dict[str,
     for pid in list_ids(settings, "style_profiles"):
         prof = load_style_profile(settings, pid)
         out.append({"id": pid, "name": prof.name or pid, "palette": prof.palette, "top10": prof.top10,
-                    "visual_mix": prof.visual_mix, "learned": bool(prof.provenance)})
+                    "visual_mix": prof.visual_mix, "shot_mix": prof.shot_mix(),
+                    "card_spacing_s": prof.pacing.card_spacing_s, "learned": bool(prof.provenance)})
     return out

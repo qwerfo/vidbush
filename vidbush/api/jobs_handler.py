@@ -11,7 +11,8 @@ from ..jobs.runner import Job, upsert_project_row
 from ..models import EditOp, Project
 from ..util import write_json
 
-JOB_KINDS = ("run", "resume", "apply_ops")
+JOB_KINDS = ("run", "resume", "apply_ops", "batch")
+BATCH_JOB_PREFIX = "batch:"  # Job.project_id of a batch job is "batch:<batch_id>"
 
 
 def handle_job(settings: Settings, job: Job) -> None:
@@ -21,18 +22,26 @@ def handle_job(settings: Settings, job: Job) -> None:
         _run(settings, job.project_id, payload)
     elif job.kind == "apply_ops":
         _apply_ops(settings, job, payload)
+    elif job.kind == "batch":
+        from ..jobs.batch import run_batch
+        run_batch(settings, job.project_id.removeprefix(BATCH_JOB_PREFIX), echo=False)
     else:
         raise ValueError(f"unknown job kind: {job.kind}")
 
 
 def _run(settings: Settings, project_id: str, payload: dict[str, Any]) -> None:
+    run_pipeline(settings, project_id, payload)
+
+
+def run_pipeline(settings: Settings, project_id: str, payload: dict[str, Any], echo: bool = False) -> Project:
+    """The worker's pipeline run (DB row kept in sync); batches call it too. payload: force, cost_cap_usd."""
     from ..jobs import pipeline
 
     def progress(project: Project) -> None:
         upsert_project_row(settings, project)
 
-    pipeline.run_project(settings, project_id, echo=False, on_progress=progress,
-                         force=payload.get("force") or ())
+    return pipeline.run_project(settings, project_id, echo=echo, on_progress=progress,
+                                force=payload.get("force") or (), cost_cap=payload.get("cost_cap_usd"))
 
 
 def _apply_ops(settings: Settings, job: Job, payload: dict[str, Any]) -> None:

@@ -90,6 +90,10 @@ class CostConfig(BaseModel):
     video_per_second_usd: float = 0.05
 
 
+class BatchConfig(BaseModel):
+    cost_cap_usd: Optional[float] = 5.0  # per project run in a batch; None or 0 = no cap
+
+
 class RenderConfig(BaseModel):
     renderer: str = "python"  # python | remotion
     preset: str = "veryfast"
@@ -118,6 +122,7 @@ class Settings(BaseModel):
     judge: JudgeConfig = Field(default_factory=JudgeConfig)
     cost: CostConfig = Field(default_factory=CostConfig)
     render: RenderConfig = Field(default_factory=RenderConfig)
+    batch: BatchConfig = Field(default_factory=BatchConfig)
     offline: bool = False  # never touch the network (tests, sandbox)
     allow_mock_fallback: bool = False  # True: a role whose real providers all fail falls back to mock instead of failing the stage
     fail_at_stage: Optional[str] = None  # test hook: raise when this stage starts
@@ -158,6 +163,7 @@ def load_settings(root: Optional[Path] = None, overrides: Optional[dict[str, Any
         judge=JudgeConfig(**app.get("judge", {})),
         cost=CostConfig(**app.get("cost", {})),
         render=RenderConfig(**app.get("render", {})),
+        batch=BatchConfig(**(app.get("batch") or {})),
         offline=_truthy(env.get("VIDBUSH_OFFLINE", app.get("offline", False))),
         allow_mock_fallback=_truthy(env.get("VIDBUSH_ALLOW_MOCK_FALLBACK", app.get("allow_mock_fallback", False))),
         fail_at_stage=env.get("VIDBUSH_FAIL_AT") or None,

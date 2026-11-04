@@ -2,8 +2,9 @@
 
 Layer one gathers visual ideas per beat from the director seat (validated:
 pydantic, map coordinates checked against the gazetteer, chart numbers
-checked against fact cards) merged with heuristic ideas so every beat has
-footage, still and motion ideas. Layer two is the pacing engine, which plans
+checked against fact cards; every call sees the script summary, the previous
+two chunks' ideas, the anchors so far and the next beat, see seat.py) merged
+with heuristic ideas so every beat has footage, still and motion ideas. Layer two is the pacing engine, which plans
 typed slots over [0, narration.duration + 1.0]; each slot takes the best
 unused idea of its family from the beat at its midpoint. rules.py then
 polishes the sequence.
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import random
 import re
+from pathlib import Path
 from typing import Any, Optional
 
 from ..mg import builders as b
@@ -31,22 +33,30 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
                    profile: StyleProfile, brand: Brand, seats: Any,
                    rng: random.Random) -> tuple[ShotList, DirectorPlan]:
     """Ideas per beat (seat plus heuristics), pacing slots, rules; returns the ShotList and the merged plan."""
-    from .rules import apply_rules
+    from .rules import apply_rules, space_cards
     log = getattr(seats, "log", None) or NullLogger()
     total = round(narration.duration + 1.0, 3)
     spans = beat_spans(script, narration)
     topic = I.topic_of(script.title or project.title, research)
     bcs = I.beat_contexts(script.scenes, research, topic)
-    llm = director_ideas(script, spans, research, profile, brand, seats, log)
+    work = Path(project.paths.work) if project.paths and project.paths.work else None
+    llm = director_ideas(script, spans, research, profile, brand, seats, log,
+                         work if work is not None and work.is_dir() else None)
     ideas = merge_ideas(llm, bcs, research, profile.palette, rng)
     top10 = profile.top10 or script.format == VideoFormat.top10
     anchors = structural_anchors(script, spans, profile, top10, total, topic)
-    slots = plan_slots(total, profile, rng, narration.words, scene_starts(script, spans), anchors)
+    exempt = card_exempt_ranges(script, spans, profile, anchors)
+    slots = plan_slots(total, profile, rng, narration.words, scene_starts(script, spans), anchors, exempt)
     ctx = _Assembler(script, spans, bcs, ideas, profile, rng)
     shots = ctx.assign(slots)
     shots = apply_rules(shots, ctx.ideas, ctx.idea_of, profile, ctx.rebind, ctx.overlay_for, frozenset(ctx.locked),
                         overlay_pool=ctx.overlay_pool, footage_for=ctx.footage_for)
     ensure_chart(shots, ctx, spans, log)
+    demoted = space_cards(shots, profile, exempt, ctx.ideas, ctx.rebind, ctx.footage_for, ctx.overlay_for,
+                          frozenset(ctx.locked))
+    if demoted:
+        log.info("full screen cards moved onto footage (card spacing)", cards=demoted,
+                 spacing_s=profile.pacing.card_spacing_s)
     sl = ShotList(project_id=project.id, duration=total, shots=shots)
     _finalize(sl, profile)
     log.info("shot list built", shots=len(sl.shots), ideas=len(ctx.ideas), llm_ideas=len(llm),
@@ -58,11 +68,12 @@ CHART_KINDS = (MotionKind.bar_chart, MotionKind.line_chart)
 
 
 def ensure_chart(shots: list[Shot], ctx: _Assembler, spans: dict[str, tuple[float, float]], log: Any) -> None:
-    """Guarantee one data chart when any beat has chartable numbers, shown while that beat is narrated.
+    """Guarantee one data chart (full screen or inset) when any beat has chartable numbers, shown while that
+    beat is narrated.
 
     Rebinds a free motion shot over the chart's beat, else turns a long enough free shot over it into one.
     """
-    if any(s.motion and s.motion.kind in CHART_KINDS for s in shots):
+    if any(sp is not None and sp.kind in CHART_KINDS for s in shots for sp in (s.motion, s.overlay)):
         return
     charts = [i for i in ctx.ideas if i.family == "motion" and i.motion and i.motion.kind in CHART_KINDS]
     mg_min = ctx.profile.pacing.motion_graphic.min
@@ -90,6 +101,18 @@ def ensure_chart(shots: list[Shot], ctx: _Assembler, spans: dict[str, tuple[floa
 
 def _mg_neighbours(shots: list[Shot], k: int) -> int:
     return sum(1 for j in (k - 1, k + 1) if 0 <= j < len(shots) and shots[j].type == ShotType.motion_graphic)
+
+
+def card_exempt_ranges(script: Script, spans: dict[str, tuple[float, float]], profile: StyleProfile,
+                       anchors: list[Anchor]) -> list[tuple[float, float]]:
+    """Where the card spacing cap does not apply: the hook (first hook_seconds) and the recap (the recap
+    anchor, and any scene titled Recap), since a fast open and a closing summary are made of cards."""
+    out = [(0.0, profile.pacing.hook_seconds)]
+    out += [(a.start, a.start + a.duration) for a in anchors if a.tag == "recap"]
+    for sc in script.scenes:
+        if re.search(r"\brecap\b", sc.title, re.I) and sc.beats and sc.beats[0].id in spans:
+            out.append((spans[sc.beats[0].id][0], spans[sc.beats[-1].id][1]))
+    return out
 
 
 # ---------------------------------------------------------------- timing helpers
