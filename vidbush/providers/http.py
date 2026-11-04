@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Optional
 
 import requests
@@ -80,24 +81,33 @@ def post_stream(url: str, payload: dict[str, Any], headers: Optional[dict[str, s
     text: list[str] = []
     usage: dict[str, Any] = {}
     finish = None
+    done = False
+    deadline = time.monotonic() + timeout  # keepalive pings must not extend the call forever
     try:
         with requests.post(url, json=body, headers=_h(headers), timeout=timeout, stream=True) as r:
             if r.status_code >= 400:
                 raise http_error_to_exc(r.status_code, r.text, r.headers.get("Retry-After"))
             for raw in r.iter_lines(decode_unicode=True):
+                if time.monotonic() > deadline:
+                    raise TransportError(f"stream not finished within {timeout:.0f} s")
                 if not raw or not raw.startswith("data:"):
                     continue  # blank lines and ": ping" keepalives
                 chunk = raw[5:].strip()
                 if chunk == "[DONE]":
+                    done = True
                     break
                 try:
                     obj = json.loads(chunk)
                 except ValueError:
                     continue
+                if obj.get("error"):
+                    raise TransportError(f"stream error event: {str(obj['error'])[:300]}")
                 usage = obj.get("usage") or usage
                 for ch in obj.get("choices") or []:
                     text.append((ch.get("delta") or {}).get("content") or "")
                     finish = ch.get("finish_reason") or finish
     except requests.RequestException as e:
         raise TransportError(str(e)[:300]) from e
+    if not done and finish is None:
+        raise TransportError("stream ended before [DONE] or a finish reason (partial reply dropped)")
     return {"choices": [{"message": {"content": "".join(text)}, "finish_reason": finish}], "usage": usage}

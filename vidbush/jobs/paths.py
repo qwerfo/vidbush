@@ -66,9 +66,11 @@ def _looks_like_project_rest(rest: str) -> bool:
 def _join(new_root: str, rest: str) -> str:
     """new_root plus rest in new_root's own separator style (a posix root stays posix on a Windows host)."""
     sep = "\\" if ("\\" in new_root or _WIN_ABS.match(new_root)) else "/"
-    root = new_root.rstrip("/\\") or new_root
     rest = rest.strip("/")
-    return root + sep + rest.replace("/", sep) if rest else root
+    if not rest:
+        return new_root
+    root = new_root if new_root.endswith(("/", "\\")) else new_root + sep
+    return root + rest.replace("/", sep)
 
 
 def rebase_tree(data: Any, project_id: str, new_root: str, old_roots: Iterable[str] = ()) -> Any:

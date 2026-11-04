@@ -48,8 +48,7 @@ def pick_model(spec: ProviderSpec, requested: str) -> str:
     prefs = list(spec.options.get("model_preference") or MODEL_PREFERENCE)
     chosen = next((p for p in prefs if p in ids), FALLBACK_MODEL)
     with _LOCK:
-        _MODEL_CACHE[spec.name] = chosen
-    return chosen
+        return _MODEL_CACHE.setdefault(spec.name, chosen)
 
 
 def build_body(spec: ProviderSpec, text: str, model_id: str, settings: Optional[dict[str, Any]],
@@ -85,8 +84,9 @@ def synthesize(spec: ProviderSpec, text: str, voice_id: str, model: str, out_pat
     except RefusalError as e:
         # an auto-picked model the API refuses switches to the fallback for the rest of the run (sticky,
         # so one video never mixes models); quota and auth errors are not the model's fault and re-raise
-        if model not in ("", "auto") or model_id == FALLBACK_MODEL or any(
-                w in str(e).lower() for w in ("quota", "credits", "unauthorized", "invalid_api_key", "http 401")):
+        low = str(e).lower()
+        if model not in ("", "auto") or model_id == FALLBACK_MODEL or "model" not in low or any(
+                w in low for w in ("quota", "credits", "unauthorized", "invalid_api_key", "http 401")):
             raise
         with _LOCK:
             _MODEL_CACHE[spec.name] = FALLBACK_MODEL

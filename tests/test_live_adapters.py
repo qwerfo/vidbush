@@ -115,3 +115,49 @@ def test_bot_check_page_is_a_challenge() -> None:
     from vidbush.source.base import is_challenge
     assert is_challenge(RefusalError("http 403: <!DOCTYPE html><title>Just a moment...</title>"))
     assert not is_challenge(RefusalError("http 403: forbidden"))
+
+
+def test_malformed_json_is_asked_again_on_the_same_provider(monkeypatch) -> None:
+    replies = iter([{"choices": [{"message": {"content": '{"ideas": [{"a": 1}'}, "finish_reason": "stop"}],
+                     "usage": {"cost": 0.002}},
+                    {"choices": [{"message": {"content": '{"ideas": []}'}}], "usage": {"cost": 0.003}}])
+    monkeypatch.setattr(llm_mod, "post_json", lambda *a, **k: next(replies))
+    spec = ProviderSpec("p", "openai_compat", "m", base_url="https://r/v1", api_key="k")
+    res = llm_mod.chat(spec, "s", "u", want_json=True)
+    assert res.value == {"ideas": []} and res.cost_usd == pytest.approx(0.005)
+    bad = {"choices": [{"message": {"content": "{broken"}, "finish_reason": "length"}], "usage": {}}
+    monkeypatch.setattr(llm_mod, "post_json", lambda *a, **k: bad)
+    with pytest.raises(llm_mod.BadJSONError, match="finish length"):
+        llm_mod.chat(spec, "s", "u", want_json=True)
+
+
+def test_stalled_image_job_falls_back_instead_of_resubmitting(tmp_path: Path, monkeypatch) -> None:
+    submits = []
+    monkeypatch.setattr(image_mod, "post_json", lambda *a, **k: submits.append(1) or {"success": True, "job_id": "j"})
+    monkeypatch.setattr(image_mod, "get_json", lambda *a, **k: {"status": "processing"})
+    monkeypatch.setattr(image_mod.time, "sleep", lambda s: None)
+    spec = ProviderSpec("a", "algrow", "gpt-image-2.5", api_key="k", options={"timeout_s": 0})
+    with pytest.raises(RefusalError, match="not finished"):
+        image_mod.generate(spec, "x", tmp_path / "c.png", 0.02)
+    assert submits == [1]
+
+
+def test_stream_cut_before_done_is_a_transport_error(monkeypatch) -> None:
+    from vidbush.providers import http as http_mod
+
+    class R:
+        status_code = 200
+        headers: dict = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_lines(self, decode_unicode=True):
+            yield 'data: {"choices": [{"delta": {"content": "half a"}}]}'
+
+    monkeypatch.setattr(http_mod.requests, "post", lambda *a, **k: R())
+    with pytest.raises(TransportError, match="before"):
+        http_mod.post_stream("https://r/v1/chat/completions", {"model": "m"})

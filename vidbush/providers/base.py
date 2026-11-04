@@ -230,7 +230,8 @@ class ProviderClient:
                 self.log.warn("provider marked down", role=role, provider=spec.name, error=str(e)[:300])
                 return None
             except (RefusalError, NotConfigured) as e:
-                self._record(role, stage, spec, ok=False, latency=time.time() - t0, note=f"refusal: {e}"[:300])
+                self._record(role, stage, spec, ok=False, latency=time.time() - t0, note=f"refusal: {e}"[:300],
+                             cost=float(getattr(e, "cost_usd", 0.0) or 0.0))
                 errors.append(f"{spec.name}: {e}")
                 return None
             except ProviderError as e:

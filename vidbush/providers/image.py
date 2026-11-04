@@ -210,15 +210,27 @@ def _poll(spec: ProviderSpec, url: str, headers: dict[str, str], read: Any, wher
     limit = float(spec.options.get("timeout_s", default_timeout))
     wait = float(spec.options.get("poll_s", default_poll))
     deadline = time.time() + limit
+    empty = 0
     while True:
-        job = read(get_json(url, headers=headers, timeout=60))
+        # errors while polling never escape as transport errors: the client would resubmit a new paid job
+        try:
+            job = read(get_json(url, headers=headers, timeout=60))
+        except RateLimitError as e:
+            time.sleep(max(wait, e.retry_after or wait))
+            continue
+        except TransportError:
+            job = {"status": "polling_error"}
         status = str(job.get("status", "")).lower()
         if status in _JOB_DONE:
             return job
         if status in _JOB_FAILED:
             raise _job_failure(where, str(job.get("error") or job.get("message") or status))
+        empty = empty + 1 if not status else 0
+        if empty >= 5:
+            raise RefusalError(f"{where}: job replies carry no status")
         if time.time() >= deadline:
-            raise TransportError(f"{where} not finished within {limit:.0f} s (status {status})")
+            # a stalled job: hand the request to the fallback provider rather than resubmitting here
+            raise RefusalError(f"{where} not finished within {limit:.0f} s (status {status})")
         time.sleep(wait)
 
 
@@ -284,7 +296,10 @@ def generate_algrow(spec: ProviderSpec, prompt: str, out_path: Path, default_cos
     body.update(spec.options.get("extra_body", {}))
     sub = post_json(base + "/api/generate-image", body, headers, timeout=60)
     if sub.get("success") is False or not sub.get("job_id"):
-        raise RefusalError(f"Algrow submit: {str(sub.get('error') or sub)[:300]}")
+        msg = str(sub.get("error") or sub)[:300]
+        if "rate" in msg.lower() or "concurrent" in msg.lower():
+            raise RateLimitError(f"Algrow submit: {msg}", None)
+        raise RefusalError(f"Algrow submit: {msg}")
     job_id = sub["job_id"]
     job = _poll(spec, f"{base}/api/job-status/{job_id}", headers, lambda r: r if isinstance(r, dict) else {},
                 f"Algrow job {job_id}", 600, 3)

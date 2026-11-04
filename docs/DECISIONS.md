@@ -42,3 +42,6 @@ One line each: the decision and why.
 - Font features are dropped when Pillow lacks libraqm (all Windows wheels), so charts and number cards render instead of degrading to text overlays.
 - Every provider request sends a browser-like User-Agent (Cloudflare error 1010 on Elevate otherwise).
 - doctor --probe now probes every configured provider of a role, not only the first, so a dead fallback shows before a run needs it.
+- Pexels key added (Adam supplied a full key file and said to use it); Tavily and Pixabay still absent, so search stays mock and Pixabay stays off.
+- Git identity set repo-local to the repo owner (qwerfo) because the laptop had none; no global git config was changed.
+- The run is started as a detached process logging to data/<id>_run1.log, because a tool-managed background job is cut off after 10 minutes.

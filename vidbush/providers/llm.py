@@ -72,6 +72,15 @@ def _messages(system: str, user: Any, quirks: set[str]) -> list[dict[str, Any]]:
 
 
 DEFAULT_TIMEOUT_S = 600.0
+JSON_RETRIES = 1
+
+
+class BadJSONError(RefusalError):
+    """The reply was not a refusal but its JSON did not parse. cost_usd is what the reply cost."""
+
+    def __init__(self, msg: str, cost_usd: float = 0.0) -> None:
+        super().__init__(msg)
+        self.cost_usd = cost_usd
 
 
 def chat(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperature: float = 0.6,
@@ -81,7 +90,9 @@ def chat(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperatur
     headers = {"Authorization": f"Bearer {spec.api_key}", "Content-Type": "application/json"}
     headers.update(spec.options.get("headers", {}))
     last: Optional[Exception] = None
-    for _ in range(4):
+    bad_json = 0
+    spent = 0.0  # cost of replies thrown away for malformed JSON, added to the reply that is kept
+    for _ in range(4 + JSON_RETRIES):
         q = _quirks(_qkey(spec))
         body: dict[str, Any] = {"model": spec.model, "messages": _messages(system, user, q)}
         if "temperature" not in q:
@@ -101,7 +112,19 @@ def chat(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperatur
             if not _learn(_qkey(spec), str(e), q):
                 raise
             continue
-        return _result(spec, data, want_json)
+        try:
+            res = _result(spec, data, want_json)
+        except BadJSONError as e:
+            # a model that usually answers in JSON sometimes emits a broken object: ask again on the
+            # same provider before a fallback takes the request
+            spent += e.cost_usd
+            bad_json += 1
+            if bad_json > JSON_RETRIES:
+                raise BadJSONError(str(e), spent) from e
+            last = e
+            continue
+        res.cost_usd += spent
+        return res
     raise RefusalError(f"request could not be adjusted for {spec.model}: {last}")
 
 
@@ -137,7 +160,9 @@ def _result(spec: ProviderSpec, data: dict[str, Any], want_json: bool) -> CallRe
         if value is None:
             if REFUSAL_RE.search(text):
                 raise RefusalError(f"model refused: {text[:160]}")
-            raise RefusalError(f"model did not return JSON: {text[:160]}")
+            finish = (data.get("choices") or [{}])[0].get("finish_reason")
+            raise BadJSONError(f"model did not return JSON (finish {finish}, {len(text)} chars, "
+                               f"{usage.get('completion_tokens')} tokens): {text[:80]} ... {text[-160:]}", cost)
     return CallResult(value=value, provider=spec, mock=False, cost_usd=cost, units=tokens, unit_kind="tokens")
 
 
@@ -169,8 +194,8 @@ def catalogue_prices(spec: ProviderSpec) -> dict[str, dict[str, float]]:
         for m in (data.get("data") if isinstance(data, dict) else data) or []:
             if isinstance(m, dict) and isinstance(m.get("pricing"), dict):
                 table[str(m.get("id"))] = _per_token(m["pricing"])
-    except Exception:  # noqa: BLE001  a missing price list leaves the caller's estimate in charge
-        pass
+    except Exception:  # noqa: BLE001  a missing price list leaves the caller's estimate in charge; retried next call
+        return table
     with _PLOCK:
         _PRICES[base] = table
     return table
@@ -201,6 +226,10 @@ def price_usage(spec: ProviderSpec, usage: dict[str, Any]) -> float:
 def parse_json_loose(text: str) -> Optional[Any]:
     """Parse JSON from a model reply, tolerating code fences and leading prose."""
     t = text.strip()
+    try:
+        return json.loads(t)
+    except json.JSONDecodeError:
+        pass
     # some relays inject an agent scaffold: "I'll write...<write_file><path>..</path><content>REPLY</content>"
     m = _CONTENT_RE.search(t)
     if m:
