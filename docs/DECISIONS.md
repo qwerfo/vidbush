@@ -19,3 +19,7 @@ One line each: the decision and why.
 - The director guarantees one data chart per video whenever any beat has two or more comparable numbers, and parses spelled-out numbers ("one hundred dollars").
 - Docker image is based on ubuntu:24.04 (Python 3.12, FFmpeg 6, espeak-ng from the Ubuntu archive).
 - Built UI (ui/dist) is committed so Windows and Docker users do not need Node to run Vidbush.
+- Footage quality work (parallel1) is developed on the session branch claude/footage-quality-youtube-3eojov and the same commits are pushed to footage-quality, the branch name Adam asked for.
+- Prefilter OCR uses rapidocr-onnxruntime 1.2.3: its three onnx models (det, cls, rec) ship inside the wheel, verified by installing and listing the package files, so nothing downloads at runtime.
+- Prefilter face check uses the OpenCV haar cascades. mediapipe 1.2.2 (the current wheel) was installed and checked: it has no solutions module and no bundled face model (the tasks API downloads a .tflite), so it was rejected. opencv-python-headless 5.0 no longer ships cv2.data haar files; 4.14.0.94 does (verified), so OpenCV is pinned to 4.14.0.94, with opencv-python at the same version because rapidocr requires it.
+- Every new threshold lives in config (judge.prefilter, judge.*_detail, sources.youtube_*, cost.vision_per_image_high_usd) and the brand gets licence_policy.prefer_creative_commons; all new config fields were added in one commit first so the four parts could be built in parallel without config conflicts.

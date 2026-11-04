@@ -1,5 +1,17 @@
 {
   "$defs": {
+    "LicencePolicy": {
+      "description": "Per brand licence preferences. Flagging only: nothing is blocked except the blocklist.",
+      "properties": {
+        "prefer_creative_commons": {
+          "default": false,
+          "title": "Prefer Creative Commons",
+          "type": "boolean"
+        }
+      },
+      "title": "LicencePolicy",
+      "type": "object"
+    },
     "VoiceConfig": {
       "properties": {
         "provider": {
@@ -95,6 +107,9 @@
       "default": "en",
       "title": "Language",
       "type": "string"
+    },
+    "licence_policy": {
+      "$ref": "#/$defs/LicencePolicy"
     }
   },
   "required": [
