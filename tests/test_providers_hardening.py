@@ -123,6 +123,27 @@ def test_max_tokens_rename_learned_from_message_without_param(monkeypatch):
     assert fake.calls[1]["body"]["max_completion_tokens"] == 50
 
 
+def test_model_needing_every_quirk_succeeds_on_first_request(monkeypatch):
+    # one 400 per adjustable feature: system role, temperature, response_format, then max_tokens
+    errs = [RefusalError("http 400: system role is not supported"),
+            RefusalError('http 400: {"error": {"message": "bad", "param": "temperature"}}'),
+            RefusalError('http 400: {"error": {"message": "bad", "param": "response_format"}}'),
+            RefusalError('http 400: {"error": {"message": "bad", "param": "max_tokens"}}')]
+    fake = _install(monkeypatch, errs + [_reply('{"a": 1}')])
+    assert llm.chat(_spec(max_tokens=1000), "s", "u", want_json=True).value == {"a": 1}
+    last = fake.calls[-1]["body"]
+    assert len(fake.calls) == 5 and last["max_completion_tokens"] == 1000
+    assert not {"temperature", "response_format", "max_tokens"} & set(last)
+    assert [m["role"] for m in last["messages"]] == ["user"]
+
+
+def test_unlearnable_400_still_stops_retrying(monkeypatch):
+    fake = _install(monkeypatch, [RefusalError("http 400: something else entirely")])
+    with pytest.raises(RefusalError):
+        llm.chat(_spec(), "s", "u", want_json=True)
+    assert len(fake.calls) == 1
+
+
 # ---------------------------------------------------------------- timeouts
 
 def test_writer_gets_600s_and_other_roles_keep_180(settings, monkeypatch):

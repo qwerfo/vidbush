@@ -1,6 +1,8 @@
 """Judge image detail: first keyframe high, the rest low; every other vision caller stays low."""
 from __future__ import annotations
 
+import base64
+import io
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -164,3 +166,42 @@ def test_mock_vision_ignores_detail(settings, tmp_path):
     a = s.vision_json("judge", "judge", "s", "p", imgs, "judge", intent="harbour", details=["high", "low", "low"])
     b = s.vision_json("judge", "judge", "s", "p", imgs, "judge", intent="harbour")
     assert a == b and a["_mock"] is True
+
+
+def _sent_size(part: dict[str, Any]) -> tuple[int, int]:
+    b64 = part["image_url"]["url"].split(",", 1)[1]
+    with Image.open(io.BytesIO(base64.b64decode(b64))) as im:
+        return im.size
+
+
+def test_full_size_first_keyframe_is_downscaled_before_high_detail(settings, monkeypatch, tmp_path):
+    # an AI image candidate's keyframe is the 1920 x 1080 file itself; it must go out at keyframe size
+    _real_vision(settings)
+    big = tmp_path / "gen.png"
+    Image.new("RGB", (1920, 1080), (10, 20, 30)).save(big)
+    sizes: list[tuple[int, int]] = []
+
+    def chat(spec, system, user, **kw):  # noqa: ANN001
+        sizes.extend(_sent_size(p) for p in user if p.get("type") == "image_url")
+        return CallResult(value={"score": 80, "reason": "ok", "rejects": []}, provider=spec, mock=False)
+    monkeypatch.setattr(llm, "chat", chat)
+    shot = Shot(id="s0", beat_id="b0", start=0, end=4, duration=4, type=ShotType.ai_image, intent="A harbour")
+    cand = Candidate(id="c0", source=SourceKind.local, media="image", local_path=str(big),
+                     keyframes=[str(big)], width=1920, height=1080)
+    ctx = SimpleNamespace(settings=settings, seats=Seats(settings, CostTracker("p")), stage="judge",
+                          log=NullLogger())
+    judge_mod.score_candidate(shot, cand, ctx)
+    assert sizes == [(640, 360)]
+
+
+def test_small_image_bytes_are_sent_unchanged(tmp_path):
+    p = tmp_path / "k.jpg"
+    Image.new("RGB", (640, 360), (1, 2, 3)).save(p)
+    part = llm.image_part(p, detail="high")
+    assert base64.b64decode(part["image_url"]["url"].split(",", 1)[1]) == p.read_bytes()
+
+
+def test_unreadable_image_is_sent_as_is(tmp_path):
+    p = tmp_path / "broken.jpg"
+    p.write_bytes(b"not an image")
+    assert llm.image_part(p)["image_url"]["url"].endswith("bm90IGFuIGltYWdl")

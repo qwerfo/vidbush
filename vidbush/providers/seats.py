@@ -185,7 +185,8 @@ class Seats:
 
         details gives one image detail per image (high, low or auto); missing entries and the
         default are low. It is sent as the OpenAI style image_url.detail; providers that ignore
-        that field (and the mock) are unaffected apart from the cost estimate.
+        that field (and the mock) are unaffected apart from the cost estimate. Images larger
+        than llm.VISION_MAX_SIDE are downscaled before sending, so the per image prices hold.
         """
         dets = self._image_details(details, len(images))
         parts: list[Any] = [{"type": "text", "text": prompt}] + [

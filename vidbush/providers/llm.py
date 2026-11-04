@@ -12,12 +12,15 @@ request moves to the next provider without marking this one down.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import logging
 import re
 import threading
 from pathlib import Path
 from typing import Any, Optional
+
+from PIL import Image
 
 from .base import CallResult, ProviderSpec, RefusalError
 from .http import post_json
@@ -39,6 +42,10 @@ _ADJUSTABLE = {
 }
 _PARAM_QUIRK = {"response_format": "response_format", "temperature": "temperature",
                 "max_tokens": "max_completion_tokens"}
+# one try per adjustable quirk plus a final try with all of them applied
+_MAX_TRIES = len(_ADJUSTABLE) + 1
+# vision images are fit into this box before encoding: cost.vision_per_image_*_usd price a 640 px keyframe
+VISION_MAX_SIDE = 640
 # finish reasons that mean the reply was cut off by the output length limit
 _TRUNCATED = {"length", "max_tokens"}
 CONTINUE_PROMPT = ("Your previous reply was cut off. Continue exactly where it stopped, without repeating "
@@ -113,13 +120,13 @@ def chat(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperatur
 
 def _post(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperature: float, timeout: float,
           extra: list[dict[str, Any]]) -> dict[str, Any]:
-    """POST one request (extra messages appended), learning quirks from 400s for up to four tries."""
+    """POST one request (extra messages appended), learning one quirk per 400 until every quirk could apply."""
     url = spec.base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {spec.api_key}", "Content-Type": "application/json"}
     headers.update(spec.options.get("headers", {}))
     cap = max_tokens_option(spec)
     last: Optional[Exception] = None
-    for _ in range(4):
+    for _ in range(_MAX_TRIES):
         q = _quirks(_qkey(spec))
         body: dict[str, Any] = {"model": spec.model, "messages": _messages(system, user, q) + extra}
         if "temperature" not in q:
@@ -217,8 +224,31 @@ def parse_json_loose(text: str) -> Optional[Any]:
 
 
 def image_part(path: str | Path, detail: str = "low") -> dict[str, Any]:
-    """Build an OpenAI-style image content part from a local file."""
+    """Build an OpenAI-style image content part from a local file, fit into VISION_MAX_SIDE."""
     p = Path(path)
     mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
-    b64 = base64.b64encode(p.read_bytes()).decode()
+    data = _fit_image(p, mime)
+    b64 = base64.b64encode(data).decode()
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}", "detail": detail}}
+
+
+def _fit_image(path: Path, mime: str, max_side: int = VISION_MAX_SIDE) -> bytes:
+    """File bytes, re-encoded smaller when either side exceeds max_side (unreadable images pass as is)."""
+    raw = path.read_bytes()
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            if max(im.size) <= max_side:
+                return raw
+            im.thumbnail((max_side, max_side))
+            return _encode(im, mime)
+    except (OSError, ValueError):
+        return raw
+
+
+def _encode(im: Image.Image, mime: str) -> bytes:
+    buf = io.BytesIO()
+    if mime == "image/png":
+        im.save(buf, format="PNG")
+    else:
+        im.convert("RGB").save(buf, format="JPEG", quality=88)
+    return buf.getvalue()
