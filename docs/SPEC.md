@@ -25,7 +25,7 @@ Capabilities: research agent with citations and a fact check pass; scriptwriter 
 - No em dash character anywhere (code, docs, UI, prompts, generated text).
 - Every model choice is an operator setting. Code asks for a seat by role; config maps roles to ordered providers; first that works is used.
 - Fallback moves only the failed request. Never mix image providers within one production unless the primary is down for the rest of the run.
-- A failing model is presumed to fail on our request format: adjust per model before writing it off. Never cap max_tokens; ask for concise output.
+- A failing model is presumed to fail on our request format: adjust per model before writing it off. Never cap max_tokens by default; ask for concise output (an operator may set an optional per provider cap in seats.yaml).
 - Probe a down provider every 10 minutes and return to it.
 - Cost ceilings are config: image ceiling 5 cents, warn above 3 cents. Track every call.
 - Visual bar is "good enough": fail only differences that break immersion. Judge place first, then subject, then action.
