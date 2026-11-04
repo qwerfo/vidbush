@@ -10,7 +10,7 @@ import uuid
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "1.0"
 
@@ -520,6 +520,10 @@ class PacingProfile(Model):
     hook_seconds: float = 60.0
     hook_multiplier: float = 0.7
     jitter: float = 0.25  # bounded randomisation, fraction of mean
+    # At most one full screen card per this many seconds outside the hook and the recap (0 turns it off).
+    # Reference channels keep the picture on footage and stills and move maps and charts over it, so a
+    # card is a punctuation mark, not a slideshow.
+    card_spacing_s: float = 45.0
 
     def for_type(self, t: ShotType | str) -> TypePacing:
         return getattr(self, ShotType(t).value)
@@ -569,20 +573,26 @@ class MotionStyle(Model):
     depthflow: bool = False
 
 
+CARDS_KEY = "full_screen_cards"
+OVERLAYS_KEY = "animated_overlays"
+PICTURE_KEYS = ("footage", "footage_overlay", "image", "image_overlay", "ai_image", "ai_video")
+
+
+def default_visual_mix() -> dict[str, float]:
+    """Documentary default from a reference analysis of a top geography channel (share of shot count).
+
+    The reference measured 42 percent animation. Most of it is maps, charts and callouts moving over
+    footage and stills, so it is split: 12 full screen cards and 30 animated overlays that decorate a
+    footage or image shot (counted on top of the shot they decorate, see StyleProfile.shot_mix).
+    """
+    return {"footage": 20, "footage_overlay": 21, "image": 7, "image_overlay": 10, CARDS_KEY: 12,
+            OVERLAYS_KEY: 30, "ai_image": 0, "ai_video": 0}
+
+
 class StyleProfile(Model):
     id: str
     name: str = ""
-    visual_mix: dict[str, float] = Field(
-        default_factory=lambda: {
-            "footage": 20,
-            "footage_overlay": 21,
-            "image": 7,
-            "image_overlay": 10,
-            "motion_graphic": 42,
-            "ai_image": 0,
-            "ai_video": 0,
-        }
-    )
+    visual_mix: dict[str, float] = Field(default_factory=default_visual_mix)
     pacing: PacingProfile = Field(default_factory=PacingProfile)
     captions: CaptionStyle = Field(default_factory=CaptionStyle)
     letterbox: Letterbox = Field(default_factory=Letterbox)
@@ -593,6 +603,42 @@ class StyleProfile(Model):
     palette: str = "documentary_warm"
     top10: bool = False  # number cards, item lower thirds, recap grid
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _legacy_mix(self) -> "StyleProfile":
+        """Old profiles named full screen cards motion_graphic; read that key as full_screen_cards."""
+        mix = self.visual_mix
+        if "motion_graphic" in mix:
+            legacy = float(mix.pop("motion_graphic") or 0)
+            mix.setdefault(CARDS_KEY, legacy)
+        return self
+
+    def shot_mix(self) -> dict[str, float]:
+        """Target share of shot count per ShotType value, in percent, summing to 100.
+
+        full_screen_cards become motion_graphic shots. animated_overlays are not shots of their own: they
+        decorate footage or image shots, so they are added to footage_overlay and image_overlay in the
+        ratio of footage to still shots in the picture mix (ai types excluded from that ratio).
+        """
+        mix = {k: max(0.0, float(v or 0)) for k, v in self.visual_mix.items()}
+        out = {k: mix.get(k, 0.0) for k in PICTURE_KEYS}
+        out["motion_graphic"] = mix.get(CARDS_KEY, 0.0)
+        extra = mix.get(OVERLAYS_KEY, 0.0)
+        foot = out["footage"] + out["footage_overlay"]
+        still = out["image"] + out["image_overlay"]
+        share = foot / (foot + still) if foot + still > 0 else 1.0
+        out["footage_overlay"] += extra * share
+        out["image_overlay"] += extra * (1.0 - share)
+        total = sum(out.values())
+        if total <= 0:
+            return {"footage": 100.0}
+        return {k: round(100.0 * v / total, 2) for k, v in out.items() if v > 0}
+
+    def animation_target(self) -> dict[str, float]:
+        """Animation share in percent of shots: full screen cards, and every shot carrying an overlay."""
+        m = self.shot_mix()
+        return {"full_screen_cards": m.get("motion_graphic", 0.0),
+                "overlay_shots": round(m.get("footage_overlay", 0.0) + m.get("image_overlay", 0.0), 2)}
 
 
 class VoiceConfig(Model):
@@ -713,6 +759,10 @@ class QAReport(Model):
     pct_no_match_accepted: float
     mix_target: dict[str, float]
     mix_achieved: dict[str, float]
+    # Animation in percent of shots: full_screen_cards, overlay_shots (shots carrying any overlay) and, in
+    # achieved only, inset_overlays (maps and charts moving over the picture).
+    animation_target: dict[str, float] = Field(default_factory=dict)
+    animation_achieved: dict[str, float] = Field(default_factory=dict)
     pacing: dict[str, dict[str, float]]
     caption_coverage: float
     caption_word_match: float

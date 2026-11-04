@@ -230,9 +230,24 @@ def mix_and_pacing(shotlist: ShotList) -> tuple[dict[str, float], dict[str, dict
 
 
 def _target(ctx: Any) -> dict[str, float]:
-    raw = {t: float(ctx.profile.visual_mix.get(t, 0) or 0) for t in SHOT_TYPES}
-    total = sum(raw.values()) or 1.0
-    return {t: round(100.0 * v / total, 1) for t, v in raw.items()}
+    """Target share of shot count per type: full screen cards as motion_graphic, animated overlays added to
+    the overlay types they decorate (StyleProfile.shot_mix)."""
+    mix = ctx.profile.shot_mix()
+    return {t: round(float(mix.get(t, 0.0)), 1) for t in SHOT_TYPES}
+
+
+INSET_KINDS = ("map", "bar_chart", "line_chart")
+
+
+def animation_share(shotlist: ShotList) -> dict[str, float]:
+    """Achieved animation in percent of shots: full screen cards, shots carrying an overlay, and the
+    subset of overlays that are map or chart insets."""
+    n = len(shotlist.shots) or 1
+    cards = sum(1 for s in shotlist.shots if s.type == ShotType.motion_graphic)
+    over = [s for s in shotlist.shots if s.overlay is not None and s.type != ShotType.motion_graphic]
+    insets = sum(1 for s in over if s.overlay.kind.value in INSET_KINDS)
+    return {"full_screen_cards": round(100.0 * cards / n, 1), "overlay_shots": round(100.0 * len(over) / n, 1),
+            "inset_overlays": round(100.0 * insets / n, 1)}
 
 
 def _nc_nd(shotlist: ShotList) -> list[str]:
@@ -270,6 +285,8 @@ def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, 
                       pct_above_threshold=round(100.0 * above / len(judged), 1) if judged else 100.0,
                       pct_no_match_accepted=round(100.0 * no_match / len(judged), 1) if judged else 0.0,
                       mix_target=_target(ctx), mix_achieved=mix, pacing=pacing, caption_coverage=coverage,
+                      animation_target={k: round(v, 1) for k, v in ctx.profile.animation_target().items()},
+                      animation_achieved=animation_share(shotlist),
                       caption_word_match=match, attribution_count=attributed, mock_used=sorted(mocks),
                       nc_nd_assets=_nc_nd(shotlist), notes=list(notes))
     report.notes += review_notes(report, ctx)
@@ -327,6 +344,16 @@ def render_markdown(r: QAReport, offset: float = 0.0) -> str:
         p = r.pacing.get(t, {})
         md.append(f"| {t} | {r.mix_target.get(t, 0):g} | {r.mix_achieved.get(t, 0):g} | {p.get('time_pct', 0):g} | "
                   f"{int(p.get('count', 0))} | {p.get('min', 0):g} | {p.get('max', 0):g} | {p.get('mean', 0):g} |")
+    if r.animation_achieved:
+        md += ["", "## Animation (share of shots)", "",
+               "Full screen cards are motion_graphic shots. Animated overlays ride on footage and image shots, so",
+               "they are counted on top of the shot they decorate.", "",
+               "| Measure | Target % | Achieved % |", "|---|---|---|"]
+        for key, label in (("full_screen_cards", "Full screen cards"), ("overlay_shots", "Shots with an overlay"),
+                           ("inset_overlays", "Map and chart insets over the picture")):
+            target = r.animation_target.get(key)
+            md.append(f"| {label} | {'n/a' if target is None else f'{target:g}'} | "
+                      f"{r.animation_achieved.get(key, 0):g} |")
     flagged = [s for s in r.shots if s.flags or (s.score is not None and s.score < r.threshold)]
     md += ["", f"## Flagged shots ({len(flagged)})", ""]
     if not flagged:

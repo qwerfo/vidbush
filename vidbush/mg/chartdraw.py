@@ -246,7 +246,11 @@ class BarChart(ChartBase):
         x0, y0, x1, _ = self.plot
         n, m = len(self.labels), max(1, len(self.series))
         bx0 = x0 + self.col_w
-        w_full = (x1 - bx0) * 0.84
+        if getattr(self, "_label_room", None) is None:
+            self._label_room = max((self._value_label(v, 1.0, i).w for s in self.series
+                                    for i, v in enumerate(s.values) if v >= 0), default=0) + self.px(16)
+        room = self._label_room
+        w_full = min((x1 - bx0) * 0.84, (x1 - bx0) - room)  # the widest value label always fits
         span = self.hi - self.lo
         zero_x = bx0 + w_full * (0 - self.lo) / span
         bh = self.row * 0.62 / m

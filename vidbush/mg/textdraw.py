@@ -375,11 +375,12 @@ class CompBase:
 
     own_exit = False
     paints_background = False  # True when the composition draws its own full-frame background
+    ui_scale = 1.0  # text and stroke scale on top of the frame size (insets render larger type)
 
     def __init__(self, spec, payload, pal: Palette, alpha: bool) -> None:  # noqa: ANN001
         self.spec, self.p, self.pal = spec, payload, pal
         self.W, self.H, self.fps = spec.width, spec.height, spec.fps
-        self.k = min(self.W / 1920.0, self.H / 1080.0)
+        self.k = min(self.W / 1920.0, self.H / 1080.0) * self.ui_scale
         self.transparent = spec.background in ("transparent", "footage_behind")
         self.C = 4 if alpha else 3
         self.safe_top = 150 * self.H / 1080

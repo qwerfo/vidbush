@@ -10,7 +10,9 @@ out themselves (wipes, slides, traces).
 
 This module holds the text compositions (title_card, number_card,
 lower_third, callout, text_overlay, highlight_box, arrow, recap_grid); maps
-and charts live in vidbush/mg/mapdraw.py and vidbush/mg/chartdraw.py.
+and charts live in vidbush/mg/mapdraw.py and vidbush/mg/chartdraw.py. A map or
+chart with a transparent background renders as an inset panel over the
+picture (vidbush/mg/inset.py).
 """
 from __future__ import annotations
 
@@ -91,7 +93,11 @@ def build_comp(spec: MotionSpec, alpha: bool) -> CompBase:
         title = str(raw.get("title") or raw.get("label") or "")
         spec = fallback_spec(spec, title)
         payload = spec.typed_payload()
-    return _registry()[spec.kind](spec, payload, get_palette(spec.style.palette), alpha)
+    from ..mg.inset import InsetComp, is_inset
+    cls = _registry()[spec.kind]
+    if is_inset(spec):  # map or chart over the picture: framed panel, not a full frame
+        return InsetComp(spec, payload, get_palette(spec.style.palette), alpha, cls)
+    return cls(spec, payload, get_palette(spec.style.palette), alpha)
 
 
 def _registry() -> dict[MotionKind, Callable[..., CompBase]]:

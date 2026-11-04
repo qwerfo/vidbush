@@ -19,3 +19,12 @@ One line each: the decision and why.
 - The director guarantees one data chart per video whenever any beat has two or more comparable numbers, and parses spelled-out numbers ("one hundred dollars").
 - Docker image is based on ubuntu:24.04 (Python 3.12, FFmpeg 6, espeak-ng from the Ubuntu archive).
 - Built UI (ui/dist) is committed so Windows and Docker users do not need Node to run Vidbush.
+- Visual mix: animation is split into `full_screen_cards` and `animated_overlays` keys inside `visual_mix`. Overlays are counted on top of the shot they decorate, so they are added to footage_overlay and image_overlay in the picture's footage to still ratio (41 to 17). The documentary default becomes footage 20, footage_overlay 42.2, image 7, image_overlay 18.8, motion_graphic 12: the reference's raw shares stay exact and the total stays 100.
+- Old profiles that use the `motion_graphic` key read it as `full_screen_cards`, so learned and older profiles keep working. The learner now writes `full_screen_cards` with `animated_overlays` 0, because a classifier already counts the overlays it sees as overlay shots.
+- The top10 profile uses 20 full screen cards and 22 overlays (42 in total). Its number cards are full screen by design and are always kept.
+- The 45 s card spacing is enforced twice: as a planner penalty, and in a final `space_cards` pass after the chart guarantee. Structural cards (number cards, title card, recap) are never removed and count against free cards near them. When the cap and the mix disagree, the cap wins.
+- A map or chart used as an overlay renders as an inset panel (45 percent of the frame width, upper right, larger type). Insets always use the Python renderer, even when Remotion is configured, because Remotion has no inset composition.
+- A free map or chart card removed by the spacing cap keeps its content as an inset on footage of its beat, so the information stays on screen.
+- An inset map is offered only when it shows a place that no map showed in the last 60 s. Without that limit the Panama scripts put a map on about 20 of 70 shots.
+- MG_RENDER_VERSION is now mg-3, because chart value labels now always fit inside the plot and cached charts must re-render.
+- Acceptance adds three checks: cards_sparing (full screen cards at most 25 percent of shots), overlays_on_picture, and inset_map_or_chart.

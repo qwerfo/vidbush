@@ -6,7 +6,9 @@ from the beat the slot plays over, or the adjacent beat when the slot spans it,
 so a map or card never shows content the narration has not reached. Reuse is
 charged by content signature (maps by view and labels, cards by text), the
 same motion kind within 60 s costs a decaying penalty, and maps are capped at
-about MAP_SHARE of motion slots unless they show a new place.
+about MAP_SHARE of motion slots unless they show a new place. Overlay shots
+draw first on the beat's own map and chart ideas as insets over the picture,
+since reference channels move most of their animation over footage.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from ..models import (OVERLAY_TYPES, MapPayload, MotionKind, MotionSpec, Script,
                       VisualIdea)
 from ..util import no_em_dash
 from . import ideas as I
+from ..mg.inset import INSET_KINDS
 from .pacing import Slot
 
 FAMILY = {ShotType.footage: "footage", ShotType.footage_overlay: "footage", ShotType.image: "still",
@@ -67,6 +70,7 @@ class _Assembler:
         self.usage: dict[int, int] = {}
         self.sig_usage: dict[str, int] = {}
         self.motion_log: list[tuple[float, MotionKind]] = []
+        self.card_log: list[tuple[float, MotionSpec]] = []
         self.map_places: set[str] = set()
         self.by_key: dict[tuple[str, str], list[int]] = {}
         for i, idea in enumerate(ideas):
@@ -155,6 +159,7 @@ class _Assembler:
 
     def _log_motion(self, spec: MotionSpec, at: float) -> None:
         self.motion_log.append((at, spec.kind))
+        self.card_log.append((at, spec))
         self.map_places |= map_places(spec)
 
     def _motion_penalty(self, spec: MotionSpec, at: float, scene_start: float, duration: float) -> float:
@@ -194,9 +199,11 @@ class _Assembler:
         if slot.type == ShotType.motion_graphic:
             shot.motion = slot.motion or shot.motion
         if slot.type in OVERLAY_TYPES:
-            shot.overlay = slot.overlay or shot.overlay or self.overlay_for(shot)
+            shot.overlay = slot.overlay or self.overlay_for(shot)
             if shot.overlay is None:
                 shot.type = PLAIN_OF[shot.type]  # nothing honest to overlay (call to action beat)
+            elif shot.overlay.kind in INSET_KINDS:
+                self.card_log.append((slot.start, shot.overlay))
         return shot
 
     # -------------------------------------------------------- callbacks for rules.py
@@ -222,14 +229,33 @@ class _Assembler:
         shot.ai_prompt = "" if shot.type == ShotType.motion_graphic else ai_prompt(idea, self.bc.get(shot.beat_id))
 
     def overlay_pool(self, shot: Shot) -> list[MotionSpec]:
-        """Overlays a shot may carry, best first: its idea's overlay, then lower thirds for what it shows and
-        the beat's generic overlays. Empty on call-to-action beats."""
+        """Overlays a shot may carry, best first: map and chart insets of its beat (animation moves over the
+        picture), its idea's overlay, then lower thirds for what it shows and the beat's generic overlays.
+        Empty on call-to-action beats."""
         bc = self.bc.get(shot.beat_id)
         if bc is None or I.CTA_RE.search(bc.beat.text):
             return []
         idx = self.idea_of.get(shot.id)
         own = [self.ideas[idx].overlay] if idx is not None and self.ideas[idx].overlay is not None else []
-        return own + I.overlay_choices(bc, self.profile.palette, shot.must_show)
+        return self.insets(shot.beat_id, shot.start) + own + I.overlay_choices(bc, self.profile.palette,
+                                                                              shot.must_show)
+
+    def insets(self, beat_id: str, at: float) -> list[MotionSpec]:
+        """The beat's map and chart ideas as transparent insets. A map is offered only when it shows a place
+        no map (card or inset) showed in the last KIND_WINDOW_S: a map earns its place when the narration
+        moves between places, not on every beat that names one."""
+        recent = [sp for t, sp in self.card_log if 0 <= at - t < KIND_WINDOW_S]
+        shown = {motion_signature(sp) for sp in recent}
+        places = set().union(*[map_places(sp) for sp in recent]) if recent else set()
+        out: list[MotionSpec] = []
+        for i in self.by_key.get((beat_id, "motion"), []):
+            spec = self.ideas[i].motion
+            if spec is None or spec.kind not in INSET_KINDS or motion_signature(spec) in shown:
+                continue
+            if spec.kind == MotionKind.map and not (map_places(spec) - places):
+                continue
+            out.append(spec.model_copy(update={"background": "transparent"}))
+        return out
 
     def overlay_for(self, shot: Shot) -> Optional[MotionSpec]:
         """First overlay for an overlay shot, or None when nothing fits."""

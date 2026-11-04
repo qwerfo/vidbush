@@ -67,7 +67,9 @@ def test_style_profiles(client):
     profiles = {p["id"]: p for p in client.get("/api/style_profiles").json()}
     assert {"documentary_default", "top10_default"} <= set(profiles)
     assert profiles["top10_default"]["top10"] is True
-    assert "motion_graphic" in profiles["documentary_default"]["visual_mix"]
+    doc = profiles["documentary_default"]
+    assert doc["visual_mix"]["full_screen_cards"] == 12 and doc["visual_mix"]["animated_overlays"] == 30
+    assert doc["shot_mix"]["motion_graphic"] == 12 and doc["card_spacing_s"] == 45
 
 
 def test_unknown_api_path_is_json_404(client):

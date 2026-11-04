@@ -8,8 +8,11 @@ drawn from profile.pacing (mean with bounded jitter, clamped to min and max,
 times hook_multiplier inside the first hook_seconds). Internal boundaries are
 snapped to gaps between words when that keeps both neighbours within bounds.
 Back-to-back full screen cards are limited: at most MAX_MG_RUN motion graphics
-in a row and about MAX_MG_RUN_S seconds of them. All randomness comes from
-the rng argument.
+in a row and about MAX_MG_RUN_S seconds of them. Outside the exempt ranges
+(the hook and the recap) a free card also keeps profile.pacing.card_spacing_s
+from every other card, anchors included: reference channels keep the picture
+on footage and stills and move their maps and charts over it, so a card is a
+punctuation mark, not a slideshow. All randomness comes from the rng argument.
 """
 from __future__ import annotations
 
@@ -57,11 +60,30 @@ MAX_MG_RUN = 2  # full screen motion graphics in a row
 MAX_MG_RUN_S = 16.0  # seconds of consecutive full screen cards
 
 
+SPACING_PENALTY = 25.0  # a free card too close to another card loses to any type that fits
+
+
 def mix_targets(profile: StyleProfile) -> dict[ShotType, float]:
-    """visual_mix normalised to shares of shot count; zero or unknown types dropped."""
-    raw = {ShotType(k): float(v) for k, v in profile.visual_mix.items() if k in ShotType.__members__ and v > 0}
+    """profile.shot_mix() as shares of shot count; zero or unknown types dropped.
+
+    Full screen cards map to motion_graphic; animated overlays add to the overlay types they decorate.
+    """
+    raw = {ShotType(k): float(v) for k, v in profile.shot_mix().items() if k in ShotType.__members__ and v > 0}
     total = sum(raw.values()) or 1.0
     return {k: v / total for k, v in raw.items()} or {ShotType.footage: 1.0}
+
+
+def in_ranges(t: float, ranges: Sequence[tuple[float, float]]) -> bool:
+    """True when t lies inside one of the [a, b) ranges."""
+    return any(a - EPS <= t < b for a, b in ranges)
+
+
+def card_too_close(at: float, cards: Sequence[float], spacing: float, exempt: Sequence[tuple[float, float]]) -> bool:
+    """A card starting at `at` breaks the spacing cap: it is outside the exempt ranges and within spacing
+    seconds of another card start that is also outside them."""
+    if spacing <= 0 or in_ranges(at, exempt):
+        return False
+    return any(abs(at - c) < spacing - EPS for c in cards if not in_ranges(c, exempt))
 
 
 def bounds(profile: StyleProfile, t: ShotType, at: float) -> tuple[float, float, float]:
@@ -95,10 +117,13 @@ def word_gaps(words: Sequence[Word]) -> list[tuple[float, float]]:
 class _Planner:
     """Stateful fill: running type counts drive the deficit choice."""
 
-    def __init__(self, profile: StyleProfile, rng: random.Random, gaps: list[tuple[float, float]]) -> None:
+    def __init__(self, profile: StyleProfile, rng: random.Random, gaps: list[tuple[float, float]],
+                 exempt: Sequence[tuple[float, float]] = (), anchor_cards: Sequence[float] = ()) -> None:
         self.profile = profile
         self.rng = rng
         self.gaps = gaps
+        self.exempt = list(exempt)
+        self.anchor_cards = list(anchor_cards)
         self.targets = mix_targets(profile)
         self.counts: dict[ShotType, int] = {t: 0 for t in self.targets}
         self.slots: list[Slot] = []
@@ -122,6 +147,7 @@ class _Planner:
                 score -= 0.25
             if t == ShotType.motion_graphic:
                 score -= self._mg_run_penalty(at, remaining, avoid_end)
+                score -= SPACING_PENALTY if self._card_blocked(at) else 0.0
             lo, hi, _ = bounds(self.profile, t, at)
             if lo > remaining + EPS:
                 score -= 5.0
@@ -151,6 +177,10 @@ class _Planner:
         if run_n >= MAX_MG_RUN or run_s + lo > MAX_MG_RUN_S + EPS:
             return 10.0
         return 2.0
+
+    def _card_blocked(self, at: float) -> bool:
+        cards = self.anchor_cards + [s.start for s in self.slots if s.type == ShotType.motion_graphic]
+        return card_too_close(at, cards, self.profile.pacing.card_spacing_s, self.exempt)
 
     def add(self, slot: Slot) -> None:
         self.slots.append(slot)
@@ -212,10 +242,16 @@ class _Planner:
 
 
 def plan_slots(total: float, profile: StyleProfile, rng: random.Random, words: Sequence[Word] = (),
-               hard_times: Sequence[float] = (), anchors: Sequence[Anchor] = ()) -> list[Slot]:
-    """Typed, timed slots covering [0, total] with no gaps or overlaps."""
-    planner = _Planner(profile, rng, word_gaps(words))
+               hard_times: Sequence[float] = (), anchors: Sequence[Anchor] = (),
+               card_exempt: Optional[Sequence[tuple[float, float]]] = None) -> list[Slot]:
+    """Typed, timed slots covering [0, total] with no gaps or overlaps.
+
+    card_exempt lists the ranges where the card spacing cap does not apply (default: the hook).
+    """
+    exempt = list(card_exempt) if card_exempt is not None else [(0.0, profile.pacing.hook_seconds)]
     fixed = _place_anchors(anchors, total)
+    cards = [a.start for a in fixed if a.type == ShotType.motion_graphic]
+    planner = _Planner(profile, rng, word_gaps(words), exempt, cards)
     cuts = sorted({0.0, total, *[h for h in hard_times if 0 < h < total]})
     cuts = _thin(cuts, 2.0, keep={0.0, total})
     t = 0.0
