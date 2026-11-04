@@ -5,7 +5,12 @@ slot(host) is a context manager around one network request: it takes a
 token from the host's bucket (waiting at most MAX_WAIT_S, else Throttled),
 holds one of the global concurrency slots, and serialises hosts listed in
 SERIAL_HOSTS (YouTube). cool_down(host, seconds) pauses a host after a 429.
-take_budget(run_id, adapter) counts searches per run and adapter.
+take_budget(run_id, adapter) counts searches per run and adapter; usage(run_id)
+reports used, budget and refusals so the run can surface a spent budget.
+download_slot(host, workers) caps parallel downloads of a host on their own
+semaphore (separate from the serial search slot), paced(host) takes the
+host's rate token without its serial lock, and exclusive(host, key) makes
+sure one asset (a video URL) is never downloaded twice at the same time.
 
 Defaults follow the published limits: loc.gov about 1 search per 3 s,
 Pexels 200 per hour, Pixabay 100 per minute, YouTube one yt-dlp call at a
@@ -73,6 +78,9 @@ class _State:
         self.slots = threading.BoundedSemaphore(DEFAULT_MAX_CONCURRENCY)
         self.budget: dict[str, int] = dict(DEFAULT_BUDGET)
         self.spent: dict[tuple[str, str], int] = {}
+        self.refused: set[tuple[str, str]] = set()
+        self.downloads: dict[str, tuple[int, threading.BoundedSemaphore]] = {}
+        self.keyed: dict[tuple[str, str], threading.Lock] = {}
 
 
 STATE = _State()
@@ -139,6 +147,7 @@ def take_budget(run_id: str, adapter: str) -> bool:
         limit = STATE.budget.get(adapter, STATE.budget.get("*", 0))
         key = (run_id, adapter)
         if STATE.spent.get(key, 0) >= limit:
+            STATE.refused.add(key)
             return False
         STATE.spent[key] = STATE.spent.get(key, 0) + 1
         return True
@@ -148,6 +157,61 @@ def spent(run_id: str) -> dict[str, int]:
     """Searches sent so far in a run, per adapter."""
     with STATE.lock:
         return {a: n for (r, a), n in STATE.spent.items() if r == run_id}
+
+
+def usage(run_id: str) -> dict[str, dict[str, int]]:
+    """Per adapter {"used", "budget", "refused"} for a run (refused is 1 once a search was turned away)."""
+    with STATE.lock:
+        names = {a for (r, a) in STATE.spent if r == run_id} | {a for (r, a) in STATE.refused if r == run_id}
+        return {a: {"used": STATE.spent.get((run_id, a), 0),
+                    "budget": STATE.budget.get(a, STATE.budget.get("*", 0)),
+                    "refused": int((run_id, a) in STATE.refused)} for a in sorted(names)}
+
+
+def _download_sem(host: str, workers: int) -> threading.BoundedSemaphore:
+    workers = max(1, int(workers))
+    with STATE.lock:
+        cur = STATE.downloads.get(host)
+        if cur is None or cur[0] != workers:
+            cur = (workers, threading.BoundedSemaphore(workers))
+            STATE.downloads[host] = cur
+        return cur[1]
+
+
+@contextlib.contextmanager
+def download_slot(host: str, workers: int, max_wait: float = MAX_WAIT_S) -> Iterator[None]:
+    """One of at most workers parallel downloads from host (its own semaphore, not the serial lock).
+
+    Raises Throttled when no download slot frees up within max_wait.
+    """
+    sem = _download_sem(host, workers)
+    if not sem.acquire(timeout=max_wait):
+        raise Throttled(f"{host}: no free download slot in {max_wait:.0f}s")
+    try:
+        yield
+    finally:
+        sem.release()
+
+
+@contextlib.contextmanager
+def paced(host: str, max_wait: float = MAX_WAIT_S) -> Iterator[None]:
+    """Like slot() (cooldown, rate token, global cap) but never takes the host's serial lock."""
+    _wait_cooldown(host, max_wait)
+    bucket = _bucket(host)
+    wait = bucket.reserve(max_wait) if bucket else 0.0
+    if wait > 0:
+        time.sleep(wait)
+    with STATE.slots:
+        yield
+
+
+@contextlib.contextmanager
+def exclusive(host: str, key: str) -> Iterator[None]:
+    """Hold the lock of one asset of host (e.g. a video URL) so it is never fetched twice at once."""
+    with STATE.lock:
+        lock = STATE.keyed.setdefault((host, key), threading.Lock())
+    with lock:
+        yield
 
 
 def reset() -> None:

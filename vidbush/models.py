@@ -727,6 +727,7 @@ class QAReport(Model):
     mock_used: list[str] = Field(default_factory=list)
     nc_nd_assets: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    standard_youtube_assets: list[str] = Field(default_factory=list)  # selected Standard YouTube Licence clips
 
 
 ALL_MODELS: dict[str, type[BaseModel]] = {

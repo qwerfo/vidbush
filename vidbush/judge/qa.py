@@ -4,7 +4,9 @@ Samples one frame every settings.judge.post_render_every_s seconds of
 final.mp4 (after any intro), maps frames to shots, rescores each shot against
 its intent with the vision seat (task "qa"), checks captions against the
 narration, and reports mix, pacing, judge pass rate, flags, attribution,
-NC/ND assets and mock seats.
+NC/ND and Standard YouTube Licence assets, mock seats and the sourcing
+search usage per run (work/source_notes.json, written by source/registry.py)
+with a warning when a search budget ran out.
 """
 from __future__ import annotations
 
@@ -19,7 +21,10 @@ from ..models import SHOT_TYPES, Narration, QAReport, QAShot, Shot, ShotList, Sh
 from ..util import ToolError, media_duration, read_json, run, write_json
 from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, parse_verdict
 
-QA_FLAGS = ("mock", "nc_nd", "anachronism", "low_res", "no_match_accepted", "held_frame", "missing_media")
+QA_FLAGS = ("mock", "nc_nd", "standard_youtube_licence", "anachronism", "low_res", "no_match_accepted",
+            "held_frame", "missing_media")
+SOURCE_NOTES = "source_notes.json"
+SOURCE_LABELS = {"youtube": "YouTube"}
 NO_MATCH_TARGET_PCT = 1.0
 MIX_TOLERANCE_PTS = 5.0
 FRAMES_PER_SHOT = 3
@@ -235,12 +240,13 @@ def _target(ctx: Any) -> dict[str, float]:
     return {t: round(100.0 * v / total, 1) for t, v in raw.items()}
 
 
-def _nc_nd(shotlist: ShotList) -> list[str]:
+def _nc_nd(shotlist: ShotList, flag: str = "nc_nd") -> list[str]:
+    """One line per selected asset carrying flag (title, licence, url, shots using it)."""
     seen: dict[str, list[str]] = {}
     label: dict[str, str] = {}
     for s in shotlist.shots:
         c = s.selected_candidate()
-        if c is not None and "nc_nd" in c.flags:
+        if c is not None and flag in c.flags:
             key = c.url or c.local_path or c.id
             seen.setdefault(key, []).append(s.id)
             label[key] = f"{c.title or key} [{c.licence}] {c.url}".strip()
@@ -271,9 +277,32 @@ def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, 
                       pct_no_match_accepted=round(100.0 * no_match / len(judged), 1) if judged else 0.0,
                       mix_target=_target(ctx), mix_achieved=mix, pacing=pacing, caption_coverage=coverage,
                       caption_word_match=match, attribution_count=attributed, mock_used=sorted(mocks),
-                      nc_nd_assets=_nc_nd(shotlist), notes=list(notes))
-    report.notes += review_notes(report, ctx)
+                      nc_nd_assets=_nc_nd(shotlist), notes=list(notes),
+                      standard_youtube_assets=_nc_nd(shotlist, "standard_youtube_licence"))
+    report.notes += review_notes(report, ctx) + source_usage_notes(ctx)
     return report
+
+
+def source_usage_notes(ctx: Any) -> list[str]:
+    """Searches used out of the budget per sourcing run (YouTube always, others when spent)."""
+    path = ctx.work / SOURCE_NOTES
+    try:
+        runs = (read_json(path).get("runs") or {}) if path.exists() else {}
+    except (OSError, ValueError, AttributeError):
+        return []
+    out: list[str] = []
+    ordered = sorted(runs.values(), key=lambda r: float(r.get("ts", 0)) if isinstance(r, dict) else 0.0)
+    for k, run_ in enumerate(ordered):
+        tag = f" (run {k + 1} of {len(ordered)})" if len(ordered) > 1 else ""
+        for name, u in sorted((run_.get("usage") or {}).items()):
+            used, budget, refused = int(u.get("used", 0)), int(u.get("budget", 0)), bool(u.get("refused"))
+            label = SOURCE_LABELS.get(name, name)
+            if refused or (budget and used >= budget):
+                out.append(f"warning: {label} search budget spent ({used} of {budget} searches){tag}: later "
+                           "queries were skipped, raise settings.sources.query_budget or re-run to use the cache")
+            elif name == "youtube":
+                out.append(f"{label} searches used: {used} of {budget}{tag}")
+    return out
 
 
 def review_notes(r: QAReport, ctx: Any) -> list[str]:
@@ -294,6 +323,9 @@ def review_notes(r: QAReport, ctx: Any) -> list[str]:
         out.append(f"{low} shots scored below threshold on the rendered video")
     if r.nc_nd_assets:
         out.append(f"{len(r.nc_nd_assets)} NC or ND licensed assets: confirm the licence before a monetised upload")
+    if r.standard_youtube_assets:
+        out.append(f"{len(r.standard_youtube_assets)} Standard YouTube Licence assets: confirm reuse rights "
+                   "(fair use or permission) before upload")
     if r.mock_used:
         out.append(f"mock seats used ({', '.join(r.mock_used)}): this render is a placeholder preview")
     return out
@@ -316,10 +348,15 @@ def render_markdown(r: QAReport, offset: float = 0.0) -> str:
           f"- Shots at or above threshold ({r.threshold:g}): **{r.pct_above_threshold}%**",
           f"- Accepted without a match: **{r.pct_no_match_accepted}%** (target at most {NO_MATCH_TARGET_PCT:g}%)",
           f"- Caption coverage {r.caption_coverage:.1%}, caption word match {r.caption_word_match:.1%}",
-          f"- Attributed assets: {r.attribution_count}; NC or ND assets: {len(r.nc_nd_assets)}",
+          f"- Attributed assets: {r.attribution_count}; NC or ND assets: {len(r.nc_nd_assets)}; "
+          f"Standard YouTube Licence assets: {len(r.standard_youtube_assets)}",
           f"- Mock seats: {', '.join(r.mock_used) or 'none'}", ""]
     if r.notes:
         md += ["## Notes", ""] + [f"- {n}" for n in r.notes] + [""]
+    for title, items in (("NC or ND assets", r.nc_nd_assets), ("Standard YouTube Licence assets",
+                                                                r.standard_youtube_assets)):
+        if items:
+            md += [f"## {title} ({len(items)})", ""] + [f"- {' '.join(a.split())}" for a in items] + [""]
     md += ["## Visual mix (share of shot count)", "",
            "| Type | Target % | Shots % | Screen time % | Count | Min s | Max s | Mean s |",
            "|---|---|---|---|---|---|---|---|"]

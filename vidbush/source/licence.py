@@ -3,7 +3,9 @@
 normalise_licence(raw) turns the many spellings sources use (Commons short
 names, Creative Commons URLs, LoC rights statements, Archive licenseurl)
 into one readable string. Nothing is ever blocked because of its licence:
-CC NC and ND assets only get the "nc_nd" flag when settings ask for it.
+CC NC and ND assets only get the "nc_nd" flag when settings ask for it, and
+Standard YouTube Licence clips get "standard_youtube_licence" (settings
+.sources.flag_standard_youtube) so the QA report lists them for review.
 """
 from __future__ import annotations
 
@@ -88,8 +90,19 @@ def is_public_domain(licence: str) -> bool:
     return low.startswith("public domain") or low.startswith("cc0")
 
 
+STANDARD_YOUTUBE_FLAG = "standard_youtube_licence"
+
+
+def is_standard_youtube(licence: str) -> bool:
+    """True for YouTube's default all rights reserved licence (either spelling)."""
+    return bool(re.search(r"standard youtube licen[cs]e", (licence or "").lower()))
+
+
 def licence_flags(licence: str, settings: Settings) -> list[str]:
-    """Flags to attach to a candidate for this licence ('nc_nd' when enabled)."""
+    """Flags to attach to a candidate for this licence ('nc_nd', 'standard_youtube_licence' when enabled)."""
+    flags: list[str] = []
     if settings.sources.flag_nc_nd and is_nc_nd(licence):
-        return ["nc_nd"]
-    return []
+        flags.append("nc_nd")
+    if getattr(settings.sources, "flag_standard_youtube", False) and is_standard_youtube(licence):
+        flags.append(STANDARD_YOUTUBE_FLAG)
+    return flags

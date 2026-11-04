@@ -26,7 +26,7 @@ RECENT_S = 60.0
 RECENT_PENALTY = 10.0  # extra when the earlier use is within RECENT_S
 SEGMENT_GAP_S = 3.0  # a reused video must start at least this far from the earlier in point
 SAME_SEGMENT_PENALTY = 15.0
-SHOT_FLAGS = {"mock", "low_res", "nc_nd", "anachronism", "no_match_accepted"}
+SHOT_FLAGS = {"mock", "low_res", "nc_nd", "anachronism", "no_match_accepted", "standard_youtube_licence"}
 MAX_QUERIES = 6
 
 REQUERY_SYSTEM = (
@@ -319,7 +319,7 @@ def _apply(shot: Shot, pick: Candidate, accepted: bool, notes: list[str]) -> Non
     shot.flags = [f for f in shot.flags if f not in SHOT_FLAGS]
     if "mock" in pick.flags or JUDGE_MOCK_FLAG in pick.flags:
         shot.flags.append("mock")
-    shot.flags += [f for f in ("low_res", "nc_nd", "anachronism") if f in pick.flags]
+    shot.flags += [f for f in ("low_res", "nc_nd", "anachronism", "standard_youtube_licence") if f in pick.flags]
     if accepted:
         shot.flags.append("no_match_accepted")
     reason = pick.reject_reason or pick.judge_reason or ""
