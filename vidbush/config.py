@@ -84,7 +84,7 @@ class CostConfig(BaseModel):
     # rough unit prices for estimates when the provider does not return cost
     llm_per_1k_tokens_usd: float = 0.002
     vision_per_image_usd: float = 0.002  # one low detail image
-    vision_per_image_high_usd: float = 0.006  # one high detail image (more image tokens)
+    vision_per_image_high_usd: float = 0.010  # one high detail 640 px keyframe: 2 tiles, 425 vs 85 tokens, 5x low
     tts_per_1k_chars_usd: float = 0.18
     image_per_image_usd: float = 0.02
     video_per_second_usd: float = 0.05

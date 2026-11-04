@@ -40,7 +40,7 @@ cost:
   image_warn_usd: 0.03
   llm_per_1k_tokens_usd: 0.002   # estimate used only when a provider returns no cost
   vision_per_image_usd: 0.002       # one low detail image
-  vision_per_image_high_usd: 0.006  # one high detail image
+  vision_per_image_high_usd: 0.010  # one high detail 640 px keyframe (2 tiles, about 5x low)
   tts_per_1k_chars_usd: 0.18
   image_per_image_usd: 0.02
   video_per_second_usd: 0.05

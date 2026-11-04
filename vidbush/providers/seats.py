@@ -29,6 +29,8 @@ ROLES = ["researcher", "writer", "director", "judge", "editor", "cheap_classifie
          "tts", "vision", "search"]
 LLM_ROLES = {"researcher", "writer", "director", "editor"}
 VISION_ROLES = {"judge", "vision", "cheap_classifier"}
+IMAGE_DETAILS = {"high", "low", "auto"}  # OpenAI style image_url.detail values
+_BAD_DETAILS_LOGGED: set[str] = set()
 
 
 class Seats:
@@ -125,10 +127,15 @@ class Seats:
             res.cost_usd = res.units / 1000 * self.settings.cost.llm_per_1k_tokens_usd
         return res
 
-    def _vision_estimate(self, res: CallResult, n_images: int) -> CallResult:
-        """Vision cost when missing: the larger of the per image and the token estimates."""
+    def _vision_estimate(self, res: CallResult, details: list[str]) -> CallResult:
+        """Vision cost when missing: the larger of the per image and the token estimates.
+
+        Per image prices follow the detail mix: low uses vision_per_image_usd, high and auto
+        use vision_per_image_high_usd (auto is priced as high, a conservative estimate).
+        """
         if not res.mock and res.cost_usd == 0:
-            per_img = n_images * self.settings.cost.vision_per_image_usd
+            c = self.settings.cost
+            per_img = sum(c.vision_per_image_usd if d == "low" else c.vision_per_image_high_usd for d in details)
             tokens = res.units / 1000 * self.settings.cost.llm_per_1k_tokens_usd
             res.cost_usd = max(per_img, tokens)
         return res
@@ -155,16 +162,38 @@ class Seats:
     # ------------------------------------------------------------ vision
 
     def vision_json(self, role: str, task: str, system: str, prompt: str, images: list[str], stage: str,
-                    intent: str = "") -> dict[str, Any]:
-        """Score images with a vision role. Mock returns deterministic image statistics."""
-        parts: list[Any] = [{"type": "text", "text": prompt}] + [llm_mod.image_part(p) for p in images]
+                    intent: str = "", details: Optional[list[str]] = None) -> dict[str, Any]:
+        """Score images with a vision role. Mock returns deterministic image statistics.
+
+        details gives one image detail per image (high, low or auto); missing entries and the
+        default are low. It is sent as the OpenAI style image_url.detail; providers that ignore
+        that field (and the mock) are unaffected apart from the cost estimate.
+        """
+        dets = self._image_details(details, len(images))
+        parts: list[Any] = [{"type": "text", "text": prompt}] + [
+            llm_mod.image_part(p, detail=d) for p, d in zip(images, dets)]
         res = self._call(role, stage,
                          lambda spec: self._vision_estimate(
-                             llm_mod.chat(spec, system, parts, want_json=True, temperature=0.1), len(images)),
+                             llm_mod.chat(spec, system, parts, want_json=True, temperature=0.1), dets),
                          lambda: mock.mock_vision_score(images, intent or prompt), note=task)
         val = res.value if isinstance(res.value, dict) else {}
         val["_mock"] = res.mock
         return val
+
+    def _image_details(self, details: Optional[list[str]], n: int) -> list[str]:
+        """n validated detail values; unknown values fall back to low and are logged once each."""
+        out: list[str] = []
+        for d in list(details or [])[:n]:
+            v = str(d or "").strip().lower()
+            if v not in IMAGE_DETAILS:
+                with self._lock:
+                    first = v not in _BAD_DETAILS_LOGGED
+                    _BAD_DETAILS_LOGGED.add(v)
+                if first:
+                    self.log.warn("unknown image detail, using low", detail=str(d)[:40])
+                v = "low"
+            out.append(v)
+        return out + ["low"] * (n - len(out))
 
     # ------------------------------------------------------------ image
 

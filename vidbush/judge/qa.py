@@ -138,7 +138,7 @@ def score_post_render(shotlist: ShotList, frames: dict[str, list[str]], ctx: Any
                   f"Must avoid: {', '.join(shot.must_avoid) or 'nothing specific'}\nReturn strict JSON.")
         try:
             raw = ctx.seats.vision_json("vision", "qa", QA_SYSTEM, prompt, imgs, ctx.stage or "packaging",
-                                        intent=shot.intent)
+                                        intent=shot.intent, details=["low"] * len(imgs))  # QA stays low detail
         except Exception as e:  # noqa: BLE001  QA never fails the stage
             ctx.log.warn("qa scoring failed", shot=shot.id, error=str(e)[:300])
             return None
