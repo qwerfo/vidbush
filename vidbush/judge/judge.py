@@ -127,6 +127,18 @@ def parse_verdict(raw: Any, allowed: tuple[str, ...] = HARD_REJECTS) -> Optional
     return max(0.0, min(100.0, score)), reason[:240], rejects
 
 
+def keyframe_details(n: int, settings: Any = None) -> list[str]:
+    """Image detail per keyframe: judge.first_keyframe_detail for the first, keyframe_detail for the rest.
+
+    The first keyframe carries the most context (it opens the clip), so it gets the sharper look;
+    the rest only confirm motion and continuity. Seats.vision_json validates the values.
+    """
+    judge = getattr(settings, "judge", None)
+    first = getattr(judge, "first_keyframe_detail", "high")
+    rest = getattr(judge, "keyframe_detail", "low")
+    return ([first] + [rest] * (n - 1)) if n > 0 else []
+
+
 def score_candidate(shot: Shot, cand: Candidate, ctx: Any) -> Result:
     """Score one candidate. Returns (score, reason, reject or None); flags land on cand.flags."""
     rej = local_reject(cand)
@@ -135,7 +147,8 @@ def score_candidate(shot: Shot, cand: Candidate, ctx: Any) -> Result:
     frames = [k for k in cand.keyframes if Path(k).exists()][:MAX_KEYFRAMES]
     with _VISION_SLOTS:
         raw = ctx.seats.vision_json("judge", "judge", JUDGE_SYSTEM, judge_prompt(shot, cand), frames,
-                                    ctx.stage or "judge", intent=shot.intent)
+                                    ctx.stage or "judge", intent=shot.intent,
+                                    details=keyframe_details(len(frames), getattr(ctx, "settings", None)))
     if raw.get("_mock") and JUDGE_MOCK_FLAG not in cand.flags:
         cand.flags.append(JUDGE_MOCK_FLAG)
     verdict = parse_verdict(raw)

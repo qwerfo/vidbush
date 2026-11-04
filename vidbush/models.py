@@ -603,6 +603,12 @@ class VoiceConfig(Model):
     similarity: float = 0.8
 
 
+class LicencePolicy(Model):
+    """Per brand licence preferences. Flagging only: nothing is blocked except the blocklist."""
+
+    prefer_creative_commons: bool = False  # YouTube: search with the Creative Commons filter first, then normally
+
+
 class Brand(Model):
     id: str
     name: str = ""
@@ -614,6 +620,7 @@ class Brand(Model):
     blocklist: list[str] = Field(default_factory=list)
     niche_notes: str = ""
     language: str = "en"
+    licence_policy: LicencePolicy = Field(default_factory=LicencePolicy)
 
 
 # ---------------------------------------------------------------- edit ops
@@ -720,6 +727,7 @@ class QAReport(Model):
     mock_used: list[str] = Field(default_factory=list)
     nc_nd_assets: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    standard_youtube_assets: list[str] = Field(default_factory=list)  # selected Standard YouTube Licence clips
 
 
 ALL_MODELS: dict[str, type[BaseModel]] = {

@@ -130,19 +130,14 @@ def user_agent_for(contact: str) -> str:
 
 
 HTTP_PROXY = ""  # ffmpeg does not read proxy env vars; passed explicitly when set
-YOUTUBE_COOKIES = ""  # path to a Netscape cookies.txt exported from a logged-in browser
-YOUTUBE_COOKIES_FROM_BROWSER = ""  # or a browser name yt-dlp reads cookies from: chrome, firefox, edge
 
 
 def configure(settings: Settings) -> None:
     """Set the User-Agent contact and the throttle overrides for this process."""
     global USER_AGENT, HTTP_PROXY
     USER_AGENT = user_agent_for(settings.key("VIDBUSH_CONTACT"))
-    global YOUTUBE_COOKIES, YOUTUBE_COOKIES_FROM_BROWSER
     HTTP_PROXY = settings.key("HTTPS_PROXY") or settings.key("HTTP_PROXY")
-    cookies = settings.key("YOUTUBE_COOKIES")
-    YOUTUBE_COOKIES = str(settings.path(cookies)) if cookies else ""
-    YOUTUBE_COOKIES_FROM_BROWSER = settings.key("YOUTUBE_COOKIES_FROM_BROWSER")
+
     throttle.configure(settings.sources)
 
 

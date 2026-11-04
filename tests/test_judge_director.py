@@ -44,7 +44,7 @@ def fake_vision(scores: dict[str, float], ai_score: float = 85.0, rejects: Optio
     calls: list[str] = []
 
     def vision_json(role: str, task: str, system: str, prompt: str, images: list[str], stage: str,
-                    intent: str = "") -> dict[str, Any]:
+                    intent: str = "", details: Optional[list[str]] = None) -> dict[str, Any]:
         name = Path(images[0]).name
         calls.append(name)
         score = ai_score if "/ai/" in images[0].replace("\\", "/") else scores.get(name, 50.0)

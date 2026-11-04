@@ -295,8 +295,8 @@ def _to_ai(sess: EditSession, shot: Shot, new: ShotType) -> Outcome:
 
 
 def _resource(sess: EditSession, sl: ShotList, shot: Shot, new: ShotType) -> Outcome:
-    """Footage or still: re-source this shot, then judge and select on a one-shot list."""
-    from ..judge.director_loop import judge_and_select
+    """Footage or still: re-source this shot, judge it on a one-shot list, then apply the segment rule in context."""
+    from ..judge.director_loop import enforce_segment_rule, judge_and_select
     from ..source.registry import source_shot
     shot.type, shot.motion = new, None
     if new not in (ShotType.footage_overlay, ShotType.image_overlay):
@@ -310,6 +310,8 @@ def _resource(sess: EditSession, sl: ShotList, shot: Shot, new: ShotType) -> Out
                    shots=[shot])
     judged = judge_and_select(one, ctx).shots[0]
     sl.shots[retime.position(sl, shot)] = judged
+    if enforce_segment_rule(sl, judged, ctx):
+        ctx.log.info("re-sourced pick repeated a neighbouring segment, reselected", shot=judged.id)
     pick = judged.selected_candidate()
     if pick is None:
         raise EditError(f"no usable candidate found for {shot.id} as {new.value}")

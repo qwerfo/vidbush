@@ -21,7 +21,11 @@ dependencies = [
   "jsonschema",
   "yt-dlp[default]==2026.10.26",  # default extra brings yt-dlp-ejs (YouTube challenge solver)
   "scenedetect==0.7.2",
-  "opencv-python-headless",
+  # 4.x: the 5.x wheels no longer bundle the haar cascades the prefilter face check uses.
+  # opencv-python is pinned to the same version because rapidocr depends on it.
+  "opencv-python-headless==4.14.0.94",
+  "opencv-python==4.14.0.94",
+  "rapidocr-onnxruntime==1.2.3",  # OCR with its onnx weights inside the wheel (no runtime download)
 ]
 
 [project.optional-dependencies]

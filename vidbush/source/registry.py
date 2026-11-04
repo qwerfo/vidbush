@@ -18,7 +18,17 @@ Politeness: search responses are cached on disk under
 a re-run does not query again; each run has a query budget per adapter
 (throttle.take_budget, keyed by run_id(ctx)); requests are rate limited per host and capped
 globally in base/throttle. A throttled or over-budget search returns no
-results and is logged once per adapter and run.
+results and is logged once per adapter and run. Searches used per adapter and
+run, the budget and whether it ran out are persisted in
+work/source_notes.json (record_usage) so the QA report shows them after a
+resume.
+
+Search hints: an adapter that lists keyword names in search_hints gets them
+from the brand (prefer_cc from brand.licence_policy.prefer_creative_commons,
+language from brand.language); adapters without the attribute are called as
+before. A Creative Commons first pass costs one extra search from the budget
+and is dropped when the budget has only one search left. Hints are part of
+the search cache key.
 """
 from __future__ import annotations
 
@@ -51,6 +61,8 @@ DEFAULT_ADAPTER_WORKERS = 3
 UNCACHED = {"local"}  # in-memory index; its results change with the library
 _BLOCKED: dict[str, set[str]] = defaultdict(set)  # run id -> sources that answered with a bot check page
 _BLOCKED_LOCK = threading.Lock()
+SOURCE_NOTES = "source_notes.json"  # in ctx.work: search usage per run, read by judge/qa.py
+MAX_NOTE_RUNS = 10
 
 
 def _factories() -> dict[str, Callable[[], SourceAdapter]]:
@@ -150,23 +162,43 @@ def _has_sourced(shot: Shot) -> bool:
 
 # ---------------------------------------------------------------- search
 
+def search_hints(adapter: SourceAdapter, ctx: "StageContext") -> dict[str, Any]:
+    """Keyword arguments the adapter declared in search_hints, filled from the brand."""
+    wanted = set(getattr(adapter, "search_hints", ()) or ())
+    brand = getattr(ctx, "brand", None)
+    hints: dict[str, Any] = {}
+    policy = getattr(brand, "licence_policy", None)
+    if "prefer_cc" in wanted and getattr(policy, "prefer_creative_commons", False):
+        hints["prefer_cc"] = True
+    if "language" in wanted and getattr(brand, "language", ""):
+        hints["language"] = str(brand.language)
+    return hints
+
+
+def _variant(hints: dict[str, Any]) -> str:
+    return ",".join(f"{k}={v}" for k, v in sorted(hints.items()))
+
+
 def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
                 ctx: "StageContext") -> list[RawResult]:
-    """One search: disk cache first, then the run budget, then the adapter. Never raises."""
+    """One search: disk cache first, then the run budget (one per pass), then the adapter. Never raises."""
     with _BLOCKED_LOCK:
         if adapter.name in _BLOCKED[run_id(ctx)]:
             return []
     cacheable = adapter.name not in UNCACHED
+    hints = search_hints(adapter, ctx)
     if cacheable:
-        hit = cache_get(adapter.name, query, media, n, ctx.settings)
+        hit = cache_get(adapter.name, query, media, n, ctx.settings, _variant(hints))
         if hit is not None:
             return hit
         if not throttle.take_budget(run_id(ctx), adapter.name):
-            _note_once(ctx, f"budget_{adapter.name}", "source query budget spent, skipping searches",
-                       source=adapter.name)
+            _note_once(ctx, f"budget_{adapter.name}", "source query budget spent, skipping searches "
+                       "(see qa_report.md)", source=adapter.name)
             return []
+        if hints.get("prefer_cc") and not throttle.take_budget(run_id(ctx), adapter.name):
+            hints.pop("prefer_cc")  # the last search of the budget runs the normal pass only
     try:
-        results = adapter.search(query, media, n, ctx.settings, shot=shot)
+        results = adapter.search(query, media, n, ctx.settings, shot=shot, **hints)
     except throttle.Throttled as e:
         _note_once(ctx, f"throttled_{adapter.name}", "source search throttled, some queries skipped",
                    source=adapter.name, error=str(e)[:200])
@@ -181,7 +213,7 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
         ctx.log.warn("source search failed", source=adapter.name, query=query, shot=shot.id, error=str(e)[:200])
         return []
     if cacheable:
-        cache_put(adapter.name, query, media, n, results, ctx.settings)
+        cache_put(adapter.name, query, media, n, results, ctx.settings, _variant(hints))
     return [r for r in relevant(adapter.name, query, results, ctx) if not era_mismatch(shot, r)]
 
 
@@ -214,14 +246,42 @@ def relevant(adapter: str, query: str, results: list[RawResult], ctx: "StageCont
     return keep
 
 
-def _cache_path(adapter: str, query: str, media: str, n: int, settings: Any) -> Path:
-    key = hashlib.sha1(f"{adapter}|{media}|{n}|{' '.join(query.lower().split())}".encode("utf-8")).hexdigest()
+_usage_lock = threading.Lock()
+
+
+def record_usage(ctx: "StageContext") -> None:
+    """Persist this run's searches per adapter ({used, budget, refused}) in work/source_notes.json."""
+    usage = throttle.usage(run_id(ctx))
+    try:
+        path = Path(ctx.work) / SOURCE_NOTES
+    except (AttributeError, TypeError):
+        return
+    if not usage:
+        return
+    with _usage_lock:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            runs = data.get("runs") if isinstance(data, dict) and isinstance(data.get("runs"), dict) else {}
+            runs[run_id(ctx)] = {"ts": round(time.time(), 3), "usage": usage}
+            keep = sorted(runs, key=lambda k: float(runs[k].get("ts", 0)))[-MAX_NOTE_RUNS:]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(f".{threading.get_ident()}.part")
+            tmp.write_text(json.dumps({"runs": {k: runs[k] for k in keep}}, indent=2), encoding="utf-8")
+            tmp.replace(path)
+        except (OSError, ValueError, TypeError, AttributeError) as e:
+            ctx.log.warn("source usage note not written", error=str(e)[:200])
+
+
+def _cache_path(adapter: str, query: str, media: str, n: int, settings: Any, variant: str = "") -> Path:
+    text = f"{adapter}|{media}|{n}|{' '.join(query.lower().split())}" + (f"|{variant}" if variant else "")
+    key = hashlib.sha1(text.encode("utf-8")).hexdigest()
     return base.cache_dir(settings) / "search" / adapter / f"{key[:24]}.json"
 
 
-def cache_get(adapter: str, query: str, media: str, n: int, settings: Any) -> Optional[list[RawResult]]:
-    """Cached search results younger than SEARCH_CACHE_TTL_S, or None."""
-    path = _cache_path(adapter, query, media, n, settings)
+def cache_get(adapter: str, query: str, media: str, n: int, settings: Any,
+              variant: str = "") -> Optional[list[RawResult]]:
+    """Cached search results younger than SEARCH_CACHE_TTL_S, or None. variant holds the search hints."""
+    path = _cache_path(adapter, query, media, n, settings, variant)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if time.time() - float(data.get("ts", 0)) > SEARCH_CACHE_TTL_S:
@@ -231,8 +291,9 @@ def cache_get(adapter: str, query: str, media: str, n: int, settings: Any) -> Op
         return None
 
 
-def cache_put(adapter: str, query: str, media: str, n: int, results: list[RawResult], settings: Any) -> None:
-    path = _cache_path(adapter, query, media, n, settings)
+def cache_put(adapter: str, query: str, media: str, n: int, results: list[RawResult], settings: Any,
+              variant: str = "") -> None:
+    path = _cache_path(adapter, query, media, n, settings, variant)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(f".{threading.get_ident()}.part")
@@ -423,6 +484,7 @@ def source_all(shotlist: ShotList, ctx: "StageContext", force: bool = False) -> 
         futs = {s.id: pool.submit(_source_with_plan, s, plans[s.id], adapters, ctx, shot_media(s), set(), [])
                 for s in targets}
         results = {sid: f.result() for sid, f in futs.items()}
+    record_usage(ctx)  # still shots may have searched video sources again while fetching
     for s in targets:
         keep = [c for c in s.candidates if not force or c.source in GENERATED]
         s.candidates = keep + results[s.id]
@@ -447,6 +509,7 @@ def _search_all(targets: list[Shot], adapters: list[SourceAdapter], ctx: "StageC
             merged[name].extend(fut.result())
         found[sid] = {name: _merge(res) for name, res in merged.items()}
     ctx.log.info("source searches", sent=throttle.spent(run_id(ctx)))
+    record_usage(ctx)
     return found
 
 
@@ -480,5 +543,6 @@ def source_shot(shot: Shot, ctx: "StageContext", queries: Optional[list[str]] = 
     plan = plan_shot(interleave(per, [a.name for a in adapters]), _blocklist(ctx), set(), skip, cap + cap // 2)
     taken = {c.id for c in shot.candidates} | set(exclude_ids)
     cands = _source_with_plan(shot, plan, adapters, ctx, media, skip, taken)
+    record_usage(ctx)  # after the fetch: a still shot may search video sources again
     ctx.log.info("re-sourced shot", shot=shot.id, queries=qs, candidates=len(cands))
     return cands

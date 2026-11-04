@@ -42,12 +42,40 @@ class SourcesConfig(BaseModel):
     rate_limits: dict[str, list[float]] = Field(default_factory=dict)  # host -> [requests per second, burst]
     max_concurrency: int = 6
     query_budget: dict[str, int] = Field(default_factory=dict)  # source -> max searches per run
+    flag_standard_youtube: bool = True  # Standard YouTube Licence clips are allowed but flagged in qa_report
+    youtube_cookies_from_browser: str = ""  # yt-dlp cookiesfrombrowser, e.g. "firefox" or "chrome:Profile 1"
+    youtube_cookie_file: str = ""  # yt-dlp cookiefile, a Netscape cookies.txt path
+    youtube_download_workers: int = 3  # parallel downloads of different videos (searches stay serial)
+    youtube_windows: int = 3  # windows sampled across a video when no transcript or chapters match
+
+
+class PrefilterConfig(BaseModel):
+    """Local checks on keyframes before any vision call (vidbush/judge/prefilter.py)."""
+
+    enabled: bool = True
+    text: bool = True  # burned-in text (OCR)
+    logo: bool = True  # static corner logo or watermark
+    face: bool = True  # large frontal face to camera
+    text_min_keyframes: int = 2  # keyframes with subtitle-like text before a reject
+    text_band_top: float = 0.62  # share of frame height where the subtitle band and lower third start
+    text_min_width: float = 0.25  # text in the band must span this share of frame width to count as a subtitle
+    text_min_confidence: float = 0.6
+    logo_corner: float = 0.22  # corner box size as a share of width and height
+    logo_min_area: float = 0.002  # stable region must cover at least this share of the frame
+    logo_max_area: float = 0.04  # and at most this share (bigger is the scene itself)
+    logo_max_diff: float = 6.0  # mean absolute pixel difference that still counts as identical
+    face_min_area: float = 0.06  # a face box covering this share of the frame is large
+    face_centre: float = 0.5  # face centre within the middle share of the frame (width and height)
+    face_min_share: float = 0.5  # reject when more than this share of keyframes show a large centred face
 
 
 class JudgeConfig(BaseModel):
     threshold: float = 70.0
     max_attempts: int = 3
     post_render_every_s: float = 3.0
+    first_keyframe_detail: str = "high"  # image detail for the first keyframe of each candidate: high | low | auto
+    keyframe_detail: str = "low"  # detail for the other keyframes; the post-render QA pass is always low
+    prefilter: PrefilterConfig = Field(default_factory=PrefilterConfig)
 
 
 class CostConfig(BaseModel):
@@ -55,7 +83,8 @@ class CostConfig(BaseModel):
     image_warn_usd: float = 0.03
     # rough unit prices for estimates when the provider does not return cost
     llm_per_1k_tokens_usd: float = 0.002
-    vision_per_image_usd: float = 0.002
+    vision_per_image_usd: float = 0.002  # one low detail image
+    vision_per_image_high_usd: float = 0.010  # one high detail 640 px keyframe: 2 tiles, 425 vs 85 tokens, 5x low
     tts_per_1k_chars_usd: float = 0.18
     image_per_image_usd: float = 0.02
     video_per_second_usd: float = 0.05
@@ -133,6 +162,10 @@ def load_settings(root: Optional[Path] = None, overrides: Optional[dict[str, Any
         allow_mock_fallback=_truthy(env.get("VIDBUSH_ALLOW_MOCK_FALLBACK", app.get("allow_mock_fallback", False))),
         fail_at_stage=env.get("VIDBUSH_FAIL_AT") or None,
     )
+    if env.get("YOUTUBE_COOKIES"):
+        s.sources.youtube_cookie_file = env["YOUTUBE_COOKIES"]
+    if env.get("YOUTUBE_COOKIES_FROM_BROWSER"):
+        s.sources.youtube_cookies_from_browser = env["YOUTUBE_COOKIES_FROM_BROWSER"]
     if env.get("YOUTUBE_ENABLED"):
         s.sources.allow_youtube = _truthy(env["YOUTUBE_ENABLED"])
     for k, v in (overrides or {}).items():

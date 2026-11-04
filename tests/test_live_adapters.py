@@ -125,9 +125,13 @@ def test_malformed_json_is_asked_again_on_the_same_provider(monkeypatch) -> None
     spec = ProviderSpec("p", "openai_compat", "m", base_url="https://r/v1", api_key="k")
     res = llm_mod.chat(spec, "s", "u", want_json=True)
     assert res.value == {"ideas": []} and res.cost_usd == pytest.approx(0.005)
-    bad = {"choices": [{"message": {"content": "{broken"}, "finish_reason": "length"}], "usage": {}}
-    monkeypatch.setattr(llm_mod, "post_json", lambda *a, **k: bad)
-    with pytest.raises(llm_mod.BadJSONError, match="finish length"):
+    broken = {"choices": [{"message": {"content": "{broken"}, "finish_reason": "stop"}], "usage": {}}
+    monkeypatch.setattr(llm_mod, "post_json", lambda *a, **k: broken)
+    with pytest.raises(llm_mod.BadJSONError, match="finish stop"):
+        llm_mod.chat(spec, "s", "u", want_json=True)
+    cut = {"choices": [{"message": {"content": "{broken"}, "finish_reason": "length"}], "usage": {}}
+    monkeypatch.setattr(llm_mod, "post_json", lambda *a, **k: cut)
+    with pytest.raises(RefusalError, match="truncated twice"):  # continued once, then fails over
         llm_mod.chat(spec, "s", "u", want_json=True)
 
 

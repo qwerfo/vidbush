@@ -245,12 +245,12 @@ def test_youtube_fetch_cuts_clips(monkeypatch, online, shot, tmp_path, tiny_mp4:
     assert youtube.YoutubeAdapter().fetch(low, tmp_path, shot, online) == []  # under 720p skipped
 
 
-def test_youtube_section_and_licence() -> None:
-    from vidbush.source.youtube import section_for, youtube_licence
+def test_youtube_section_and_licence(settings) -> None:
+    from vidbush.source.youtube import choose_windows, youtube_licence
     s = Shot(id="s", beat_id="b", start=0, end=5, duration=5, type=ShotType.footage, intent="")
-    a, b = section_for(600.0, s)
-    assert a >= 0 and b <= 600 and 40 <= b - a <= 100
-    assert section_for(20.0, s) == (0.0, 20.0)
+    windows = choose_windows({"duration": 600.0}, s, settings)
+    assert windows and all(0 <= a < b <= 600 and 20 <= b - a <= 100 for a, b in windows)
+    assert choose_windows({"duration": 20.0}, s, settings) == [(0.0, 20.0)]
     assert youtube_licence({}) == "Standard YouTube License"
 
 
