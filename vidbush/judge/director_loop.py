@@ -12,6 +12,8 @@ from __future__ import annotations
 import inspect
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..models import Candidate, Script, Shot, ShotList, ShotType, SourceKind
@@ -24,8 +26,8 @@ RESOLVE_WORKERS = 4
 DIVERSITY_GAP = 5.0  # score points charged per earlier use of the same asset anywhere in the video
 RECENT_S = 60.0
 RECENT_PENALTY = 10.0  # extra when the earlier use is within RECENT_S
-SEGMENT_GAP_S = 3.0  # a reused video must start at least this far from the earlier in point
-SAME_SEGMENT_PENALTY = 15.0
+SEGMENT_GAP_S = 3.0  # video ranges that overlap or start closer than this are the same segment
+CROSS_SCENE_SEGMENT_PENALTY = 40.0  # same segment again in another scene (banned within a scene and next shot)
 SHOT_FLAGS = {"mock", "low_res", "nc_nd", "anachronism", "no_match_accepted", "standard_youtube_licence"}
 MAX_QUERIES = 6
 
@@ -254,31 +256,79 @@ def add_candidates(shot: Shot, new: list[Candidate]) -> list[Candidate]:
 
 # ---------------------------------------------------------------- selection
 
+@dataclass(frozen=True)
+class _Pick:
+    """One selection: shot start, shot index, scene and the picked candidate."""
+    at: float
+    index: int
+    scene_id: str
+    cand: Candidate
+
+
+_WINDOW_STEM = re.compile(r"^(.*)_(\d+)$")
+WINDOWED_SOURCES = {SourceKind.youtube}  # adapters that download a window named <prefix>_<start s>
+
+
+def _timeline(c: Candidate) -> tuple[str, float]:
+    """(file family, offset): in_point + offset is time in the family's source.
+
+    A windowed source names each downloaded window <prefix>_<start s>, so its
+    files share one timeline. Any other file is its own family at offset 0,
+    which also covers per shot copies of one file (same name).
+    """
+    stem = Path(c.local_path).stem if c.local_path else ""
+    m = _WINDOW_STEM.match(stem) if c.source in WINDOWED_SOURCES else None
+    return (m.group(1), float(m.group(2))) if m else (stem, 0.0)
+
+
+def same_segment(a: Candidate, b: Candidate) -> bool:
+    """Same video asset whose time ranges overlap or start within SEGMENT_GAP_S.
+
+    Stills are never a segment (they repeat with a derived framing). Two files
+    of one URL that share no window timeline cannot be proven apart, so they
+    count as the same segment.
+    """
+    if a.media != "video" or b.media != "video" or asset_key(a) != asset_key(b):
+        return False
+    (fa, oa), (fb, ob) = _timeline(a), _timeline(b)
+    if fa != fb:
+        return True
+    a0, b0 = a.in_point + oa, b.in_point + ob
+    a1, b1 = max(a.out_point + oa, a0), max(b.out_point + ob, b0)
+    return abs(a0 - b0) < SEGMENT_GAP_S or (a0 < b1 and b0 < a1)
+
+
 class _Usage:
-    """Assets already selected in this video: (shot start, asset key, in point) in timeline order."""
+    """Selections made so far in timeline order (motion graphics skipped), with scene and shot index."""
 
     def __init__(self) -> None:
-        self.picks: list[tuple[float, str, float]] = []
+        self.picks: list[_Pick] = []
 
     def penalty(self, c: Candidate, at: float) -> float:
         """Score points to subtract for reusing c at time at: any reuse, reuse within 60 s, same segment."""
         key, p = asset_key(c), 0.0
-        for t, k, inp in self.picks:
-            if k != key:
+        for pick in self.picks:
+            if asset_key(pick.cand) != key:
                 continue
             p += DIVERSITY_GAP
-            if abs(at - t) <= RECENT_S:
+            if abs(at - pick.at) <= RECENT_S:
                 p += RECENT_PENALTY
-            if c.media == "video" and abs(c.in_point - inp) < SEGMENT_GAP_S:
-                p += SAME_SEGMENT_PENALTY  # stills may repeat with a new framing; a video needs a new segment
+            if same_segment(c, pick.cand):
+                p += CROSS_SCENE_SEGMENT_PENALTY  # stills may repeat with a new framing; a video needs a new segment
         return p
 
-    def add(self, c: Candidate, at: float) -> None:
-        self.picks.append((at, asset_key(c), c.in_point))
+    def banned(self, c: Candidate, scene_id: str) -> bool:
+        """Same segment as the previous shot, or as any earlier shot of this scene."""
+        if self.picks and same_segment(c, self.picks[-1].cand):
+            return True
+        return any(p.scene_id == scene_id and same_segment(c, p.cand) for p in self.picks)
+
+    def add(self, c: Candidate, at: float, scene_id: str = "", index: int = -1) -> None:
+        self.picks.append(_Pick(at, index, scene_id, c))
 
 
 def _select_all(shotlist: ShotList, ctx: Any, threshold: float, notes: dict[str, list[str]]) -> None:
-    """Pick one candidate per shot, penalising reuse of an asset anywhere in the video (more within 60 s)."""
+    """Pick one candidate per shot: segment rule first, then reuse penalties anywhere in the video."""
     usage = _Usage()
     for shot in shotlist.shots:
         if shot.type == ShotType.motion_graphic:
@@ -288,14 +338,12 @@ def _select_all(shotlist: ShotList, ctx: Any, threshold: float, notes: dict[str,
         passing = [c for c in _ranked(shot) if _ok(c, threshold)]
         if pinned is not None and pinned.source == SourceKind.upload:
             pick, accepted = pinned, False
-        elif passing:
-            pick, accepted = _diverse(passing, usage, shot.start), False
         else:
             ranked = _ranked(shot)
-            pool = [c for c in ranked if c.reject_reason is None] or ranked[:1]
-            pick, accepted = _diverse(pool, usage, shot.start), True
+            pool = passing or [c for c in ranked if c.reject_reason is None] or ranked[:1]
+            pick, accepted = _diverse(pool, usage, shot, ctx), not passing
         _apply(shot, pick, accepted, notes.get(shot.id, []))
-        usage.add(pick, shot.start)
+        usage.add(pick, shot.start, shot.scene_id, shot.index)
 
 
 def _ensure_usable(shot: Shot, ctx: Any) -> None:
@@ -308,9 +356,23 @@ def _ensure_usable(shot: Shot, ctx: Any) -> None:
     _add_ai(shot, ctx)
 
 
-def _diverse(pool: list[Candidate], usage: _Usage, at: float) -> Candidate:
-    """Best of pool by judge score minus the reuse penalty; ties keep the judge order."""
-    return max(pool, key=lambda c: (c.score or 0.0) - usage.penalty(c, at))
+def _diverse(pool: list[Candidate], usage: _Usage, shot: Shot, ctx: Any = None) -> Candidate:
+    """Best of pool by judge score minus the reuse penalty, banned segments excluded; ties keep the judge order.
+
+    When every candidate is banned the shot still gets one: a candidate that is not
+    the previous shot's segment first, then the least penalised.
+    """
+    def net(c: Candidate) -> float:
+        return (c.score or 0.0) - usage.penalty(c, shot.start)
+
+    allowed = [c for c in pool if not usage.banned(c, shot.scene_id)]
+    if allowed:
+        return max(allowed, key=net)
+    prev = usage.picks[-1].cand if usage.picks else None
+    pick = max(pool, key=lambda c: (prev is None or not same_segment(c, prev), net(c)))
+    if ctx is not None:
+        ctx.log.warn("every candidate repeats a used segment, least penalised kept", shot=shot.id, pick=pick.id)
+    return pick
 
 
 def _apply(shot: Shot, pick: Candidate, accepted: bool, notes: list[str]) -> None:
