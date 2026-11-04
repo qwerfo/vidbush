@@ -152,12 +152,30 @@ def clip_span(duration: float, shot: Shot, key: str) -> tuple[float, float]:
     return round(offset, 3), round(offset + need, 3)
 
 
+def is_bundled_library(lib: Path, settings: Settings) -> bool:
+    return lib.resolve() == (Path(settings.repo_root) / "fixtures" / "sample_assets").resolve()
+
+
+def real_judge(settings: Settings) -> bool:
+    """True when the judge seat would call a real provider (not offline, a configured provider exists)."""
+    if settings.offline:
+        return False
+    from ..providers.base import CostTracker
+    from ..providers.seats import Seats
+    return Seats(settings, CostTracker("availability")).is_real("judge")
+
+
 class LocalAdapter(BaseAdapter):
     name = "local"
     media = {"video", "image"}
 
     def available(self, settings: Settings) -> bool:
-        return settings.path(settings.sources.local_library).is_dir()
+        lib = settings.path(settings.sources.local_library)
+        if not lib.is_dir():
+            return False
+        # the bundled synthetic library (labelled SAMPLE FOOTAGE) exists for mock runs only: it must never
+        # reach a production whose judge is a real model
+        return not (is_bundled_library(lib, settings) and real_judge(settings))
 
     def items(self, settings: Settings, media: Media) -> list[LibraryItem]:
         return [it for it in library_index(settings.path(settings.sources.local_library)) if it.media == media]

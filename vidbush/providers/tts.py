@@ -22,7 +22,7 @@ FALLBACK_MODEL = "eleven_multilingual_v2"
 LANGUAGE_MODELS = {"eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_v3"}
 # models that take previous_text / next_text for prosody continuity between chunks
 CONTEXT_MODELS = {"eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_turbo_v2",
-                  "eleven_monolingual_v1", "eleven_multilingual_v1"}
+                  "eleven_monolingual_v1", "eleven_multilingual_v1", "eleven_v4"}
 V3_STABILITY = (0.0, 0.5, 1.0)
 V3_MAX_CHARS = 3000
 _MODEL_CACHE: dict[str, str] = {}
@@ -80,7 +80,19 @@ def synthesize(spec: ProviderSpec, text: str, voice_id: str, model: str, out_pat
     model_id = pick_model(spec, model)
     url = f"{_base(spec)}/v1/text-to-speech/{voice_id}/with-timestamps"
     body = build_body(spec, text, model_id, settings, language, previous_text, next_text)
-    data = post_json(url, body, {"xi-api-key": spec.api_key}, timeout=300)
+    try:
+        data = post_json(url, body, {"xi-api-key": spec.api_key}, timeout=300)
+    except RefusalError as e:
+        # an auto-picked model the API refuses switches to the fallback for the rest of the run (sticky,
+        # so one video never mixes models); quota and auth errors are not the model's fault and re-raise
+        if model not in ("", "auto") or model_id == FALLBACK_MODEL or any(
+                w in str(e).lower() for w in ("quota", "credits", "unauthorized", "invalid_api_key", "http 401")):
+            raise
+        with _LOCK:
+            _MODEL_CACHE[spec.name] = FALLBACK_MODEL
+        model_id = FALLBACK_MODEL
+        body = build_body(spec, text, model_id, settings, language, previous_text, next_text)
+        data = post_json(url, body, {"xi-api-key": spec.api_key}, timeout=300)
     audio = data.get("audio_base64")
     if not audio:
         raise RefusalError(f"no audio in response: {str(data)[:200]}")

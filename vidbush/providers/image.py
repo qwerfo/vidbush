@@ -1,5 +1,6 @@
 """Image generation adapters: OpenAI-compatible images API, OpenRouter style
-chat image output (options.mode: chat), fal.ai, Runware.
+chat image output (options.mode: chat), fal.ai, Runware, and async job APIs
+(Elevate media tasks, Algrow jobs: submit, poll, download the hosted file).
 
 All adapters return a PNG on disk at least 1920x1080 (16:9), upscaled and
 center cropped with Lanczos when the provider returns a smaller frame.
@@ -8,14 +9,16 @@ from __future__ import annotations
 
 import base64
 import io
+import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
-from .base import CallResult, ProviderSpec, RefusalError, TransportError
-from .http import get_bytes, post_json
+from .base import CallResult, ProviderSpec, RateLimitError, RefusalError, TransportError
+from .http import get_bytes, get_json, post_json
 
 SIZES_16x9 = ["1792x1024", "1536x1024", "1344x768", "1024x576", "1024x1024"]
 # per image USD at landscape size by quality; used for gpt-image models instead of the static estimate
@@ -28,9 +31,13 @@ GPT_IMAGE_TOKENS = {"gpt-image-1-mini": (2.0, 8.0), "gpt-image-1": (5.0, 40.0)}
 DEFAULT_GPT_IMAGE_QUALITY = "low"
 
 
-def fit_16x9(raw: bytes, out_path: Path, width: int = 1920, height: int = 1080) -> Path:
-    """Scale and center crop any image to width x height."""
+def fit_16x9(raw: bytes, out_path: Path, width: int = 1920, height: int = 1080, trim: float = 0.0) -> Path:
+    """Scale and center crop any image to width x height. trim crops that fraction from every edge
+    first (providers that stamp a corner watermark set options.edge_trim)."""
     im = Image.open(io.BytesIO(raw)).convert("RGB")
+    if trim > 0:
+        dx, dy = round(im.width * trim), round(im.height * trim)
+        im = im.crop((dx, dy, im.width - dx, im.height - dy))
     scale = max(width / im.width, height / im.height)
     im = im.resize((max(width, round(im.width * scale)), max(height, round(im.height * scale))), Image.LANCZOS)
     left = (im.width - width) // 2
@@ -41,13 +48,18 @@ def fit_16x9(raw: bytes, out_path: Path, width: int = 1920, height: int = 1080) 
     return out_path
 
 
+def _trim(spec: ProviderSpec) -> float:
+    return min(0.2, max(0.0, float(spec.options.get("edge_trim", 0.0))))
+
+
 def _cost(spec: ProviderSpec, default: float) -> float:
     return float(spec.options.get("cost_per_image", default))
 
 
 def _gpt_family(model: str) -> str:
+    """The GPT_IMAGE_COST row for this model, or "" for models the table does not price (they use cost_per_image)."""
     low = model.lower()
-    if "gpt-image" not in low:
+    if not re.search(r"gpt-image-1(?![.\d])", low):
         return ""
     return "gpt-image-1-mini" if "mini" in low else "gpt-image-1"
 
@@ -109,7 +121,7 @@ def generate_openai(spec: ProviderSpec, prompt: str, out_path: Path, default_cos
             if _is_size_error(e):
                 continue
             raise
-        return CallResult(value=_save(data, out_path), provider=spec, mock=False,
+        return CallResult(value=_save(data, out_path, _trim(spec)), provider=spec, mock=False,
                           cost_usd=_actual_cost(spec, data, default_cost), units=1, unit_kind="images")
     raise RefusalError(f"no accepted size for {spec.model}: {last}")
 
@@ -128,7 +140,7 @@ def generate_chat(spec: ProviderSpec, prompt: str, out_path: Path, default_cost:
     except (KeyError, IndexError, TypeError) as e:
         raise RefusalError(f"no image in chat response: {str(data)[:200]}") from e
     raw = _decode_image_url(img_url)
-    return CallResult(value=fit_16x9(raw, out_path), provider=spec, mock=False,
+    return CallResult(value=fit_16x9(raw, out_path, trim=_trim(spec)), provider=spec, mock=False,
                       cost_usd=_actual_cost(spec, data, default_cost), units=1, unit_kind="images")
 
 
@@ -138,7 +150,7 @@ def _decode_image_url(url: str) -> bytes:
     return get_bytes(url)
 
 
-def _save(data: dict[str, Any], out_path: Path) -> Path:
+def _save(data: dict[str, Any], out_path: Path, trim: float = 0.0) -> Path:
     item = (data.get("data") or [{}])[0]
     if item.get("b64_json"):
         raw = base64.b64decode(item["b64_json"])
@@ -146,7 +158,7 @@ def _save(data: dict[str, Any], out_path: Path) -> Path:
         raw = get_bytes(item["url"])
     else:
         raise RefusalError(f"no image in response: {str(data)[:200]}")
-    return fit_16x9(raw, out_path)
+    return fit_16x9(raw, out_path, trim=trim)
 
 
 def generate_fal(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float) -> CallResult:
@@ -158,7 +170,7 @@ def generate_fal(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: 
     if not images:
         raise RefusalError(f"fal returned no image: {str(data)[:200]}")
     raw = get_bytes(images[0]["url"])
-    return CallResult(value=fit_16x9(raw, out_path), provider=spec, mock=False,
+    return CallResult(value=fit_16x9(raw, out_path, trim=_trim(spec)), provider=spec, mock=False,
                       cost_usd=_cost(spec, default_cost), units=1, unit_kind="images")
 
 
@@ -173,11 +185,120 @@ def generate_runware(spec: ProviderSpec, prompt: str, out_path: Path, default_co
         raise RefusalError(f"runware returned no image: {str(data)[:200]}")
     raw = get_bytes(items[0]["imageURL"])
     cost = float(items[0].get("cost") or _cost(spec, default_cost))
-    return CallResult(value=fit_16x9(raw, out_path), provider=spec, mock=False,
+    return CallResult(value=fit_16x9(raw, out_path, trim=_trim(spec)), provider=spec, mock=False,
                       cost_usd=cost, units=1, unit_kind="images")
 
 
-ADAPTERS = {"openai_compat": generate_openai, "fal": generate_fal, "runware": generate_runware}
+# ------------------------------------------------------------ async job APIs
+
+_JOB_DONE = {"completed", "succeeded", "success", "done"}
+_JOB_FAILED = {"failed", "error", "cancelled", "canceled"}
+_RETRY_WORDS = ("retry", "timed out", "timeout", "temporarily", "unavailable", "overloaded", "busy")
+
+
+def _job_failure(where: str, message: str) -> Exception:
+    """A failed job is transient when the provider says to retry, else a refusal (moderation, bad prompt)."""
+    low = message.lower()
+    if any(w in low for w in _RETRY_WORDS):
+        return TransportError(f"{where}: {message[:300]}")
+    return RefusalError(f"{where}: {message[:300]}")
+
+
+def _poll(spec: ProviderSpec, url: str, headers: dict[str, str], read: Any, where: str,
+          default_timeout: float, default_poll: float) -> dict[str, Any]:
+    """GET url until read(reply) gives a terminal status; returns the finished job object."""
+    limit = float(spec.options.get("timeout_s", default_timeout))
+    wait = float(spec.options.get("poll_s", default_poll))
+    deadline = time.time() + limit
+    while True:
+        job = read(get_json(url, headers=headers, timeout=60))
+        status = str(job.get("status", "")).lower()
+        if status in _JOB_DONE:
+            return job
+        if status in _JOB_FAILED:
+            raise _job_failure(where, str(job.get("error") or job.get("message") or status))
+        if time.time() >= deadline:
+            raise TransportError(f"{where} not finished within {limit:.0f} s (status {status})")
+        time.sleep(wait)
+
+
+def _elevate_data(reply: Any, where: str) -> dict[str, Any]:
+    """Elevate wraps every reply in {success, data, error}; errors can arrive with HTTP 200."""
+    if not isinstance(reply, dict):
+        raise TransportError(f"{where}: non-object reply")
+    if reply.get("success") is False:
+        err = reply.get("error") or {}
+        code, msg = str(err.get("code", "")).upper(), str(err.get("message", "unknown error"))
+        if "RATE_LIMIT" in code:
+            raise RateLimitError(f"{where}: {code} {msg}"[:300], None)
+        if code in ("INVALID_REQUEST", "VALIDATION_ERROR", "UNAUTHORIZED", "FORBIDDEN", "CONTENT_POLICY"):
+            raise RefusalError(f"{where}: {code} {msg}"[:300])
+        raise _job_failure(where, f"{code} {msg}")
+    return reply.get("data") or {}
+
+
+def generate_elevate(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float) -> CallResult:
+    """Elevate media API: POST /v2/media, poll GET /v2/media/{id}?type=image, download result_url."""
+    base = (spec.base_url or "https://public-api.elevate.uno").rstrip("/")
+    headers = {"Authorization": f"Bearer {spec.api_key}"}
+    body: dict[str, Any] = {"type": "image", "prompt": prompt, "model": spec.model,
+                            "aspect_ratio": spec.options.get("aspect_ratio", "landscape"), "params": {}}
+    body.update(spec.options.get("extra_body", {}))
+    task = _elevate_data(post_json(base + "/v2/media", body, headers, timeout=60), "Elevate submit")
+    task_id = task.get("id")
+    if not task_id:
+        raise TransportError(f"Elevate submit returned no task id: {str(task)[:200]}")
+    if str(task.get("status", "")).lower() not in _JOB_DONE:
+        task = _poll(spec, f"{base}/v2/media/{task_id}?type=image", headers,
+                     lambda r: _elevate_data(r, f"Elevate task {task_id}"), f"Elevate task {task_id}", 300, 5)
+    if not task.get("result_url"):
+        raise TransportError(f"Elevate task {task_id} completed without result_url")
+    raw = get_bytes(task["result_url"])
+    return CallResult(value=fit_16x9(raw, out_path, trim=_trim(spec)), provider=spec, mock=False,
+                      cost_usd=_cost(spec, default_cost), units=1, unit_kind="images")
+
+
+def _algrow_url(job: dict[str, Any]) -> str:
+    for key in ("image_url", "url", "result_url", "output_url"):
+        v = job.get(key)
+        if isinstance(v, str) and v.startswith("http"):
+            return v
+    for key in ("image_urls", "images", "outputs", "results"):
+        v = job.get(key)
+        if isinstance(v, list) and v:
+            first = v[0]
+            if isinstance(first, str) and first.startswith("http"):
+                return first
+            if isinstance(first, dict):
+                return _algrow_url(first)
+    return ""
+
+
+def generate_algrow(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float) -> CallResult:
+    """Algrow: POST /api/generate-image, poll GET /api/job-status/{job_id}, download the hosted image."""
+    base = (spec.base_url or "https://api.algrow.online").rstrip("/")
+    headers = {"Authorization": f"Bearer {spec.api_key}"}
+    body: dict[str, Any] = {"prompt": prompt, "model": spec.model,
+                            "aspect_ratio": spec.options.get("aspect_ratio", "16:9"),
+                            "fast": bool(spec.options.get("fast", False))}
+    body.update(spec.options.get("extra_body", {}))
+    sub = post_json(base + "/api/generate-image", body, headers, timeout=60)
+    if sub.get("success") is False or not sub.get("job_id"):
+        raise RefusalError(f"Algrow submit: {str(sub.get('error') or sub)[:300]}")
+    job_id = sub["job_id"]
+    job = _poll(spec, f"{base}/api/job-status/{job_id}", headers, lambda r: r if isinstance(r, dict) else {},
+                f"Algrow job {job_id}", 600, 3)
+    url = _algrow_url(job)
+    if not url:
+        raise TransportError(f"Algrow job {job_id} completed without an image url")
+    raw = get_bytes(url)
+    return CallResult(value=fit_16x9(raw, out_path, trim=_trim(spec)), provider=spec, mock=False,
+                      cost_usd=_cost(spec, default_cost), units=1, unit_kind="images")
+
+
+ADAPTERS = {"openai_compat": generate_openai, "fal": generate_fal, "runware": generate_runware,
+            "elevate": generate_elevate, "algrow": generate_algrow}
+
 
 
 def generate(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float) -> CallResult:

@@ -19,3 +19,26 @@ One line each: the decision and why.
 - The director guarantees one data chart per video whenever any beat has two or more comparable numbers, and parses spelled-out numbers ("one hundred dollars").
 - Docker image is based on ubuntu:24.04 (Python 3.12, FFmpeg 6, espeak-ng from the Ubuntu archive).
 - Built UI (ui/dist) is committed so Windows and Docker users do not need Node to run Vidbush.
+
+## Live run 1 (2026-11-04, Windows laptop)
+
+- Kept the existing FFmpeg (gyan.dev build in C:\FFmpeg) and Git instead of installing second copies with winget; installed Python 3.11 and Deno with winget.
+- numpy pinned per Python version (2.5.3 on 3.12+, 2.4.6 on 3.11) because the 3.13 sandbox pin had no 3.11 wheel and the project promises 3.11+.
+- Tests load settings with use_dotenv=False, so the operator's keys can never turn a unit test into a live, billed call.
+- Fallback text and vision seats use WELLFLOW_API_KEY, not WELLFLOW_CHEAP: the cheap key's channel refused every model in the seat map (HTTP 403 model_not_in_channel).
+- Editor and vision roles got their own fallback entries (LLM_FALLBACK_CHEAP_MODEL, VISION_FALLBACK_*), so a CloseRouter Gemini outage does not stop the judge.
+- Writer on anthropic/claude-opus-5, researcher and director on anthropic/claude-sonnet-5, editor, judge, vision and cheap_classifier on google/gemini-3.8-flash, all on CloseRouter; fallback qwen3.8-max and gemini-3.8-flash on Wellflow.
+- Gemini 3.8 Flash on CloseRouter passed a real vision probe (JSON scores for a JPEG), so the Wellflow Gemini is the fallback, not the primary.
+- No max_tokens sent: CloseRouter returned 3,545 tokens with finish_reason stop for a long request. options.max_tokens exists for relays that truncate.
+- LLM timeout raised from 180 s to 600 s for every role (writer calls on a slow relay ran past 180 s in RadioPlay).
+- Calls without usage.cost are priced from the provider's own /models price list rather than a flat per 1k token guess.
+- Elevate and Algrow are async job APIs, so they got their own provider types (elevate, algrow) instead of being forced through the OpenAI images shape.
+- Image model on Elevate is gpt-image-2.5-fast (Elevate's id for GPT Image 2.5; 4 credits, subscription, recorded as 0 USD); Algrow fallback gpt-image-2.5 at 0.01085 USD. Both under the 3 cent warn level.
+- Elevate images get a 5 percent edge trim to remove the corner sparkle mark (provider option edge_trim, any provider can use it).
+- The gpt-image price table only prices gpt-image-1 and gpt-image-1-mini; newer gpt-image ids use the stated cost_per_image instead of being priced as gpt-image-1.
+- TTS model_preference eleven_v4 then eleven_multilingual_v2; a refused auto model switches to v2 for the whole run so voices never mix.
+- Brand voice kept as the premade Brian (nPczCjzI2devNBz1zQrb): the voice is not under test in this run, and a premade voice exists on every account.
+- Search seat left empty: no Tavily key exists and script mode needs no research.
+- Font features are dropped when Pillow lacks libraqm (all Windows wheels), so charts and number cards render instead of degrading to text overlays.
+- Every provider request sends a browser-like User-Agent (Cloudflare error 1010 on Elevate otherwise).
+- doctor --probe now probes every configured provider of a role, not only the first, so a dead fallback shows before a run needs it.

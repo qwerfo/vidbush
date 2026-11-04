@@ -22,7 +22,7 @@ RATE_LIMIT_MAX_WAIT_S = 60.0
 # model names in config/seats.yaml that are placeholders, never real model ids
 PLACEHOLDER_PREFIX = "your-"
 # provider types whose requests name a model, so an empty model means not configured
-MODEL_TYPES = {"openai_compat", "fal", "runware"}
+MODEL_TYPES = {"openai_compat", "fal", "runware", "elevate", "algrow"}
 
 
 class ProviderError(Exception):
@@ -54,7 +54,7 @@ class ProviderSpec:
     """One entry in a role's ordered provider list."""
 
     name: str
-    type: str  # openai_compat | elevenlabs | fal | runware | pexels | pixabay | tavily | serper | brave | mock
+    type: str  # openai_compat | elevenlabs | fal | runware | elevate | algrow | pexels | pixabay | tavily | serper | brave | mock
     model: str = ""
     base_url: str = ""
     api_key: str = ""

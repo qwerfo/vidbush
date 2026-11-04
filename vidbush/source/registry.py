@@ -49,6 +49,8 @@ SEARCH_CACHE_TTL_S = 14 * 86400
 ADAPTER_WORKERS = {"youtube": 1, "loc": 1, "local": 2}
 DEFAULT_ADAPTER_WORKERS = 3
 UNCACHED = {"local"}  # in-memory index; its results change with the library
+_BLOCKED: dict[str, set[str]] = defaultdict(set)  # run id -> sources that answered with a bot check page
+_BLOCKED_LOCK = threading.Lock()
 
 
 def _factories() -> dict[str, Callable[[], SourceAdapter]]:
@@ -151,6 +153,9 @@ def _has_sourced(shot: Shot) -> bool:
 def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
                 ctx: "StageContext") -> list[RawResult]:
     """One search: disk cache first, then the run budget, then the adapter. Never raises."""
+    with _BLOCKED_LOCK:
+        if adapter.name in _BLOCKED[run_id(ctx)]:
+            return []
     cacheable = adapter.name not in UNCACHED
     if cacheable:
         hit = cache_get(adapter.name, query, media, n, ctx.settings)
@@ -167,6 +172,12 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
                    source=adapter.name, error=str(e)[:200])
         return []
     except Exception as e:  # noqa: BLE001 - one failing source never stops sourcing
+        if base.is_challenge(e):
+            with _BLOCKED_LOCK:
+                _BLOCKED[run_id(ctx)].add(adapter.name)
+            _note_once(ctx, f"challenge_{adapter.name}", "source answered with a bot check page; skipped for this run",
+                       source=adapter.name)
+            return []
         ctx.log.warn("source search failed", source=adapter.name, query=query, shot=shot.id, error=str(e)[:200])
         return []
     if cacheable:

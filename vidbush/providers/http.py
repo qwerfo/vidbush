@@ -1,6 +1,7 @@
 """Thin HTTP helpers that map failures to provider exception classes."""
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 import requests
@@ -8,12 +9,19 @@ import requests
 from .base import TransportError, http_error_to_exc
 
 DEFAULT_TIMEOUT = 120.0
+# Some relays sit behind Cloudflare, which rejects the python-requests default agent (error 1010).
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+              "Chrome/130.0 Safari/537.36 vidbush/0.1")
+
+
+def _h(headers: Optional[dict[str, str]]) -> dict[str, str]:
+    return {"User-Agent": USER_AGENT, **(headers or {})}
 
 
 def post_json(url: str, payload: dict[str, Any], headers: Optional[dict[str, str]] = None,
               timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     try:
-        r = requests.post(url, json=payload, headers=headers or {}, timeout=timeout)
+        r = requests.post(url, json=payload, headers=_h(headers), timeout=timeout)
     except requests.RequestException as e:
         raise TransportError(str(e)[:300]) from e
     if r.status_code >= 400:
@@ -27,7 +35,7 @@ def post_json(url: str, payload: dict[str, Any], headers: Optional[dict[str, str
 def get_json(url: str, params: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None,
              timeout: float = 30.0) -> Any:
     try:
-        r = requests.get(url, params=params, headers=headers or {}, timeout=timeout)
+        r = requests.get(url, params=params, headers=_h(headers), timeout=timeout)
     except requests.RequestException as e:
         raise TransportError(str(e)[:300]) from e
     if r.status_code >= 400:
@@ -41,7 +49,7 @@ def get_json(url: str, params: Optional[dict[str, Any]] = None, headers: Optiona
 def get_bytes(url: str, headers: Optional[dict[str, str]] = None, timeout: float = 60.0,
               max_bytes: int = 400_000_000) -> bytes:
     try:
-        with requests.get(url, headers=headers or {}, timeout=timeout, stream=True) as r:
+        with requests.get(url, headers=_h(headers), timeout=timeout, stream=True) as r:
             if r.status_code >= 400:
                 raise http_error_to_exc(r.status_code, r.text[:300], r.headers.get("Retry-After"))
             buf = bytearray()
@@ -57,9 +65,39 @@ def get_bytes(url: str, headers: Optional[dict[str, str]] = None, timeout: float
 def post_bytes(url: str, payload: dict[str, Any], headers: Optional[dict[str, str]] = None,
                timeout: float = DEFAULT_TIMEOUT) -> bytes:
     try:
-        r = requests.post(url, json=payload, headers=headers or {}, timeout=timeout)
+        r = requests.post(url, json=payload, headers=_h(headers), timeout=timeout)
     except requests.RequestException as e:
         raise TransportError(str(e)[:300]) from e
     if r.status_code >= 400:
         raise http_error_to_exc(r.status_code, r.text, r.headers.get("Retry-After"))
     return r.content
+
+
+def post_stream(url: str, payload: dict[str, Any], headers: Optional[dict[str, str]] = None,
+                timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
+    """POST a chat request with stream on and fold the SSE chunks into one non-streamed reply."""
+    body = {**payload, "stream": True, "stream_options": {"include_usage": True}}
+    text: list[str] = []
+    usage: dict[str, Any] = {}
+    finish = None
+    try:
+        with requests.post(url, json=body, headers=_h(headers), timeout=timeout, stream=True) as r:
+            if r.status_code >= 400:
+                raise http_error_to_exc(r.status_code, r.text, r.headers.get("Retry-After"))
+            for raw in r.iter_lines(decode_unicode=True):
+                if not raw or not raw.startswith("data:"):
+                    continue  # blank lines and ": ping" keepalives
+                chunk = raw[5:].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(chunk)
+                except ValueError:
+                    continue
+                usage = obj.get("usage") or usage
+                for ch in obj.get("choices") or []:
+                    text.append((ch.get("delta") or {}).get("content") or "")
+                    finish = ch.get("finish_reason") or finish
+    except requests.RequestException as e:
+        raise TransportError(str(e)[:300]) from e
+    return {"choices": [{"message": {"content": "".join(text)}, "finish_reason": finish}], "usage": usage}

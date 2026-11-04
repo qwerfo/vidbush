@@ -134,7 +134,7 @@ class Seats:
         return res
 
     def llm_json(self, role: str, task: str, system: str, user: str, stage: str,
-                 temperature: float = 0.6, timeout: float = 180.0) -> Optional[Any]:
+                 temperature: float = 0.6, timeout: float = llm_mod.DEFAULT_TIMEOUT_S) -> Optional[Any]:
         """JSON from an LLM role, or a canned fixture in mock mode, or None (caller uses heuristic)."""
         res = self._call(role, stage,
                          lambda spec: self._llm_estimate(
