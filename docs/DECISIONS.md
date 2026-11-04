@@ -28,3 +28,7 @@ One line each: the decision and why.
 - An inset map is offered only when it shows a place that no map showed in the last 60 s. Without that limit the Panama scripts put a map on about 20 of 70 shots.
 - MG_RENDER_VERSION is now mg-3, because chart value labels now always fit inside the plot and cached charts must re-render.
 - Acceptance adds three checks: cards_sparing (full screen cards at most 25 percent of shots), overlays_on_picture, and inset_map_or_chart.
+- Director chunks now run one after another instead of four in parallel, because each call needs the ideas chosen before it. This costs wall time on long scripts: about one call per 8 beats, in sequence.
+- The script summary comes from the director seat (task `script_summary`). It is cached in work/script_summary.json, keyed by a hash of the script, so a re-run of the shot list does not pay for it again. Its fallback is the title plus the first sentence of every scene.
+- The visual anchors so far are the research anchors that the chosen ideas mention. Script and voiceover projects have no research, so they get the recent must_show subjects instead.
+- The director may now propose map and chart overlays. These get the same coordinate and fact checks as motion ideas and render as insets. An inset map must draw a marker, a route or an arrow.

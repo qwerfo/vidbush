@@ -2,8 +2,9 @@
 
 Layer one gathers visual ideas per beat from the director seat (validated:
 pydantic, map coordinates checked against the gazetteer, chart numbers
-checked against fact cards) merged with heuristic ideas so every beat has
-footage, still and motion ideas. Layer two is the pacing engine, which plans
+checked against fact cards; every call sees the script summary, the previous
+two chunks' ideas, the anchors so far and the next beat, see seat.py) merged
+with heuristic ideas so every beat has footage, still and motion ideas. Layer two is the pacing engine, which plans
 typed slots over [0, narration.duration + 1.0]; each slot takes the best
 unused idea of its family from the beat at its midpoint. rules.py then
 polishes the sequence.
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import random
 import re
+from pathlib import Path
 from typing import Any, Optional
 
 from ..mg import builders as b
@@ -37,7 +39,9 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
     spans = beat_spans(script, narration)
     topic = I.topic_of(script.title or project.title, research)
     bcs = I.beat_contexts(script.scenes, research, topic)
-    llm = director_ideas(script, spans, research, profile, brand, seats, log)
+    work = Path(project.paths.work) if project.paths and project.paths.work else None
+    llm = director_ideas(script, spans, research, profile, brand, seats, log,
+                         work if work is not None and work.is_dir() else None)
     ideas = merge_ideas(llm, bcs, research, profile.palette, rng)
     top10 = profile.top10 or script.format == VideoFormat.top10
     anchors = structural_anchors(script, spans, profile, top10, total, topic)
