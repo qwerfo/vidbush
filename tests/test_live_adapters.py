@@ -161,3 +161,18 @@ def test_stream_cut_before_done_is_a_transport_error(monkeypatch) -> None:
     monkeypatch.setattr(http_mod.requests, "post", lambda *a, **k: R())
     with pytest.raises(TransportError, match="before"):
         http_mod.post_stream("https://r/v1/chat/completions", {"model": "m"})
+
+
+def test_negatives_become_prose_for_providers_without_a_field(tmp_path: Path, monkeypatch) -> None:
+    sent: dict = {}
+    monkeypatch.setattr(image_mod, "post_json", lambda url, body, headers, timeout: sent.update(body) or
+                        {"success": True, "data": {"id": 1, "status": "completed", "result_url": "u"}})
+    monkeypatch.setattr(image_mod, "get_bytes", lambda url: _png())
+    spec = ProviderSpec("e", "elevate", "gpt-image-2.5-fast", api_key="k", options={"cost_per_image": 0.0})
+    image_mod.generate(spec, "A dog sled.", tmp_path / "n.png", 0.02, negative="text, logos")
+    assert sent["prompt"] == "A dog sled. Do not include: text, logos."
+    fal = ProviderSpec("f", "fal", "m", api_key="k")
+    monkeypatch.setattr(image_mod, "post_json", lambda url, body, headers, timeout: sent.update(body) or
+                        {"images": [{"url": "u"}]})
+    image_mod.generate(fal, "A dog sled.", tmp_path / "f.png", 0.02, negative="text")
+    assert sent["prompt"] == "A dog sled." and sent["negative_prompt"] == "text"

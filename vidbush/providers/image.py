@@ -164,7 +164,8 @@ def _save(data: dict[str, Any], out_path: Path, trim: float = 0.0) -> Path:
 def generate_fal(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float) -> CallResult:
     base = spec.base_url or "https://fal.run"
     url = f"{base.rstrip('/')}/{spec.model}"
-    body = {"prompt": prompt, "image_size": spec.options.get("image_size", "landscape_16_9"), "num_images": 1}
+    body = {"prompt": prompt, "image_size": spec.options.get("image_size", "landscape_16_9"), "num_images": 1,
+            **spec.options.get("extra_body", {})}
     data = post_json(url, body, {"Authorization": f"Key {spec.api_key}"}, timeout=240)
     images = data.get("images") or []
     if not images:
@@ -178,7 +179,7 @@ def generate_runware(spec: ProviderSpec, prompt: str, out_path: Path, default_co
     base = spec.base_url or "https://api.runware.ai/v1"
     task = [{"taskType": "imageInference", "taskUUID": str(uuid.uuid4()), "positivePrompt": prompt,
              "model": spec.model, "width": 1920, "height": 1088, "numberResults": 1, "outputType": "URL",
-             "includeCost": True}]
+             "includeCost": True, **spec.options.get("extra_body", {})}]
     data = post_json(base, task, {"Authorization": f"Bearer {spec.api_key}"}, timeout=240)  # type: ignore[arg-type]
     items = data.get("data") or []
     if not items or not items[0].get("imageURL"):
@@ -316,8 +317,23 @@ ADAPTERS = {"openai_compat": generate_openai, "fal": generate_fal, "runware": ge
 
 
 
-def generate(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float) -> CallResult:
+NEGATIVE_FIELD = {"fal": "negative_prompt", "runware": "negativePrompt"}
+
+
+def with_negative(spec: ProviderSpec, prompt: str, negative: str) -> str:
+    """Prompt text for providers without a negative field: the negatives become one prose sentence
+    (GPT Image and similar models follow it; dropping it silently let text and logos into stills)."""
+    if not negative or spec.type in NEGATIVE_FIELD:
+        return prompt
+    return f"{prompt} Do not include: {negative}."
+
+
+def generate(spec: ProviderSpec, prompt: str, out_path: Path, default_cost: float, negative: str = "") -> CallResult:
     fn = ADAPTERS.get(spec.type)
     if fn is None:
         raise TransportError(f"no image adapter for type {spec.type}")
-    return fn(spec, prompt, out_path, default_cost)
+    if negative and spec.type in NEGATIVE_FIELD:
+        spec = ProviderSpec(spec.name, spec.type, spec.model, spec.base_url, spec.api_key,
+                            {**spec.options, "extra_body": {**spec.options.get("extra_body", {}),
+                                                            NEGATIVE_FIELD[spec.type]: negative}})
+    return fn(spec, with_negative(spec, prompt, negative), out_path, default_cost)

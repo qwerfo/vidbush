@@ -190,7 +190,8 @@ class YoutubeAdapter(BaseAdapter):
         lo, hi = settings.sources.youtube_min_height, settings.sources.youtube_max_height
         fmt = (f"bv*[height<={hi}][height>={lo}][ext=mp4]/bv*[height<={hi}][height>={lo}]/"
                f"b[height<={hi}][height>={lo}]")
-        return {"format": fmt, "format_sort": ["hdr:SDR", "res", "fps"], "download_ranges": download_range_func(None, [(a, b)]),
+        # h264 after res: same height, but OpenCV scene detection decodes it about 10x faster than AV1
+        return {"format": fmt, "format_sort": ["hdr:SDR", "res", "vcodec:h264", "fps"], "download_ranges": download_range_func(None, [(a, b)]),
                 "force_keyframes_at_cuts": False, "retries": 3, "socket_timeout": settings.sources.timeout_s}
 
 

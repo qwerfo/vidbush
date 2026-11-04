@@ -45,3 +45,8 @@ One line each: the decision and why.
 - Pexels key added (Adam supplied a full key file and said to use it); Tavily and Pixabay still absent, so search stays mock and Pixabay stays off.
 - Git identity set repo-local to the repo owner (qwerfo) because the laptop had none; no global git config was changed.
 - The run is started as a detached process logging to data/<id>_run1.log, because a tool-managed background job is cut off after 10 minutes.
+- YouTube format_sort prefers h264 after resolution: AV1 decoded correctly but OpenCV scene detection took 27 to 37 s per clip against 1.4 to 3 s for h264, and 55 of 175 cached clips were AV1. Resolution is never traded for codec.
+- Code review fixes went in during the render; the running process keeps the code it loaded, so they apply from the next resume.
+- Wikimedia 429s left as they are: its User-Agent policy wants a contact address (VIDBUSH_CONTACT), and Adam's email is not sent to a third party without his say.
+- AI image negatives (text, logos, chyrons, the likeness of a named real person) travel as a prose "Do not include" sentence for providers with no negative field; before this fix they were silently dropped, and the first render had a fake TV interview of a real person and stills with invented headlines.
+- Shots whose AI stills carry baked text, a fake logo or a real person's likeness are regenerated with the regenerate_ai edit op (segment re-render only), not by re-running the whole project.
