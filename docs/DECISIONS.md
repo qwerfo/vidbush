@@ -134,3 +134,37 @@ One line each: the decision and why.
 - Arrow keys move between shots and seek the player to the shot start; number keys 1 to 5 toggle the verdict; Space plays or pauses; c focuses the comment; Esc leaves a text box.
 - Comment autosave is debounced 600 ms and flushed on blur, before export, before Apply fixes and on page leave. Saves for one shot run in order so a slow request never overwrites newer text.
 - The demo render for the screenshot ran with --offline: the default config reached YouTube from this sandbox, and the brief allows no network beyond GitHub and package registries.
+
+## TTS seats, Anthropic provider, streaming, seat policy, source budgets (parallel1, branch tts-seats)
+
+- Algrow TTS is its own provider type algrow_tts in vidbush/providers/tts_algrow.py, ported from RadioPlay's gateway/adapters/algrow_tts.py (submit, poll, download), because an async job API does not fit the ElevenLabs request shape.
+- TTS adapters register in one dict in seats.py (TTS_TYPES, one line per type), so the laptop lane's elevate_tts adds one line and the two branches merge without touching the same lines.
+- A tts entry whose type is not registered is skipped with one warning per process, because a seat list may name a type another branch is still adding and a run must not fail for it.
+- Algrow is a subscription: calls are recorded as 0 USD and the reported credit count goes into a new optional CostEntry.credits field, so spend stays visible without inventing a dollar price.
+- Short Algrow scripts are padded with break tags to its 200 character floor, as RadioPlay does, because Algrow answers HTTP 400 below it; Vidbush chunks are whole scenes, so this only touches tiny scenes and single beat re-narrations.
+- Voice ids live per provider in brand voice.voice_ids (name, then type) with voice.voice_id as the one default, because the same voice has different ids on different TTS services.
+- Alignment routing: a TTS chunk without usable timings (none returned, drifting, mock, or a seat with force_align: true) is aligned against the script with the Aligner that narration_from_voiceover uses, inside the chunk's exact stitched window rather than across the whole file, because the window offsets are known exactly and only narrow the search.
+- force_align is a tts provider option read through Seats.tts_option, because unreliable timings are a property of one provider, not of a brand or a run.
+- The first narration chunk is synthesized alone before the rest run in parallel, so a refused model switches the run (sticky in each adapter) before any other chunk exists and a video never mixes models.
+- A narration whose chunks came from more than one tts provider is logged as a warning, not redone: redoing would ask the same failing seat order again.
+- The native Anthropic adapter speaks the Messages API over the repo's own requests layer, not the anthropic SDK, because every provider shares one retry, 429, fallback and cost path in ProviderClient, and the SDK's own retries and exception classes would duplicate and bypass it.
+- The Anthropic adapter never sends temperature (current Claude models reject sampling parameters with a 400); options.send_temperature exists for older models.
+- max_tokens is sent on every Anthropic call (64000 streamed, 16000 not, or options.max_tokens) because the Messages API requires it; a 400 naming a lower limit teaches that limit for the model.
+- Anthropic JSON is asked for in the system prompt and read with the shared loose parser, because the Messages API has no json_object mode and structured outputs would tie every caller to a schema.
+- The Anthropic price table is built in (USD per million, cache reads and 5 minute writes at their own rates) with options.price_per_mtok as the override, because the direct API returns no cost and has no price list endpoint.
+- LLM and TTS type registries map a type to its module and look the function up at call time, so a test or a hot fix that replaces llm.chat still takes effect.
+- Streaming is the default for every openai_compat provider (options.stream: false turns it off per provider), on Adam's rule that Wellflow and CloseRouter calls are faster and stop timing out when streamed.
+- A relay that rejects stream_options teaches a quirk and is streamed again without the usage request, so a strict relay does not lose streaming; its cost then comes from the price list or the estimate.
+- A streamed request answered with plain JSON is accepted as that JSON, because some relays ignore stream and a whole reply is still a whole reply.
+- Seat policy (Adam, 2026-11-05) lives in config/seats.yaml: Sonnet 5.5 for director and researcher and Opus 5.5 for writer on wellflow_cheap, anthropic_direct as the alternative primary, CloseRouter's Anthropic ids as the fallback; editor, judge, vision and cheap_classifier on CloseRouter then the normal Wellflow key; tts elevate_tts, algrow_tts, elevenlabs; images unchanged.
+- CloseRouter is the third Anthropic seat because RadioPlay's standing order (item 961) is Wellflow first and CloseRouter when Wellflow is down, and a Wellflow outage must not stop a script.
+- Anthropic seats name model_match {family, version} and the id is read from the provider's GET /models once per provider and logged once, because each relay spells the same model differently and a guessed id only fails on the first billed call. model_env still pins an exact id when set.
+- A failed model listing is not cached (retried after 10 minutes like a down provider), so a relay that is down at startup does not lose its seat for the whole process.
+- The temporary primary is an .env switch (VIDBUSH_PREFER_PROVIDER plus VIDBUSH_PREFER_UNTIL) that ends by itself, so Adam's 48 hours on anthropic_direct from 2026-11-05 need no config edit to undo.
+- New env names (WELLFLOW_CHEAP, WELLFLOW_API_KEY, CLOSEROUTER_API_KEY, ANTHROPIC_DIRECT_API_KEY, ALGROW_API_KEY, ELEVATE_API_KEY) name the provider, not the role, because one key now serves several roles; the old LLM_PRIMARY_* and VISION_* base URL and key variables are no longer read.
+- Provider unit tests load tests/fixtures/seats_generic.yaml (the old generic layout) instead of config/seats.yaml, so a change of operator policy never breaks a test of a mechanism.
+- Source budgets are shared fairly: every shot that still needs candidates is in each adapter's pool, may spend the pool split evenly (the remainder one each to the first shots in timeline order, so no search is left unused by rounding), and leaves the pool once its web results fill a plan, returning its unused share. Reason: live run 1 spent the 150 Pexels searches in the first shots and later shots got none.
+- Sourcing queries now go out in rounds (every shot's first query, then the second for shots still short, then the third) instead of all at once, because a share can only be returned after the round that showed the shot has enough.
+- "Enough" counts web results only (not the local library), so owned footage never stops a shot from also searching stock sources, matching the earlier behaviour for local libraries.
+- A re-query of one shot (director loop, editor) rejoins the pool with its earlier spend counted and leaves it afterwards, so late re-queries draw on what the run left over.
+- qa_report shows a usage line for every source with a run budget (not only YouTube), with the number of shots that shared it and the searches deferred by fair shares.

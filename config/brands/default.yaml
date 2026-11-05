@@ -3,7 +3,15 @@ name: Default brand
 # voice_id nPczCjzI2devNBz1zQrb is the ElevenLabs premade voice "Brian" (deep, calm American narrator),
 # available on every account, so an API key alone gives real narration. Replace it with your own voice id.
 # An empty voice_id uses ELEVENLABS_VOICE_ID from .env, then Brian.
-voice: {provider: elevenlabs, voice_id: "nPczCjzI2devNBz1zQrb", model: auto, stability: 0.45, similarity: 0.8}
+# Voice ids differ by TTS provider: voice_ids maps a tts provider name (config/seats.yaml) to its own id;
+# a provider without an entry uses voice_id. Elevate and Algrow front ElevenLabs, so the same id may work.
+voice:
+  provider: elevenlabs
+  voice_id: "nPczCjzI2devNBz1zQrb"
+  voice_ids: {}   # e.g. {elevate_tts: "...", algrow_tts: "...", elevenlabs: "..."}
+  model: auto
+  stability: 0.45
+  similarity: 0.8
 style_profile_id: documentary_default
 music_folder: fixtures/music
 intro_path: null

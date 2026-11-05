@@ -24,7 +24,8 @@ from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, parse_verdict
 QA_FLAGS = ("mock", "nc_nd", "standard_youtube_licence", "anachronism", "low_res", "no_match_accepted",
             "held_frame", "missing_media", "segment_repeat")
 SOURCE_NOTES = "source_notes.json"
-SOURCE_LABELS = {"youtube": "YouTube"}
+SOURCE_LABELS = {"youtube": "YouTube", "pexels": "Pexels", "pixabay": "Pixabay", "wikimedia": "Wikimedia Commons",
+                 "archive": "Internet Archive", "loc": "Library of Congress", "nasa": "NASA"}
 NO_MATCH_TARGET_PCT = 1.0
 MIX_TOLERANCE_PTS = 5.0
 FRAMES_PER_SHOT = 3
@@ -323,7 +324,10 @@ def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, 
 
 
 def source_usage_notes(ctx: Any) -> list[str]:
-    """Searches used out of the budget per sourcing run (YouTube always, others when spent)."""
+    """Searches used out of the run budget per source and sourcing run, with the shots that shared it.
+
+    Every source with a run budget gets a line, like YouTube always had; a spent budget is a warning.
+    Searches a shot skipped because it had used its fair share are counted as deferred."""
     path = ctx.work / SOURCE_NOTES
     try:
         runs = (read_json(path).get("runs") or {}) if path.exists() else {}
@@ -336,11 +340,15 @@ def source_usage_notes(ctx: Any) -> list[str]:
         for name, u in sorted((run_.get("usage") or {}).items()):
             used, budget, refused = int(u.get("used", 0)), int(u.get("budget", 0)), bool(u.get("refused"))
             label = SOURCE_LABELS.get(name, name)
+            shots, deferred = int(u.get("shots", 0) or 0), int(u.get("deferred", 0) or 0)
+            spread = f" across {shots} shots" if shots else ""
+            fair = f", {deferred} deferred by fair shares" if deferred else ""
             if refused or (budget and used >= budget):
-                out.append(f"warning: {label} search budget spent ({used} of {budget} searches){tag}: later "
-                           "queries were skipped, raise settings.sources.query_budget or re-run to use the cache")
-            elif name == "youtube":
-                out.append(f"{label} searches used: {used} of {budget}{tag}")
+                out.append(f"warning: {label} search budget spent ({used} of {budget} searches{spread}){tag}: "
+                           "later queries were skipped, raise settings.sources.query_budget or re-run to use "
+                           "the cache")
+            else:
+                out.append(f"{label} searches used: {used} of {budget}{spread}{fair}{tag}")
     return out
 
 

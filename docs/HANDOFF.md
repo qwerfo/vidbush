@@ -138,12 +138,16 @@ copy .env.example .env
 notepad .env
 ```
 
-For a mock test, leave it as is. For real videos fill at least:
-`LLM_PRIMARY_BASE_URL`, `LLM_PRIMARY_API_KEY`, `LLM_PRIMARY_MODEL` (one
-OpenRouter key covers writer, director, editor and vision if you also set
-`VISION_BASE_URL`, `VISION_API_KEY`, `VISION_MODEL`), `ELEVENLABS_API_KEY`,
-`IMAGE_BASE_URL`, `IMAGE_API_KEY`, `IMAGE_MODEL`, and one of
-`SEARCH_API_KEY` (Tavily), `PEXELS_API_KEY`, `PIXABAY_API_KEY`. Save and close.
+For a mock test, leave it as is. For real videos fill the keys of the seat
+policy (section 9): `WELLFLOW_CHEAP` and `WELLFLOW_API_KEY` (Wellflow),
+`CLOSEROUTER_API_KEY`, optionally `ANTHROPIC_DIRECT_API_KEY`, the narration
+keys `ELEVATE_API_KEY`, `ALGROW_API_KEY` and/or `ELEVENLABS_API_KEY`, the
+image keys `IMAGE_API_KEY` and `IMAGE_FALLBACK_API_KEY` with `IMAGE_MODEL`
+and `IMAGE_FALLBACK_MODEL`, and one of `SEARCH_API_KEY` (Tavily),
+`PEXELS_API_KEY`, `PIXABAY_API_KEY`. Anthropic model ids are found by
+Vidbush itself (section 9). Save and close. Older `.env` files that set
+`LLM_PRIMARY_BASE_URL`, `LLM_PRIMARY_API_KEY`, `VISION_BASE_URL` and so on
+are no longer read: copy those keys to the new names.
 
 **Step 6. Check the setup, then run the demo** (takes 5 to 15 minutes):
 
@@ -397,7 +401,7 @@ pick whatever is best and cheapest this month.
 | cheap_classifier | learn-style shot classification | the cheapest vision model | one call per shot |
 | image | AI fill-in shots and thumbnail backgrounds | one consistent photographic model under $0.05 | never mixes styles within a video unless the primary is down |
 | video | optional image-to-video | fal-style model | off by default |
-| tts | narration | ElevenLabs, model `auto` (multilingual v2) | word timestamps for captions |
+| tts | narration | Elevate, then Algrow, then ElevenLabs (section 9) | Elevate and Algrow audio is aligned to the script by faster-whisper; ElevenLabs returns word timestamps |
 | search | research web search | Tavily, Serper or Brave | any one is enough |
 
 Providers marked down after transport failures are retried every 10 minutes.
@@ -440,7 +444,7 @@ Next three improvements, in order:
    The queue, cost cap and Queue page are now built (section 4b); what is
    left is a schedule (start a batch at a set time).
 
-## 8. Footage quality and YouTube options (new)
+## 8. Footage quality and YouTube options
 
 All options below live in `config/vidbush.yaml` unless a different file is named.
 Defaults are shown; nothing here blocks footage except the blocklist.
@@ -572,6 +576,135 @@ and the hard rejects the judge missed most often, each with the
 `judge.prefilter` setting to tune. Wrong timing and other are left out: they
 say nothing about the judge. Change `judge.threshold` and `judge.prefilter` in
 `config/vidbush.yaml` from this output after each run.
+
+## 10. TTS seats, Anthropic provider, streaming and seat policy (new)
+
+Everything in this section was built and tested offline against canned
+replies taken from RadioPlay's working clients. Check it live with the probes
+in 10f before the first real run.
+
+### 10a. Seat policy (Adam, 2026-11-05)
+
+`config/seats.yaml` now holds this policy:
+
+| Role | Primary | Then | Then |
+|---|---|---|---|
+| researcher, director | `wellflow_cheap` Sonnet 5.5 | `anthropic_direct` Sonnet 5.5 | `closerouter` Sonnet 5.5 |
+| writer | `wellflow_cheap` Opus 5.5 | `anthropic_direct` Opus 5.5 | `closerouter` Opus 5.5 |
+| editor, judge, vision, cheap_classifier | `closerouter` (Gemini 3.8 Flash) | `wellflow` (normal key) | |
+| tts | `elevate_tts` | `algrow_tts` | `elevenlabs` |
+| image | Elevate | Algrow | |
+
+- `wellflow_cheap` uses the Wellflow key named `WELLFLOW_CHEAP`. It serves
+  Anthropic models only, so it sits only on the three Anthropic roles.
+- Anthropic seats carry `model_match: {family, version}` instead of an id.
+  At the first use Vidbush reads the provider's `GET /models`, picks the id
+  for that family and version (`claude-opus-5-5` on Wellflow,
+  `anthropic/claude-opus-5.5` on CloseRouter), and logs the match once
+  ("model resolved from the provider model list"). No match means that seat
+  is skipped with a warning and the next one serves. To pin an exact id on
+  `wellflow_cheap`, set `LLM_WRITER_MODEL`, `LLM_DIRECTOR_MODEL` or
+  `LLM_RESEARCHER_MODEL`.
+- Primary switch: `VIDBUSH_PREFER_PROVIDER=anthropic_direct` moves that
+  provider to the front of every role it serves, until
+  `VIDBUSH_PREFER_UNTIL` (UTC) passes. `.env.example` is set for Adam's plan:
+  `anthropic_direct` for 48 hours from 2026-11-05, then `wellflow_cheap`
+  again with no edit. Clear both lines to stop early.
+- `elevate_tts` is the type the laptop lane adds in
+  `vidbush/providers/tts_elevate.py`. Until it is registered, the entry is
+  skipped with one warning ("provider type not registered, entry skipped")
+  and Algrow narrates.
+
+### 10b. TTS seats
+
+- **Registry.** TTS types are listed in `vidbush/providers/seats.py`
+  `TTS_TYPES`, one line per type (`"algrow_tts": tts_algrow,`). A new
+  adapter registers with one import and one line. The value can be the module
+  (its `synthesize` is called) or the function itself.
+- **Algrow** (`algrow_tts`, `vidbush/providers/tts_algrow.py`): submit to
+  `/api/generate-simple`, poll `/api/job-status/<id>` every 3 s up to
+  `timeout_s` (600), download the hosted MP3. Model `eleven_v4`. A refused
+  model moves the whole run to `fallback_model` (eleven_multilingual_v2).
+  Algrow is a subscription: each call shows 0 USD in `cost_report.json` and
+  the reported credits in the entry's `credits` field. Scripts under 200
+  characters are padded with break tags (Algrow's floor).
+- **Voice ids per provider.** Brand yaml: `voice.voice_id` is the default,
+  `voice.voice_ids` maps a tts provider name to its own id, for example
+  `voice_ids: {algrow_tts: "JBFqnCBsd6RMkjVDRZzb"}`.
+- **Alignment routing.** Captions need word timings. A TTS reply with
+  timings that agree with the audio (ElevenLabs) is used as is. A reply
+  without timings (Algrow, Elevate) is aligned against the script with
+  faster-whisper, the same path a voiceover with a script uses. Install the
+  whisper extra (`pip install -e ".[whisper]"`); without it the timing
+  falls back to silences and a warning says so. If one provider's timings
+  turn out unreliable, set `force_align: true` in its `options` in
+  `config/seats.yaml`. The method is in `work/narration.json`
+  (`aligned_by`) and in the log line "narration ready".
+- Chunking, the 40 ms crossfade and -16 LUFS narration are unchanged. The
+  first chunk is now made before the others, so a refused model switches the
+  run before any other chunk exists.
+
+### 10c. Native Anthropic provider
+
+Provider type `anthropic` (`vidbush/providers/llm_anthropic.py`) calls the
+Messages API directly (`POST /v1/messages`, `x-api-key`,
+`anthropic-version: 2026-10-21`). It behaves like `openai_compat`: the same
+retries, 429 backoff, fallback, one continuation of a cut reply, one retry of
+unparseable JSON, and quirks learned from 400s. Differences:
+
+- the system prompt is the top-level `system` field; JSON is asked for in it;
+- `max_tokens` is always sent (64000 streamed, 16000 not, or
+  `options.max_tokens`);
+- `temperature` is never sent (current Claude models reject it);
+  `options.send_temperature: true` sends it for an older model;
+- `options.effort` (`low` to `max`) is sent as `output_config.effort`;
+- cost comes from a built-in price table (Opus 5.5 4 / 20 USD per million,
+  Sonnet 5.5 2 / 10, Haiku 5.5 0.10 / 0.50, cache reads and writes at their
+  own rates); override with `options.price_per_mtok: {prompt, completion,
+  cache_read, cache_write_5m}`.
+
+### 10d. Streaming default
+
+Every `openai_compat` provider now streams unless its `options.stream` is
+`false` (Adam's rule: Wellflow and CloseRouter are faster and stop timing
+out when streamed). The stream reader skips `: ping` keepalives, takes usage
+from the final chunk, drops a stream that stops without `[DONE]` or a finish
+reason (it is retried, never used half), accepts a relay that answers plain
+JSON, and retries without `stream_options` if a relay rejects it.
+
+### 10e. Source budgets
+
+Run budgets (`sources.query_budget`, Pexels 150, YouTube 250, Pixabay 600,
+loc 300, others 800) are now shared fairly. Every shot that still needs
+candidates gets an even share; queries go out in rounds (first query of every
+shot, then the second for shots still short, then the third); a shot whose
+web results already fill its plan stops searching and its unused share goes
+to the others. `qa_report.md` shows one line per budgeted source, for example
+`Pexels searches used: 148 of 150 across 52 shots, 9 deferred by fair shares`,
+and a warning when a budget ran out.
+
+### 10f. Live checks for the laptop
+
+Run these after filling `.env`. Each sends one or two small requests.
+
+```powershell
+python -m vidbush doctor --probe
+python -m vidbush.live_probe seats
+python -m vidbush.live_probe anthropic
+python -m vidbush.live_probe stream wellflow_cheap
+python -m vidbush.live_probe stream closerouter
+python -m vidbush.live_probe stream wellflow
+python -m vidbush.live_probe algrow --credits
+python -m vidbush.live_probe algrow
+```
+
+What to look for: `seats` lists `wellflow_cheap:claude-opus-5-5` for the
+writer and `claude-sonnet-5-5` for director and researcher (with
+`anthropic_direct` first while the preference is on); `anthropic` prints
+`{"ok": true}` twice with a cost above 0; each `stream` prints a value in a
+few seconds; `algrow` writes `data/live_probe/algrow.mp3`, says
+`words_returned: false`, shows credits, and `aligned_by: whisper` with
+word times that look right when you play the file.
 
 See also: `docs/ARCHITECTURE.md` (stage graph, contracts, cache rule),
 `docs/DECISIONS.md`, `docs/PROGRESS.md`, `docs/BLOCKERS.md`, `docs/SPEC.md`.

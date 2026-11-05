@@ -17,6 +17,7 @@ from PIL import Image
 from . import llm as llm_mod
 from . import search as search_mod
 from . import tts as tts_mod
+from . import tts_algrow
 from .base import ProviderError, ProviderSpec
 from .http import get_json
 
@@ -36,7 +37,8 @@ def _probe_chat(spec: ProviderSpec, vision: bool) -> str:
     user: Any = 'Return exactly {"ok": true}'
     if vision:
         user = [{"type": "text", "text": 'Look at the image and return exactly {"ok": true}'}, _tiny_png_part()]
-    llm_mod.chat(spec, "You reply with JSON only.", user, want_json=True, temperature=0.0, timeout=PROBE_TIMEOUT_S)
+    from .seats import chat_fn
+    chat_fn(spec)(spec, "You reply with JSON only.", user, want_json=True, temperature=0.0, timeout=PROBE_TIMEOUT_S)
     return "chat ok"
 
 
@@ -85,10 +87,12 @@ def probe_spec(role: str, spec: ProviderSpec, voice_id: str = "") -> str:
     from .seats import LLM_ROLES, VISION_ROLES
     if spec.type == "elevenlabs":
         return _probe_tts(spec, voice_id or tts_mod.DEFAULT_VOICE_ID)
+    if spec.type == "algrow_tts":
+        return tts_algrow.probe(spec, PROBE_TIMEOUT_S)
     if role == "search":
         search_mod.search(spec, "test", n=1)
         return "search ok"
-    if spec.type == "openai_compat" and role in LLM_ROLES | VISION_ROLES:
+    if spec.type in ("openai_compat", "anthropic") and role in LLM_ROLES | VISION_ROLES:
         return _probe_chat(spec, vision=role in VISION_ROLES)
     if spec.type == "openai_compat":
         return _probe_models(spec)

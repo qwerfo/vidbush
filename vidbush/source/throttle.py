@@ -5,8 +5,17 @@ slot(host) is a context manager around one network request: it takes a
 token from the host's bucket (waiting at most MAX_WAIT_S, else Throttled),
 holds one of the global concurrency slots, and serialises hosts listed in
 SERIAL_HOSTS (YouTube). cool_down(host, seconds) pauses a host after a 429.
-take_budget(run_id, adapter) counts searches per run and adapter; usage(run_id)
+take_budget(run_id, adapter, shot_id) counts searches per run and adapter; usage(run_id)
 reports used, budget and refusals so the run can surface a spent budget.
+
+Fair shares: a run budget is shared by every shot that still needs candidates.
+register_shots(run, adapters, shot_ids) puts shots in the pool; each active shot
+may spend (budget - spent by shots that left) / active shots, so no early shot
+can drain the budget before later shots search (live run 1 spent all 150 Pexels
+searches in the first shots). release_shot(run, shot_id) takes a shot out of the
+pool once it has enough candidates, and its unused share returns to the shots
+still searching. A search turned away by the share (not by the budget) is counted
+as deferred. A shot that searches again later (a re-query) rejoins the pool.
 download_slot(host, workers) caps parallel downloads of a host on their own
 semaphore (separate from the serial search slot), paced(host) takes the
 host's rate token without its serial lock, and exclusive(host, key) makes
@@ -79,6 +88,13 @@ class _State:
         self.budget: dict[str, int] = dict(DEFAULT_BUDGET)
         self.spent: dict[tuple[str, str], int] = {}
         self.refused: set[tuple[str, str]] = set()
+        # fair share pool per (run, adapter): active shots, each shot's spend, spend of shots that left
+        self.active: dict[tuple[str, str], dict[str, None]] = {}  # insertion ordered: timeline order
+        self.shot_spent: dict[tuple[str, str, str], int] = {}
+        self.released: dict[tuple[str, str], set[str]] = {}
+        self.released_spent: dict[tuple[str, str], int] = {}
+        self.deferred: dict[tuple[str, str], int] = {}
+        self.shots: dict[tuple[str, str], set[str]] = {}
         self.downloads: dict[str, tuple[int, threading.BoundedSemaphore]] = {}
         self.keyed: dict[tuple[str, str], threading.Lock] = {}
 
@@ -141,16 +157,90 @@ def slot(host: str, max_wait: float = MAX_WAIT_S) -> Iterator[None]:
             yield
 
 
-def take_budget(run_id: str, adapter: str) -> bool:
-    """Count one search for (run, adapter); False when the run's budget for that adapter is spent."""
+def _limit(adapter: str) -> int:
+    return STATE.budget.get(adapter, STATE.budget.get("*", 0))
+
+
+def register_shots(run_id: str, adapters: list[str], shot_ids: list[str]) -> None:
+    """Put shots that need candidates into each adapter's fair share pool for the run."""
     with STATE.lock:
-        limit = STATE.budget.get(adapter, STATE.budget.get("*", 0))
+        for a in adapters:
+            for sid in shot_ids:
+                _activate((run_id, a), sid)
+
+
+def _activate(key: tuple[str, str], shot_id: str) -> None:
+    """Caller holds STATE.lock. A shot that left the pool and searches again brings its spend back."""
+    act = STATE.active.setdefault(key, {})
+    if shot_id in act:
+        return
+    gone = STATE.released.setdefault(key, set())
+    if shot_id in gone:
+        gone.discard(shot_id)
+        STATE.released_spent[key] = STATE.released_spent.get(key, 0) - STATE.shot_spent.get((*key, shot_id), 0)
+    act[shot_id] = None
+
+
+def share(run_id: str, adapter: str) -> float:
+    """Searches each active shot may spend now: what the shots that left did not use, split evenly."""
+    with STATE.lock:
+        return _share((run_id, adapter))
+
+
+def _share(key: tuple[str, str]) -> float:
+    n = len(STATE.active.get(key, ()))
+    if n == 0:
+        return float(_limit(key[1]))
+    return (_limit(key[1]) - STATE.released_spent.get(key, 0)) / n
+
+
+def _entitled(key: tuple[str, str], shot_id: str) -> int:
+    """Whole searches this active shot may spend: the pool split evenly, the remainder one each to the
+    first shots in timeline order, so the whole budget can be used and shares differ by at most one."""
+    act = list(STATE.active.get(key, {}))
+    if not act:
+        return _limit(key[1])
+    pool = max(0, _limit(key[1]) - STATE.released_spent.get(key, 0))
+    base, extra = divmod(pool, len(act))
+    rank = act.index(shot_id) if shot_id in act else len(act)
+    return base + (1 if rank < extra else 0)
+
+
+def take_budget(run_id: str, adapter: str, shot_id: str = "") -> bool:
+    """Count one search for (run, adapter); False when the budget is spent or the shot used its share.
+
+    Without a shot id the search only counts against the run budget (callers outside sourcing).
+    A shot whose share is below one search may still take one while the budget lasts, so every shot
+    gets a first search before any shot gets a second.
+    """
+    with STATE.lock:
         key = (run_id, adapter)
-        if STATE.spent.get(key, 0) >= limit:
+        if STATE.spent.get(key, 0) >= _limit(adapter):
             STATE.refused.add(key)
             return False
+        if shot_id:
+            _activate(key, shot_id)
+            mine = STATE.shot_spent.get((run_id, adapter, shot_id), 0)
+            if mine + 1 > max(1, _entitled(key, shot_id)):
+                STATE.deferred[key] = STATE.deferred.get(key, 0) + 1
+                return False
+            STATE.shot_spent[(run_id, adapter, shot_id)] = mine + 1
+            STATE.shots.setdefault(key, set()).add(shot_id)
         STATE.spent[key] = STATE.spent.get(key, 0) + 1
         return True
+
+
+def release_shot(run_id: str, shot_id: str, adapters: Optional[list[str]] = None) -> None:
+    """Take a shot out of the pools (it has enough candidates or finished searching); its unused share
+    returns to the shots still searching."""
+    with STATE.lock:
+        for key in [k for k in STATE.active if k[0] == run_id and (adapters is None or k[1] in adapters)]:
+            act = STATE.active[key]
+            if shot_id in act:
+                del act[shot_id]
+                STATE.released.setdefault(key, set()).add(shot_id)
+                STATE.released_spent[key] = STATE.released_spent.get(key, 0) + STATE.shot_spent.get(
+                    (*key, shot_id), 0)
 
 
 def spent(run_id: str) -> dict[str, int]:
@@ -160,12 +250,16 @@ def spent(run_id: str) -> dict[str, int]:
 
 
 def usage(run_id: str) -> dict[str, dict[str, int]]:
-    """Per adapter {"used", "budget", "refused"} for a run (refused is 1 once a search was turned away)."""
+    """Per adapter {"used", "budget", "refused", "shots", "deferred"} for a run. refused is 1 once the
+    budget turned a search away; shots is how many shots searched; deferred counts searches a shot
+    skipped because it had used its fair share."""
     with STATE.lock:
-        names = {a for (r, a) in STATE.spent if r == run_id} | {a for (r, a) in STATE.refused if r == run_id}
-        return {a: {"used": STATE.spent.get((run_id, a), 0),
-                    "budget": STATE.budget.get(a, STATE.budget.get("*", 0)),
-                    "refused": int((run_id, a) in STATE.refused)} for a in sorted(names)}
+        names = ({a for (r, a) in STATE.spent if r == run_id} | {a for (r, a) in STATE.refused if r == run_id}
+                 | {a for (r, a) in STATE.deferred if r == run_id})
+        return {a: {"used": STATE.spent.get((run_id, a), 0), "budget": _limit(a),
+                    "refused": int((run_id, a) in STATE.refused),
+                    "shots": len(STATE.shots.get((run_id, a), ())),
+                    "deferred": STATE.deferred.get((run_id, a), 0)} for a in sorted(names)}
 
 
 def _download_sem(host: str, workers: int) -> threading.BoundedSemaphore:

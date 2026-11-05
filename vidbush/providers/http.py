@@ -75,23 +75,46 @@ def post_bytes(url: str, payload: dict[str, Any], headers: Optional[dict[str, st
 
 
 def post_stream(url: str, payload: dict[str, Any], headers: Optional[dict[str, str]] = None,
-                timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
-    """POST a chat request with stream on and fold the SSE chunks into one non-streamed reply."""
-    body = {**payload, "stream": True, "stream_options": {"include_usage": True}}
+                timeout: float = DEFAULT_TIMEOUT, include_usage: bool = True) -> dict[str, Any]:
+    """POST a chat request with stream on and fold the SSE chunks into one non-streamed reply.
+
+    What live relays send (docs/PROVIDER_NOTES.md) and how each is handled:
+    - ": ping" comment lines and blank lines while the model works: skipped; they keep the connection
+      alive but never extend the call past timeout.
+    - usage in a final chunk with an empty choices list (stream_options.include_usage): kept; a relay
+      that repeats usage on every chunk keeps the last non empty one.
+    - an error object inside the stream of an HTTP 200 reply: TransportError (retry, then fallback).
+    - a stream that stops without [DONE] and without a finish reason: TransportError, and the partial
+      text is dropped, because a cut reply must never pass as a whole one. A finish reason without
+      [DONE] is complete.
+    - a relay that ignores stream and answers with plain JSON: that JSON is returned as it is.
+    """
+    body = {**payload, "stream": True}
+    if include_usage:
+        body["stream_options"] = {"include_usage": True}
     text: list[str] = []
     usage: dict[str, Any] = {}
     finish = None
     done = False
+    extra: dict[str, Any] = {}
     deadline = time.monotonic() + timeout  # keepalive pings must not extend the call forever
     try:
         with requests.post(url, json=body, headers=_h(headers), timeout=timeout, stream=True) as r:
             if r.status_code >= 400:
                 raise http_error_to_exc(r.status_code, r.text, r.headers.get("Retry-After"))
+            if "application/json" in (r.headers.get("Content-Type") or "").lower():
+                try:
+                    data = r.json()
+                except ValueError as e:
+                    raise TransportError(f"bad json: {r.text[:200]}") from e
+                if isinstance(data, dict) and data.get("error"):
+                    raise TransportError(f"error reply: {str(data['error'])[:300]}")
+                return data
             for raw in r.iter_lines(decode_unicode=True):
                 if time.monotonic() > deadline:
                     raise TransportError(f"stream not finished within {timeout:.0f} s")
                 if not raw or not raw.startswith("data:"):
-                    continue  # blank lines and ": ping" keepalives
+                    continue  # blank lines, event: lines and ": ping" keepalives
                 chunk = raw[5:].strip()
                 if chunk == "[DONE]":
                     done = True
@@ -100,14 +123,28 @@ def post_stream(url: str, payload: dict[str, Any], headers: Optional[dict[str, s
                     obj = json.loads(chunk)
                 except ValueError:
                     continue
+                if not isinstance(obj, dict):
+                    continue
                 if obj.get("error"):
                     raise TransportError(f"stream error event: {str(obj['error'])[:300]}")
                 usage = obj.get("usage") or usage
+                if obj.get("cost") is not None:
+                    extra["cost"] = obj["cost"]
                 for ch in obj.get("choices") or []:
-                    text.append((ch.get("delta") or {}).get("content") or "")
+                    text.append(_delta_text((ch.get("delta") or {}).get("content")))
                     finish = ch.get("finish_reason") or finish
     except requests.RequestException as e:
         raise TransportError(str(e)[:300]) from e
     if not done and finish is None:
         raise TransportError("stream ended before [DONE] or a finish reason (partial reply dropped)")
-    return {"choices": [{"message": {"content": "".join(text)}, "finish_reason": finish}], "usage": usage}
+    return {"choices": [{"message": {"content": "".join(text)}, "finish_reason": finish}], "usage": usage,
+            **extra}
+
+
+def _delta_text(content: Any) -> str:
+    """Delta content as text: a string, or a list of {type: text, text} parts some relays send."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
+    return ""

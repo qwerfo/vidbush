@@ -77,3 +77,58 @@ relying on it months later: relays change.
 - numpy 2.5 needs Python 3.12; `pyproject.toml` pins numpy 2.4.6 on Python 3.11.
 - Paths rebased onto a Docker root (`/app/output/...`) kept Windows separators; rebasing now keeps
   the target root's separator style.
+
+## Ported from RadioPlay (2026-11-05, parallel1 lane), ported, unverified live
+
+Read from RadioPlay's working clients (`gateway/adapters/algrow_tts.py`, `anthropic_chat.py`, `_http.py`,
+`config/roles.yaml`, `config/audio.yaml`, `docs/PROVIDER_FACTS.md`). None of this was sent live from Vidbush;
+the laptop checks it with `python -m vidbush.live_probe` (docs/HANDOFF.md section 10f).
+
+### Algrow TTS (https://api.algrow.online), ported, unverified live
+
+- `POST /api/generate-simple`, multipart form `{script, voice_id, model_id}`, `Authorization: Bearer`, returns
+  `{success, job_id}`. `GET /api/job-status/{job_id}` until `completed` or `failed`, then `audio_url` (hosted MP3,
+  no auth). Same key as Algrow images. New type `algrow_tts`.
+- No word timings in the reply: Vidbush aligns the audio against the script (faster-whisper).
+- HTTP 400 "Text must be at least 200 characters." below 200 characters: short scripts are padded with
+  `<break time="1.0s" />` tags, as RadioPlay does.
+- RadioPlay measured about 31 s plus 1 ms per character (2,581 chars in 35 s, 25,019 in 57 s) and trusted a
+  20,000 character request; Vidbush chunks are at most 4,500 characters. Poll every 3 s, give up after 600 s.
+- RadioPlay ran this seat on eleven_multilingual_v2 and later eleven_v3; eleven_v4 on Algrow is not proven
+  anywhere yet. A refusal that names the model switches the run to eleven_multilingual_v2.
+- Subscription: recorded as 0 USD with the credit count. The TTS credit field name is not proven (RadioPlay's
+  TTS adapter reads `credits` from the job; its image adapter found `credits_used` on the submit reply), so
+  Vidbush reads `credits_used`, `credit_cost`, then `credits`. `GET /api/credits` returns
+  `{credits: {limit, used, remaining}}` (seen live by RadioPlay for images) and is the probe.
+
+### Anthropic direct (https://api.anthropic.com), ported, unverified live
+
+- RadioPlay calls Anthropic through its OpenAI compatible route (`/v1/chat/completions`, Bearer key) and found:
+  `response_format: json_object` refused (400 "Input should be 'json_schema'"), and claude-sonnet-5-5 answered
+  400 "`temperature` is deprecated for this model". Vidbush uses the native Messages API instead: JSON is asked
+  for in the system prompt and temperature is never sent.
+- Model ids on the direct API are dashed: `claude-opus-5-5`, `claude-sonnet-5-5` (RadioPlay item 1299).
+
+### Wellflow cheap key and CloseRouter Anthropic ids, ported, unverified live
+
+- RadioPlay's `GET /models` with the cheap key (2026-10-16) lists `claude-opus-5-5` and `claude-sonnet-5-5`
+  (no prices); CloseRouter lists only the dotted `anthropic/claude-opus-5.5` and `anthropic/claude-sonnet-5.5`.
+  Vidbush resolves both spellings by family and version.
+- Live run 1 (2026-11-04) saw the cheap key answer 403 `model_not_in_channel (cheap)` for claude-sonnet-5, while
+  RadioPlay runs claude-opus-5-5 and claude-sonnet-5-5 on it daily. The channel likely allows only the 5.5 ids.
+  A model listed by `/models` may still be refused by the channel: `live_probe stream wellflow_cheap` checks it.
+- Streaming: RadioPlay's 12 call grid passed 6 of 6 streamed Wellflow calls at 45 to 65 s and failed 5 of 6
+  non streamed calls at Wellflow's 240 s edge (502, 503, 504); Wellflow sends `: ping` every few seconds.
+
+### Fragile in RadioPlay's clients (not copied)
+
+- RadioPlay's SSE reader sets `finish_reason` to "stop" when the stream never sent one, so a stream cut before
+  its end passes as a whole reply. Vidbush raises TransportError for a stream with no `[DONE]` and no finish
+  reason, and the request is retried.
+- RadioPlay's SSE reader buffers the whole body before parsing, so its deadline covers the full body but a ping
+  stream that never ends is only stopped by the outer timer. Vidbush checks its own deadline on every line.
+- RadioPlay's Algrow TTS poll knows only `completed` and `failed`; any other terminal word ("error",
+  "cancelled") would poll until the timeout, and an HTTP 200 `{success: false}` reply is not read as an error.
+  Vidbush treats those as terminal and maps the envelope to a refusal, a rate limit or a retry.
+- The Algrow short script padding relies on break tags being silent. That held on eleven_multilingual_v2;
+  on eleven_v4 a tag could be spoken or ignored. Check `live_probe algrow` with a short line if it matters.

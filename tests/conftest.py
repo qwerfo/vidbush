@@ -40,3 +40,12 @@ def make_ctx(settings):
                               target_minutes=minutes, **kw)
         return build_context(settings, proj, echo=False)
     return _make
+
+
+@pytest.fixture
+def generic_seats(settings):
+    """Settings with the generic test seat map (tests/fixtures/seats_generic.yaml) instead of the
+    operator's seat policy, so provider tests check mechanisms, not Adam's current provider choice."""
+    import yaml
+    settings.seats = yaml.safe_load((Path(__file__).parent / "fixtures" / "seats_generic.yaml").read_text())
+    return settings

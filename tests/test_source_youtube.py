@@ -428,7 +428,7 @@ def test_search_usage_and_spent_budget_surface_in_qa_report(make_ctx, monkeypatc
     monkeypatch.setattr(registry, "active_adapters", lambda c: [adapter])
     registry.source_all(ShotList(project_id="t1", duration=8, shots=_shots(2)), ctx)
     notes = qa.source_usage_notes(ctx)
-    assert notes == [f"YouTube searches used: 2 of {throttle.DEFAULT_BUDGET['youtube']}"]
+    assert notes == [f"YouTube searches used: 2 of {throttle.DEFAULT_BUDGET['youtube']} across 2 shots"]
     ctx.extra.pop("source_run_id", None)  # a new run (resume) with a tiny budget
     throttle.STATE.budget["youtube"] = 1
     registry.source_all(ShotList(project_id="t1", duration=12, shots=_shots(3, "boats")), ctx)
@@ -436,8 +436,9 @@ def test_search_usage_and_spent_budget_surface_in_qa_report(make_ctx, monkeypatc
     assert len(data["runs"]) == 2
     report = qa.make_report(ShotList(project_id="t1", duration=12, shots=_shots(3)), ctx, 70.0, {}, 1.0, 1.0, [])
     warn = [n for n in report.notes if n.startswith("warning: YouTube search budget spent")]
-    assert warn and "(1 of 1 searches)" in warn[0] and "run 2 of 2" in warn[0]
-    assert data["runs"][registry.run_id(ctx)]["usage"]["youtube"] == {"used": 1, "budget": 1, "refused": 1}
+    assert warn and "(1 of 1 searches across 1 shots)" in warn[0] and "run 2 of 2" in warn[0]
+    assert data["runs"][registry.run_id(ctx)]["usage"]["youtube"] == {"used": 1, "budget": 1, "refused": 1,
+                                                                      "shots": 1, "deferred": 0}
     assert any(n.startswith("YouTube searches used: 2 of") for n in report.notes)
     assert "warning: YouTube search budget spent" in qa.render_markdown(report)
 
@@ -460,7 +461,9 @@ def test_fallback_video_searches_of_still_shots_reach_the_usage_notes(make_ctx, 
                  intent="harbour", queries=["harbour cranes"])
     registry.source_all(ShotList(project_id="t1", duration=4, shots=[still]), ctx)
     assert video.kwargs  # the fallback searched the video source after the search phase
-    assert qa.source_usage_notes(ctx) == [f"YouTube searches used: 1 of {throttle.DEFAULT_BUDGET['youtube']}"]
+    assert qa.source_usage_notes(ctx) == [  # every budgeted source gets its line now, not only YouTube
+        f"Pexels searches used: 1 of {throttle.DEFAULT_BUDGET['pexels']} across 1 shots",
+        f"YouTube searches used: 1 of {throttle.DEFAULT_BUDGET['youtube']} across 1 shots"]
     throttle.reset()
     registry.source_shot(still, ctx)
     data = json.loads((ctx.work / registry.SOURCE_NOTES).read_text(encoding="utf-8"))

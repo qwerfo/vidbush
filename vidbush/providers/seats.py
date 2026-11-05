@@ -20,9 +20,12 @@ from ..models import VoiceConfig
 from ..util import JsonLogger, NullLogger
 from . import image as image_mod
 from . import llm as llm_mod
+from . import llm_anthropic
 from . import mock
+from . import model_resolve
 from . import search as search_mod
 from . import tts as tts_mod
+from . import tts_algrow
 from .base import HEALTH, CallResult, CostTracker, ProviderClient, ProviderError, ProviderSpec, is_placeholder_model
 
 ROLES = ["researcher", "writer", "director", "judge", "editor", "cheap_classifier", "image", "video",
@@ -34,6 +37,31 @@ _BAD_DETAILS_LOGGED: set[str] = set()
 # per role default LLM timeout in seconds; long form writing needs minutes, others keep the old default
 DEFAULT_LLM_TIMEOUT_S = 600.0  # live run 1: slow relays ran past 180 s on every text role
 ROLE_TIMEOUT_S = {"writer": 600.0}
+
+# TTS provider types to the module whose synthesize() serves them, one line per type so a new adapter
+# registers with one added line (looked up at call time, like LLM_TYPES; a bare function also works).
+# synthesize takes (spec, text, voice_id, model, out_path, settings, cost_per_1k, language=,
+# previous_text=, next_text=) and returns CallResult value=(path, words or None[, model_id]).
+TTS_TYPES: dict[str, Any] = {
+    "elevenlabs": tts_mod,
+    "algrow_tts": tts_algrow,
+}
+# LLM and vision provider types to the module whose chat() serves them (same contract as llm.chat);
+# looked up at call time so tests and hot fixes can replace a module's chat
+LLM_TYPES: dict[str, Any] = {
+    "openai_compat": llm_mod,
+    "anthropic": llm_anthropic,
+}
+# roles whose providers must name a registered type; an entry with an unknown type is skipped with one
+# warning per process (a config may name a type another branch is still adding, and must not fail)
+_TYPE_REGISTRIES: dict[str, dict[str, Any]] = {"tts": TTS_TYPES,
+                                                **{r: LLM_TYPES for r in LLM_ROLES | VISION_ROLES}}
+_UNKNOWN_LOGGED: set[tuple[str, str]] = set()
+
+
+def chat_fn(spec: ProviderSpec) -> Any:
+    """The chat function for a provider type (openai_compat when the type has no entry)."""
+    return getattr(LLM_TYPES.get(spec.type, llm_mod), "chat")
 
 
 class Seats:
@@ -62,21 +90,76 @@ class Seats:
         roles = self.settings.seats.get("roles", {})
         provs = self.settings.seats.get("providers", {})
         out: list[ProviderSpec] = []
+        registry = _TYPE_REGISTRIES.get(role)
         for entry in roles.get(role, []) or []:
             pname = entry.get("provider", "")
             pdef = provs.get(pname, {})
+            ptype = pdef.get("type", "openai_compat")
+            if registry is not None and ptype not in registry and ptype != "mock":
+                self._warn_unknown_type(role, pname, ptype)
+                continue
             model = entry.get("model", "")
             if entry.get("model_env"):
                 model = self.settings.key(entry["model_env"]) or model
             if is_placeholder_model(model):
                 model = ""
-            out.append(ProviderSpec(
-                name=pname, type=pdef.get("type", "openai_compat"), model=model,
+            spec = ProviderSpec(
+                name=pname, type=ptype, model=model,
                 base_url=self.settings.key(pdef.get("base_url_env", "")) or pdef.get("base_url", ""),
                 api_key=self.settings.key(pdef.get("key_env", "")),
                 options={**pdef.get("options", {}), **entry.get("options", {})},
-            ))
-        return out
+            )
+            match = entry.get("model_match")
+            if not spec.model and isinstance(match, dict) and spec.api_key and (
+                    spec.base_url or spec.type == "anthropic"):
+                spec.model = model_resolve.resolve(spec, match, self.log)
+            out.append(spec)
+        return self._preferred_first(out)
+
+    def _preferred_first(self, specs: list[ProviderSpec]) -> list[ProviderSpec]:
+        """Move providers named in VIDBUSH_PREFER_PROVIDER (comma list) to the front, keeping their order.
+
+        Which provider is primary for a while is an operator switch in .env, not a config edit, so a
+        temporary primary (promo credits, an outage) needs no change to seats.yaml. VIDBUSH_PREFER_UNTIL
+        (an ISO date or date and time, UTC) ends the preference by itself, with one log line.
+        """
+        names = [n.strip() for n in self.settings.key("VIDBUSH_PREFER_PROVIDER").split(",") if n.strip()]
+        if not names or not self._preference_active():
+            return specs
+        rank = {n: i for i, n in enumerate(names)}
+        front = sorted((s for s in specs if s.name in rank), key=lambda s: rank[s.name])
+        return front + [s for s in specs if s.name not in rank]
+
+    def _preference_active(self) -> bool:
+        until = self.settings.key("VIDBUSH_PREFER_UNTIL").strip()
+        if not until:
+            return True
+        from datetime import datetime, timezone
+        try:
+            end = datetime.fromisoformat(until.replace("Z", "+00:00"))
+        except ValueError:
+            self._log_once("prefer_bad", "VIDBUSH_PREFER_UNTIL is not an ISO date, preference ignored", until)
+            return False
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < end:
+            return True
+        self._log_once("prefer_expired", "VIDBUSH_PREFER_UNTIL has passed, configured provider order used", until)
+        return False
+
+    def _log_once(self, key: str, msg: str, value: str) -> None:
+        with self._lock:
+            first = (key, value) not in _UNKNOWN_LOGGED
+            _UNKNOWN_LOGGED.add((key, value))
+        if first:
+            self.log.warn(msg, value=value)
+
+    def _warn_unknown_type(self, role: str, provider: str, ptype: str) -> None:
+        with self._lock:
+            first = (provider, ptype) not in _UNKNOWN_LOGGED
+            _UNKNOWN_LOGGED.add((provider, ptype))
+        if first:
+            self.log.warn("provider type not registered, entry skipped", role=role, provider=provider, type=ptype)
 
     def is_real(self, role: str) -> bool:
         return any(p.configured for p in self.providers_for(role))
@@ -179,8 +262,8 @@ class Seats:
         """JSON from an LLM role, or a canned fixture in mock mode, or None (caller uses heuristic)."""
         res = self._call(role, stage,
                          lambda spec: self._llm_estimate(
-                             llm_mod.chat(spec, system, user, want_json=True, temperature=temperature,
-                                          timeout=self.llm_timeout(role, spec, timeout))),
+                             chat_fn(spec)(spec, system, user, want_json=True, temperature=temperature,
+                                           timeout=self.llm_timeout(role, spec, timeout))),
                          lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task)
         return res.value
 
@@ -188,7 +271,7 @@ class Seats:
                  timeout: Optional[float] = None) -> Optional[str]:
         """Plain text from an LLM role (same timeout rule as llm_json)."""
         res = self._call(role, stage,
-                         lambda spec: self._llm_estimate(llm_mod.chat(
+                         lambda spec: self._llm_estimate(chat_fn(spec)(
                              spec, system, user, want_json=False, timeout=self.llm_timeout(role, spec, timeout))),
                          lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task)
         v = res.value
@@ -212,7 +295,7 @@ class Seats:
             llm_mod.image_part(p, detail=d) for p, d in zip(images, dets)]
         res = self._call(role, stage,
                          lambda spec: self._vision_estimate(
-                             llm_mod.chat(spec, system, parts, want_json=True, temperature=0.1), dets),
+                             chat_fn(spec)(spec, system, parts, want_json=True, temperature=0.1), dets),
                          lambda: mock.mock_vision_score(images, intent or prompt), note=task)
         val = res.value if isinstance(res.value, dict) else {}
         val["_mock"] = res.mock
@@ -256,24 +339,41 @@ class Seats:
 
     # ------------------------------------------------------------ tts
 
-    def voice_id(self, voice: VoiceConfig) -> str:
-        """Brand voice id, else ELEVENLABS_VOICE_ID, else the premade default voice."""
+    def voice_id(self, voice: VoiceConfig, spec: Optional[ProviderSpec] = None) -> str:
+        """Voice ids differ by provider: the brand's voice_ids entry for this provider (by name, then
+        type), else the brand default voice_id, else ELEVENLABS_VOICE_ID, else the premade default."""
+        ids = getattr(voice, "voice_ids", None) or {}
+        if spec is not None:
+            vid = ids.get(spec.name) or ids.get(spec.type)
+            if vid:
+                return str(vid)
         return voice.voice_id or self.settings.key("ELEVENLABS_VOICE_ID") or tts_mod.DEFAULT_VOICE_ID
+
+    def tts_option(self, provider: str, key: str, default: Any = None) -> Any:
+        """One option of a configured tts provider by name (e.g. force_align), else default."""
+        for p in self.providers_for("tts"):
+            if p.name == provider:
+                return p.options.get(key, default)
+        return default
 
     def tts(self, text: str, voice: VoiceConfig, out_path: Path, stage: str, language: str = "",
             previous_text: str = "", next_text: str = "") -> tuple[Path, Optional[list[dict]], bool, str]:
         """Synthesize narration. Returns (audio_path, words or None, is_mock, engine)."""
         def fn(spec: ProviderSpec) -> CallResult:
             settings = {"stability": voice.stability, "similarity_boost": voice.similarity}
-            return tts_mod.synthesize(spec, text, self.voice_id(voice), voice.model, out_path.with_suffix(".mp3"),
-                                      settings, self.settings.cost.tts_per_1k_chars_usd, language=language,
-                                      previous_text=previous_text, next_text=next_text)
+            entry = TTS_TYPES.get(spec.type)
+            if entry is None:
+                raise ProviderError(f"tts provider type {spec.type} is not registered")
+            synth = getattr(entry, "synthesize", entry)  # a module or the function itself
+            return synth(spec, text, self.voice_id(voice, spec), voice.model, out_path.with_suffix(".mp3"),
+                         settings, self.settings.cost.tts_per_1k_chars_usd, language=language,
+                         previous_text=previous_text, next_text=next_text)
 
         res = self._call("tts", stage, fn, lambda: mock.mock_tts(text, out_path), note="tts")
         if res.mock:
             path, words, engine = res.value
             return Path(path), words, True, f"mock_{engine}"
-        path, words = res.value
+        path, words = res.value[0], res.value[1]  # a third element (model id) is optional
         return Path(path), words, False, res.provider.name
 
     # ------------------------------------------------------------ search

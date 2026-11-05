@@ -4,10 +4,21 @@ Real TTS gets one call per scene (scenes longer than MAX_CHUNK_CHARS split at
 beat boundaries) so prosody flows across beats. Mock TTS synthesizes per beat so
 beat spans are exact. Chunks are joined with 40 ms linear crossfades (the same
 curve as FFmpeg acrossfade, computed sample exact in numpy so word timings can
-be shifted precisely) and a 0.35 s pause after each scene. Provider word
-timings are kept when they agree with the audio; otherwise words are re-aligned
-with faster-whisper, else with silence based alignment. The result is
+be shifted precisely) and a 0.35 s pause after each scene. The result is
 normalized to settings.render.narration_lufs into work/narration/narration.wav.
+
+Alignment routing: captions need word timings and only some TTS providers
+return them. A chunk whose provider returned timings that agree with the audio
+is used as is. Any other chunk (no timings, timings that drift, mock audio, or a
+provider with the tts seat option force_align: true) is aligned against the
+known script with the same Aligner that narration_from_voiceover uses
+(faster-whisper words matched to the script tokens, silence based timing when
+whisper is unavailable), inside the chunk's exact window in the stitched file.
+
+Model consistency: the first chunk is synthesized alone before the others run
+in parallel, so a model the provider refuses switches the whole run to the
+fallback model (the adapters keep that switch sticky) before any other chunk
+is made, and one video never mixes models.
 """
 from __future__ import annotations
 
@@ -100,12 +111,34 @@ def synthesize_chunk(chunk: Chunk, brand: Brand, seats: Any, nar_dir: Path, log:
 
 def synthesize_all(chunks: list[Chunk], brand: Brand, seats: Any, settings: Settings, nar_dir: Path,
                    log: JsonLogger) -> list[Chunk]:
+    """First chunk alone (it settles the model for the run), then the rest in parallel."""
+    if not chunks:
+        return []
+    first = synthesize_chunk(chunks[0], brand, seats, nar_dir, log, settings.allow_mock_fallback)
     workers = max(1, min(4, settings.render.workers))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        done = list(pool.map(lambda c: synthesize_chunk(c, brand, seats, nar_dir, log,
-                                                        settings.allow_mock_fallback), chunks))
+        rest = list(pool.map(lambda c: synthesize_chunk(c, brand, seats, nar_dir, log,
+                                                        settings.allow_mock_fallback), chunks[1:]))
+    done = [first] + rest
+    engines = sorted({c.engine for c in done if not c.is_mock})
+    if len(engines) > 1:
+        log.warn("narration chunks came from more than one tts provider (a provider failed mid run)",
+                 engines=engines)
     log.info("narration chunks synthesized", chunks=len(done), mock=sum(c.is_mock for c in done))
     return done
+
+
+def forced_engines(chunks: list[Chunk], seats: Any) -> set[str]:
+    """Engines whose tts seat sets force_align: their timings are ignored and the audio is aligned."""
+    opt = getattr(seats, "tts_option", None)
+    if opt is None:
+        return set()
+    return {c.engine for c in chunks if not c.is_mock and bool(opt(c.engine, "force_align", False))}
+
+
+def needs_alignment(chunk: Chunk, duration: float, forced: set[str]) -> bool:
+    """True unless the chunk carries provider timings that agree with its audio and are not forced off."""
+    return chunk.is_mock or chunk.engine in forced or not provider_words_ok(chunk.words, duration)
 
 
 # ---------------------------------------------------------------- stitching
@@ -207,15 +240,27 @@ def monotonic(words: list[Word], duration: float) -> list[Word]:
     return out
 
 
-def _align_chunks(chunks: list[Chunk], parts: list[np.ndarray], offsets: list[int], aligner: Aligner) -> list[Word]:
+def _align_chunks(chunks: list[Chunk], parts: list[np.ndarray], offsets: list[int], aligner: Aligner,
+                  forced: Optional[set[str]] = None, log: Optional[JsonLogger] = None) -> list[Word]:
+    """Provider timings where usable, else script alignment of the chunk's window (see module doc)."""
+    forced = forced or set()
     words: list[Word] = []
+    aligned: list[str] = []
     for c, part, off in zip(chunks, parts, offsets):
         t0, dur = off / SR, len(part) / SR
-        if not c.is_mock and provider_words_ok(c.words, dur):
+        if not needs_alignment(c, dur, forced):
             aligner.used.add("provider")
             words.extend(provider_to_script(c, t0))
         else:
+            if not c.is_mock:
+                aligned.append(c.scene_id)
             words.extend(aligner.align(c.tokens(), t0, t0 + dur))
+    if aligned and log is not None:
+        log.info("tts audio without usable word timings aligned against the script", scenes=aligned,
+                 method=aligner.method(), forced=sorted(forced))
+        if "silence" in aligner.used:
+            log.warn("faster-whisper unavailable: captions for tts audio without timings use silence based "
+                     "timing, install the whisper extra for word accurate captions", scenes=aligned)
     return words
 
 
@@ -236,7 +281,7 @@ def narrate(script: Script, brand: Brand, seats: Any, settings: Settings, work_d
     stitched = write_audio(nar_dir / "stitched.wav", audio)
     aligner = Aligner(stitched, settings, log)
     duration = len(audio) / SR
-    words = monotonic(_align_chunks(chunks, parts, offsets, aligner), duration)
+    words = monotonic(_align_chunks(chunks, parts, offsets, aligner, forced_engines(chunks, seats), log), duration)
     out = nar_dir / "narration.wav"
     loud = normalize(stitched, out, settings.render.narration_lufs, settings.render.true_peak, SR, 1,
                      exact_samples=len(audio))
@@ -316,7 +361,7 @@ def renarrate_beat(narration: Narration, script: Script, beat_id: str, new_text:
     new_end = offsets[k + 1] / SR if k + 1 < len(parts) else duration
     delta = new_end - e
     stitched = write_audio(nar_dir / "stitched_edit.wav", audio)
-    if not chunk.is_mock and provider_words_ok(chunk.words, len(raw) / SR):
+    if not needs_alignment(chunk, len(raw) / SR, forced_engines([chunk], seats)):
         beat_words, method = provider_to_script(chunk, new_start + lead - trimmed), "provider"
     else:
         aligner = Aligner(stitched, settings, log)

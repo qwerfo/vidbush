@@ -11,6 +11,8 @@ from vidbush.providers import base, llm
 from vidbush.providers.base import CostTracker, ProviderError, ProviderSpec, RefusalError
 from vidbush.providers.seats import Seats
 
+pytestmark = pytest.mark.usefixtures("generic_seats")
+
 
 @pytest.fixture(autouse=True)
 def _clean():
@@ -47,7 +49,7 @@ class _Fake:
         self.replies = list(replies)
         self.calls: list[dict[str, Any]] = []
 
-    def __call__(self, url, body, headers=None, timeout=0.0):
+    def __call__(self, url, body, headers=None, timeout=0.0, **kw):
         self.calls.append({"url": url, "body": copy.deepcopy(body), "timeout": timeout})
         r = self.replies.pop(0)
         if isinstance(r, Exception):
