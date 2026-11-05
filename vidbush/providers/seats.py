@@ -20,6 +20,7 @@ from ..models import VoiceConfig
 from ..util import JsonLogger, NullLogger
 from . import image as image_mod
 from . import llm as llm_mod
+from . import llm_anthropic
 from . import mock
 from . import search as search_mod
 from . import tts as tts_mod
@@ -36,17 +37,30 @@ _BAD_DETAILS_LOGGED: set[str] = set()
 DEFAULT_LLM_TIMEOUT_S = 600.0  # live run 1: slow relays ran past 180 s on every text role
 ROLE_TIMEOUT_S = {"writer": 600.0}
 
-# TTS provider types to their synthesize function, one line per type so a new adapter registers with
-# one added line. Each takes (spec, text, voice_id, model, out_path, settings, cost_per_1k, language=,
+# TTS provider types to the module whose synthesize() serves them, one line per type so a new adapter
+# registers with one added line (looked up at call time, like LLM_TYPES; a bare function also works).
+# synthesize takes (spec, text, voice_id, model, out_path, settings, cost_per_1k, language=,
 # previous_text=, next_text=) and returns CallResult value=(path, words or None[, model_id]).
 TTS_TYPES: dict[str, Any] = {
-    "elevenlabs": tts_mod.synthesize,
-    "algrow_tts": tts_algrow.synthesize,
+    "elevenlabs": tts_mod,
+    "algrow_tts": tts_algrow,
+}
+# LLM and vision provider types to the module whose chat() serves them (same contract as llm.chat);
+# looked up at call time so tests and hot fixes can replace a module's chat
+LLM_TYPES: dict[str, Any] = {
+    "openai_compat": llm_mod,
+    "anthropic": llm_anthropic,
 }
 # roles whose providers must name a registered type; an entry with an unknown type is skipped with one
 # warning per process (a config may name a type another branch is still adding, and must not fail)
-_TYPE_REGISTRIES: dict[str, dict[str, Any]] = {"tts": TTS_TYPES}
+_TYPE_REGISTRIES: dict[str, dict[str, Any]] = {"tts": TTS_TYPES,
+                                                **{r: LLM_TYPES for r in LLM_ROLES | VISION_ROLES}}
 _UNKNOWN_LOGGED: set[tuple[str, str]] = set()
+
+
+def chat_fn(spec: ProviderSpec) -> Any:
+    """The chat function for a provider type (openai_compat when the type has no entry)."""
+    return getattr(LLM_TYPES.get(spec.type, llm_mod), "chat")
 
 
 class Seats:
@@ -204,8 +218,8 @@ class Seats:
         """JSON from an LLM role, or a canned fixture in mock mode, or None (caller uses heuristic)."""
         res = self._call(role, stage,
                          lambda spec: self._llm_estimate(
-                             llm_mod.chat(spec, system, user, want_json=True, temperature=temperature,
-                                          timeout=self.llm_timeout(role, spec, timeout))),
+                             chat_fn(spec)(spec, system, user, want_json=True, temperature=temperature,
+                                           timeout=self.llm_timeout(role, spec, timeout))),
                          lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task)
         return res.value
 
@@ -213,7 +227,7 @@ class Seats:
                  timeout: Optional[float] = None) -> Optional[str]:
         """Plain text from an LLM role (same timeout rule as llm_json)."""
         res = self._call(role, stage,
-                         lambda spec: self._llm_estimate(llm_mod.chat(
+                         lambda spec: self._llm_estimate(chat_fn(spec)(
                              spec, system, user, want_json=False, timeout=self.llm_timeout(role, spec, timeout))),
                          lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task)
         v = res.value
@@ -237,7 +251,7 @@ class Seats:
             llm_mod.image_part(p, detail=d) for p, d in zip(images, dets)]
         res = self._call(role, stage,
                          lambda spec: self._vision_estimate(
-                             llm_mod.chat(spec, system, parts, want_json=True, temperature=0.1), dets),
+                             chat_fn(spec)(spec, system, parts, want_json=True, temperature=0.1), dets),
                          lambda: mock.mock_vision_score(images, intent or prompt), note=task)
         val = res.value if isinstance(res.value, dict) else {}
         val["_mock"] = res.mock
@@ -303,9 +317,10 @@ class Seats:
         """Synthesize narration. Returns (audio_path, words or None, is_mock, engine)."""
         def fn(spec: ProviderSpec) -> CallResult:
             settings = {"stability": voice.stability, "similarity_boost": voice.similarity}
-            synth = TTS_TYPES.get(spec.type)
-            if synth is None:
+            entry = TTS_TYPES.get(spec.type)
+            if entry is None:
                 raise ProviderError(f"tts provider type {spec.type} is not registered")
+            synth = getattr(entry, "synthesize", entry)  # a module or the function itself
             return synth(spec, text, self.voice_id(voice, spec), voice.model, out_path.with_suffix(".mp3"),
                          settings, self.settings.cost.tts_per_1k_chars_usd, language=language,
                          previous_text=previous_text, next_text=next_text)

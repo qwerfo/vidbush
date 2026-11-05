@@ -115,3 +115,9 @@ One line each: the decision and why.
 - force_align is a tts provider option read through Seats.tts_option, because unreliable timings are a property of one provider, not of a brand or a run.
 - The first narration chunk is synthesized alone before the rest run in parallel, so a refused model switches the run (sticky in each adapter) before any other chunk exists and a video never mixes models.
 - A narration whose chunks came from more than one tts provider is logged as a warning, not redone: redoing would ask the same failing seat order again.
+- The native Anthropic adapter speaks the Messages API over the repo's own requests layer, not the anthropic SDK, because every provider shares one retry, 429, fallback and cost path in ProviderClient, and the SDK's own retries and exception classes would duplicate and bypass it.
+- The Anthropic adapter never sends temperature (current Claude models reject sampling parameters with a 400); options.send_temperature exists for older models.
+- max_tokens is sent on every Anthropic call (64000 streamed, 16000 not, or options.max_tokens) because the Messages API requires it; a 400 naming a lower limit teaches that limit for the model.
+- Anthropic JSON is asked for in the system prompt and read with the shared loose parser, because the Messages API has no json_object mode and structured outputs would tie every caller to a schema.
+- The Anthropic price table is built in (USD per million, cache reads and 5 minute writes at their own rates) with options.price_per_mtok as the override, because the direct API returns no cost and has no price list endpoint.
+- LLM and TTS type registries map a type to its module and look the function up at call time, so a test or a hot fix that replaces llm.chat still takes effect.

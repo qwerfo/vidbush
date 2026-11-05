@@ -125,7 +125,7 @@ def test_registry_voice_map_and_unknown_type_skip(settings, tmp_path: Path, monk
     assert s.voice_id(voice, spec) == "algrow_v"
     assert s.voice_id(VoiceConfig(voice_id="default_v"), spec) == "default_v"
     got: dict = {}
-    monkeypatch.setitem(seats_mod.TTS_TYPES, "algrow_tts",
+    monkeypatch.setattr(tts_algrow, "synthesize",
                         lambda spec, text, vid, model, out, *a, **k: got.update(vid=vid) or tts_algrow.CallResult(
                             value=(out, None, "eleven_v4"), provider=spec, mock=False, credits=1.0,
                             units=len(text), unit_kind="characters"))
