@@ -10,8 +10,12 @@ import { TYPE_COLORS, TYPE_LABELS, clock, opSummary, score } from "../format.js"
 const VERDICT_KEYS = ["good", "wrong_picture", "wrong_timing", "quality_problem", "other"];
 const COMMENT_DELAY = 600;
 
+const NOT_TEXT = ["checkbox", "radio", "button", "submit", "reset", "range", "color", "file"];
+
 function isTyping(el) {
-  return el && (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable);
+  if (!el) return false;
+  if (el.tagName === "INPUT") return !NOT_TEXT.includes((el.type || "").toLowerCase());
+  return ["TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable;
 }
 
 // A textarea that grows with its text, so a long comment is never hidden behind a scrollbar.
@@ -44,15 +48,18 @@ function useSaver(onSaved, onError) {
   const [pending, setPending] = useState(0);
   const run = useCallback((key, fn) => {
     setPending((n) => n + 1);
-    const prev = chains.current[key] || Promise.resolve();
-    const next = prev.then(fn).then(
+    const prev = chains.current[key];
+    const start = prev ? prev.then(fn) : fn();
+    const next = Promise.resolve(start).then(
       (res) => { onSaved(res); },
       (e) => { onError(e); },
     ).finally(() => setPending((n) => n - 1));
     chains.current[key] = next;
+    next.then(() => { if (chains.current[key] === next) delete chains.current[key]; });
     return next;
   }, [onSaved, onError]);
-  return [run, pending];
+  const idle = useCallback(() => Promise.all(Object.values(chains.current)), []);
+  return [run, pending, idle];
 }
 
 function ShotRow({ shot, entry, index, current, playing, threshold, verdicts, rejects, onFocus, onSeek,
@@ -141,6 +148,9 @@ function ShotRow({ shot, entry, index, current, playing, threshold, verdicts, re
           placeholder="Comment (no limit): what is wrong, what you want instead"
           onChange={(e) => onComment(shot, e.target.value)} onBlur={() => onCommentBlur(shot)} />
         {entry.fix && <div className="small muted">Fix queued: {entry.fix.op}{entry.fix.job_id ? ` (job ${entry.fix.job_id})` : ""}</div>}
+        {entry.fix && entry.snapshot && shot.selected && entry.snapshot.selected !== shot.selected && (
+          <div className="small warn">New pick since your review. Set the verdict again to review it.</div>
+        )}
       </div>
     </article>
   );
@@ -216,6 +226,7 @@ export default function Review({ id }) {
   const commentRefs = useRef({});
   const timers = useRef({});
   const latest = useRef({});
+  const rejectsNow = useRef({});
   const setters = useRef({});
   const commentSetter = (shotId) => {
     if (!setters.current[shotId]) setters.current[shotId] = (el) => { commentRefs.current[shotId] = el; };
@@ -225,9 +236,14 @@ export default function Review({ id }) {
   const load = useCallback(async () => {
     try {
       const [p, s, r] = await Promise.all([api.project(id), api.shots(id), api.review(id)]);
+      // text typed while this load ran is newer than the server copy: keep it
+      const typing = latest.current;
+      const merged = { ...r, shots: r.shots.map((e) => (e.shot_id in typing ? { ...e, comment: typing[e.shot_id] } : e)) };
+      if ("__project" in typing) merged.project_comment = typing.__project;
+      rejectsNow.current = {};
       setProject(p);
       setShots(s.shots);
-      setReview(r);
+      setReview(merged);
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -237,13 +253,13 @@ export default function Review({ id }) {
 
   const onSaved = useCallback((res) => {
     if (res && res.shot) {
-      setReview((r) => r && ({ ...r, reviewed: res.reviewed, total: res.total,
+      setReview((r) => r && ({ ...r,
         shots: r.shots.map((e) => (e.shot_id === res.shot.shot_id ? { ...e, fix: res.shot.fix, snapshot: res.shot.snapshot, updated_at: res.shot.updated_at } : e)) }));
     }
     setSaveState({ kind: "saved", at: new Date(), text: "" });
   }, []);
   const onSaveError = useCallback((e) => setSaveState({ kind: "error", at: new Date(), text: e.message }), []);
-  const [save, pending] = useSaver(onSaved, onSaveError);
+  const [save, pending, savesIdle] = useSaver(onSaved, onSaveError);
   useEffect(() => { if (pending > 0) setSaveState((s) => ({ ...s, kind: "saving" })); }, [pending]);
 
   const watcher = useJobWatcher(id, (job) => {
@@ -277,8 +293,9 @@ export default function Review({ id }) {
   }, [id, patchLocal, save]);
 
   const setReject = useCallback((shot, key, on) => {
-    const now = (entries[shot.id] && entries[shot.id].rejects) || [];
+    const now = rejectsNow.current[shot.id] || (entries[shot.id] && entries[shot.id].rejects) || [];
     const next = on ? [...new Set([...now, key])] : now.filter((r) => r !== key);
+    rejectsNow.current[shot.id] = next;  // two fast clicks before a re-render must both count
     patchLocal(shot.id, { rejects: next });
     save(shot.id, () => api.saveShotReview(id, shot.id, { rejects: next }));
   }, [entries, id, patchLocal, save]);
@@ -346,11 +363,12 @@ export default function Review({ id }) {
   const move = useCallback((i) => {
     if (!rows.length) return;
     const n = Math.min(rows.length - 1, Math.max(0, i));
+    if (n === cur && i !== cur) return;  // already at the first or last shot
     setCur(n);
     seek(rows[n]);
     const el = list.current && list.current.querySelector(`[data-shot="${rows[n].id}"]`);
     if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [rows, seek]);
+  }, [rows, seek, cur]);
 
   useEffect(() => {
     function onKey(e) {
@@ -401,10 +419,15 @@ export default function Review({ id }) {
     if (s && s.id !== playingId) setPlayingId(s.id);
   }
 
+  async function flushAndWait() {
+    Object.keys(latest.current).forEach((k) => (k === "__project" ? flushProject() : flushComment(k)));
+    await savesIdle();
+  }
+
   async function openFixes() {
     setNotice(null);
-    Object.keys(latest.current).forEach((k) => (k === "__project" ? flushProject() : flushComment(k)));
     try {
+      await flushAndWait();
       setPlan(await api.reviewFixes(id));
     } catch (e) {
       setNotice({ kind: "error", text: e.message });
@@ -424,8 +447,8 @@ export default function Review({ id }) {
   }
 
   async function exportMd() {
-    Object.keys(latest.current).forEach((k) => (k === "__project" ? flushProject() : flushComment(k)));
     try {
+      await flushAndWait();
       const res = await api.exportReview(id);
       setNotice({ kind: "ok", text: "Wrote review.md.", url: res.url });
     } catch (e) {

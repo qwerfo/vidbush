@@ -232,17 +232,17 @@ legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
 .review-title h1 { font-size: 19px; }
 .review-progress { display: flex; flex-direction: column; gap: 2px; min-width: 210px; font-size: 13px; }
 .mini-progress.wide { width: 210px; }
-.project-comment { width: 100%; min-height: 38px; overflow: hidden; }
+.project-comment { width: 100%; min-height: 38px; max-height: 24vh; overflow-y: auto; }
 .keys-hint { margin-top: 6px; }
 kbd { font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--panel2);
   border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; color: var(--text); }
 .bad { color: var(--bad); }
 .review-player-slot { margin-bottom: 14px; min-height: 120px; }
 .review-player .player { max-height: 62vh; }
-.review-player.docked { position: fixed; right: 20px; bottom: 20px; width: min(440px, 42vw); z-index: 9;
+.review-player.docked { position: fixed; left: 16px; bottom: 16px; width: min(300px, 30vw); z-index: 9;
   box-shadow: 0 10px 30px #000c; border-radius: var(--radius); }
 .review-player.docked .player { max-height: none; }
-.review-list { display: flex; flex-direction: column; gap: 8px; }
+.review-list { display: flex; flex-direction: column; gap: 8px; padding-bottom: 40vh; }
 .review-row { display: grid; grid-template-columns: 176px minmax(0, 1fr) minmax(320px, 1.05fr); gap: 14px;
   background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--line);
   border-radius: var(--radius); padding: 10px 12px; scroll-margin-top: 230px; }
