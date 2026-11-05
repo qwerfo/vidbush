@@ -211,6 +211,16 @@ every real provider fails, the seat raises and the stage fails (resume
 retries later), unless `allow_mock_fallback` is true. A finished project that
 used mock for a role configured as real ends as `needs_review`.
 
+Provider types are dispatched through registries in `vidbush/providers/seats.py`:
+`LLM_TYPES` (`openai_compat` in `llm.py`, `anthropic` in `llm_anthropic.py`, the
+native Messages API) for text and vision roles, and `TTS_TYPES` (`elevenlabs` in
+`tts.py`, `algrow_tts` in `tts_algrow.py`, one line per type) for narration. A
+role entry naming an unregistered type is skipped with one warning. A role entry
+may give `model_match: {family, version}` instead of a model; the id is then read
+once per provider from its `GET /models` (`providers/model_resolve.py`).
+`VIDBUSH_PREFER_PROVIDER` (until `VIDBUSH_PREFER_UNTIL`) moves named providers to
+the front of every role. LLM replies stream by default (`options.stream`).
+
 When a role has no configured provider (or offline mode is on), the mock provider answers: canned
 LLM fixtures from `fixtures/llm/<fixture_key>/<task>.json` (fixture key is
 `slug(topic)` for briefs, the file stem for scripts and voiceovers), or
