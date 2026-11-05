@@ -272,6 +272,7 @@ def op_change_type(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Out
         new = ShotType(str(_need(args, "type")))
     except ValueError as e:
         raise EditError(f"unknown shot type {args.get('type')!r}") from e
+    _review_notes(shot, args)
     if new == ShotType.motion_graphic:
         spec = build_motion_spec(sess, shot, args)
         shot.type, shot.motion, shot.overlay, shot.overlay_path = new, spec, None, ""
@@ -280,6 +281,31 @@ def op_change_type(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Out
     if new in (ShotType.ai_image, ShotType.ai_video):
         return _to_ai(sess, shot, new)
     return _resource(sess, sl, shot, new)
+
+
+def _str_list(value: Any) -> list[str]:
+    items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    return [no_em_dash(" ".join(str(v).split())) for v in items if str(v).strip()]
+
+
+def _review_notes(shot: Shot, args: dict[str, Any]) -> None:
+    """Optional change_type args from the review sheet (review/fixes.py), applied before a re-source.
+
+    add_must_avoid and add_queries extend the shot's lists (no duplicates). reject_selected marks the
+    current pick rejected with that reason so the judge cannot choose it again; when must_avoid grew,
+    the other judged candidates lose their score so the judge sees the new must_avoid.
+    """
+    avoid = [a for a in _str_list(args.get("add_must_avoid")) if a not in shot.must_avoid]
+    shot.must_avoid += avoid
+    shot.queries += [q for q in _str_list(args.get("add_queries")) if q not in shot.queries]
+    reason = str(args.get("reject_selected") or "").strip()
+    pick = shot.selected_candidate()
+    if reason and pick is not None and pick.source != SourceKind.motion:
+        pick.reject_reason, pick.score = no_em_dash(reason), 0.0
+    if avoid:
+        for c in shot.candidates:
+            if c.reject_reason is None:
+                c.score, c.judge_reason = None, ""
 
 
 def _to_ai(sess: EditSession, shot: Shot, new: ShotType) -> Outcome:
