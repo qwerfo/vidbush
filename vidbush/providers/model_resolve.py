@@ -1,0 +1,96 @@
+"""Resolve a seat's model id from the provider's own model list, by family and version.
+
+A role entry may name `model_match: {family: sonnet, version: "5.5"}` instead of a model id. The id is
+then read from GET {base}/models (openai_compat) or GET {base}/v1/models (anthropic) the first time the
+seat is resolved, matched by family and version, and logged once. Reason: relays spell the same model
+differently (Wellflow `claude-sonnet-5-5`, CloseRouter `anthropic/claude-sonnet-5.5`, Anthropic
+`claude-sonnet-5-5`), and a guessed id fails only at the first real call.
+
+Matching: an id matches when, after dropping a `vendor/` prefix and turning dots into dashes, it reads
+`claude-<family>-<version with dashes>` with nothing after it but an optional date suffix
+(`-20261101`). Version "5" therefore never matches `claude-sonnet-5-5`. An exact id beats a dated one.
+No match leaves the model empty, so the seat counts as not configured and the next provider serves.
+A failed listing is retried after RETRY_S, because a relay that is down at startup may come back.
+"""
+from __future__ import annotations
+
+import re
+import threading
+import time
+from typing import Any, Optional
+
+from .base import ProviderSpec
+from .http import get_json
+
+RETRY_S = 600.0
+_CACHE: dict[tuple[str, str, str, str], tuple[float, str]] = {}  # key -> (time, id or "")
+_LISTS: dict[tuple[str, str], tuple[float, list[str]]] = {}  # (provider, base) -> (time, ids), one GET each
+_LOCK = threading.Lock()
+
+
+def _norm(model_id: str) -> str:
+    return model_id.strip().lower().split("/")[-1].replace(".", "-")
+
+
+def match_model(ids: list[str], family: str, version: str) -> str:
+    """The best id for claude-<family>-<version>, or "" (see the module docstring)."""
+    fam = re.escape(str(family).strip().lower())
+    ver = re.escape(str(version).strip().lower().replace(".", "-"))
+    pat = re.compile(rf"^claude-{fam}-{ver}(-\d{{8}})?$")
+    exact = [i for i in ids if pat.match(_norm(i)) and not pat.match(_norm(i)).group(1)]
+    dated = sorted((i for i in ids if pat.match(_norm(i)) and pat.match(_norm(i)).group(1)), reverse=True)
+    return (exact or dated or [""])[0]
+
+
+def list_ids(spec: ProviderSpec, timeout: float = 30.0) -> list[str]:
+    """Model ids the provider lists."""
+    if spec.type == "anthropic":
+        from .llm_anthropic import list_models
+        return list_models(spec, timeout=timeout)
+    data = get_json(spec.base_url.rstrip("/") + "/models", headers={"Authorization": f"Bearer {spec.api_key}"},
+                    timeout=timeout)
+    rows = data.get("data") if isinstance(data, dict) else data
+    return [str(m.get("id")) for m in rows or [] if isinstance(m, dict) and m.get("id")]
+
+
+def _cached_ids(spec: ProviderSpec) -> list[str]:
+    key = (spec.name, spec.base_url.rstrip("/"))
+    with _LOCK:
+        hit = _LISTS.get(key)
+        if hit and time.time() - hit[0] < RETRY_S:
+            return hit[1]
+    ids = list_ids(spec)  # a failure raises and is not cached, so the next resolve asks again
+    with _LOCK:
+        _LISTS[key] = (time.time(), ids)
+    return ids
+
+
+def resolve(spec: ProviderSpec, match: dict[str, Any], log: Any) -> str:
+    """Model id for spec (base URL and key set) matching {family, version}; "" when none. Cached."""
+    family, version = str(match.get("family", "")), str(match.get("version", ""))
+    key = (spec.name, spec.base_url.rstrip("/"), family.lower(), version)
+    with _LOCK:
+        hit = _CACHE.get(key)
+        if hit and (hit[1] or time.time() - hit[0] < RETRY_S):
+            return hit[1]
+    try:
+        ids = _cached_ids(spec)
+        found = match_model(ids, family, version)
+        err: Optional[str] = None if found else f"no listed id matches claude-{family}-{version} ({len(ids)} ids)"
+    except Exception as e:  # noqa: BLE001 - a failed listing leaves the seat unconfigured until retried
+        found, err = "", f"model list failed: {str(e)[:200]}"
+    with _LOCK:
+        _CACHE[key] = (time.time(), found)
+    if found:
+        log.info("model resolved from the provider model list", provider=spec.name, family=family,
+                 version=version, model=found)
+    else:
+        log.warn("model not resolved, seat skipped", provider=spec.name, family=family, version=version,
+                 error=err)
+    return found
+
+
+def reset() -> None:
+    with _LOCK:
+        _CACHE.clear()
+        _LISTS.clear()

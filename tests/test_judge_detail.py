@@ -20,6 +20,8 @@ from vidbush.providers.seats import Seats
 from vidbush.render import thumbnails as th
 from vidbush.util import NullLogger
 
+pytestmark = pytest.mark.usefixtures("generic_seats")
+
 
 @pytest.fixture(autouse=True)
 def _clean():

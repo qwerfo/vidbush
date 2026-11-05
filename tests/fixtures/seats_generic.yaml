@@ -1,0 +1,76 @@
+# Generic seat map for unit tests (the layout before the 2026-11-05 seat policy), so provider tests
+# never depend on the operator policy in config/seats.yaml.
+# Roles to providers. The code asks for a role; the first configured provider
+# that works is used. Fallback moves only the failed request; the first entry
+# stays first unless transport failures mark it down (probed again every 10 min).
+# A role with no configured provider runs in mock mode (marked in every report).
+# A role with a configured provider never silently uses mock: if every real
+# provider fails a request the stage fails (resume retries it), unless
+# allow_mock_fallback / VIDBUSH_ALLOW_MOCK_FALLBACK is true. 429s back off and retry.
+# Models are placeholders: set them to whatever is best and cheapest this month.
+# Model names starting with "your-" are placeholders and do not count as configured.
+# Use model_env to read the model name from .env instead of hardcoding it here.
+# Provider options: max_concurrency (parallel requests per provider),
+# LLM providers: max_tokens (optional output cap, unset by default so no cap is sent;
+# renamed to max_completion_tokens automatically for models that ask for it),
+# timeout_s (request timeout in seconds; replaces the role default, which is 600 for
+# writer and 180 for the other LLM roles unless the caller asks for longer).
+# A role entry may carry its own options, which override the provider options.
+# image providers: cost_per_image, quality (gpt-image: low|medium|high, default low),
+# size, mode: chat (OpenRouter style image output from /chat/completions), aspect_ratio.
+# elevenlabs: model_preference (list used when the brand model is auto), language_models.
+
+roles:
+  researcher:
+    - {provider: primary_llm, model_env: LLM_PRIMARY_MODEL, model: "your-strong-model"}
+    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+  writer:
+    - {provider: primary_llm, model_env: LLM_WRITER_MODEL, model: "your-best-writing-model"}
+    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+  director:
+    - {provider: primary_llm, model_env: LLM_PRIMARY_MODEL, model: "your-strong-model"}
+    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+  editor:
+    - {provider: primary_llm, model_env: LLM_CHEAP_MODEL, model: "your-cheap-fast-model"}
+    - {provider: fallback_llm, model_env: LLM_FALLBACK_CHEAP_MODEL, model: "your-fallback-model"}
+  judge:
+    - {provider: vision_llm, model_env: VISION_MODEL, model: "your-vision-model"}
+    - {provider: vision_fallback, model_env: VISION_FALLBACK_MODEL, model: "your-fallback-vision-model"}
+  vision:
+    - {provider: vision_llm, model_env: VISION_MODEL, model: "your-vision-model"}
+    - {provider: vision_fallback, model_env: VISION_FALLBACK_MODEL, model: "your-fallback-vision-model"}
+  cheap_classifier:
+    - {provider: vision_llm, model_env: VISION_CHEAP_MODEL, model: "your-cheap-vision-model"}
+    - {provider: vision_fallback, model_env: VISION_FALLBACK_MODEL, model: "your-fallback-vision-model"}
+  image:
+    - {provider: image_primary, model_env: IMAGE_MODEL, model: "your-image-model"}
+    - {provider: image_fallback, model_env: IMAGE_FALLBACK_MODEL, model: "your-fallback-image-model"}
+  video:
+    - {provider: video_primary, model_env: VIDEO_MODEL, model: "your-image-to-video-model"}
+  tts:
+    - {provider: elevenlabs, model: "auto"}
+  search:
+    - {provider: web_search, model: ""}
+
+# Live-run-1 seat map (docs/PROVIDER_NOTES.md): CloseRouter primary text and vision, Wellflow fallback
+# (stream: true, Wellflow drops idle connections near 240 s), Elevate then Algrow images (async job APIs).
+providers:
+  primary_llm:    {type: openai_compat, base_url_env: LLM_PRIMARY_BASE_URL, key_env: LLM_PRIMARY_API_KEY,
+                   options: {max_concurrency: 6}}
+  fallback_llm:   {type: openai_compat, base_url_env: LLM_FALLBACK_BASE_URL, key_env: LLM_FALLBACK_API_KEY,
+                   options: {stream: true, max_concurrency: 2}}
+  vision_llm:     {type: openai_compat, base_url_env: VISION_BASE_URL, key_env: VISION_API_KEY,
+                   options: {max_concurrency: 8}}
+  vision_fallback: {type: openai_compat, base_url_env: VISION_FALLBACK_BASE_URL, key_env: VISION_FALLBACK_API_KEY,
+                   options: {stream: true, max_concurrency: 2}}
+  # Elevate is a subscription (gpt-image-2.5-fast is 4 credits, 3 at once, 200 an hour): no per call charge.
+  image_primary:  {type: elevate, base_url_env: IMAGE_BASE_URL, key_env: IMAGE_API_KEY,
+                   options: {cost_per_image: 0.0, max_concurrency: 3, timeout_s: 300, edge_trim: 0.05}}  # sparkle mark bottom right
+  # Algrow gpt-image-2.5: 0.35 credits at 0.031 USD a credit, jobs can take up to about 7 minutes.
+  image_fallback: {type: algrow, base_url_env: IMAGE_FALLBACK_BASE_URL, key_env: IMAGE_FALLBACK_API_KEY,
+                   options: {cost_per_image: 0.01085, max_concurrency: 3, timeout_s: 600}}
+  video_primary:  {type: fal, base_url_env: VIDEO_BASE_URL, key_env: VIDEO_API_KEY}
+  elevenlabs:     {type: elevenlabs, base_url_env: ELEVENLABS_BASE_URL, key_env: ELEVENLABS_API_KEY,
+                   options: {max_concurrency: 3,   # raise to your plan's concurrency limit
+                             model_preference: [eleven_v4, eleven_multilingual_v2]}}
+  web_search:     {type: tavily, key_env: SEARCH_API_KEY}   # set type to tavily, serper or brave

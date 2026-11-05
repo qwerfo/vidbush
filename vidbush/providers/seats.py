@@ -22,6 +22,7 @@ from . import image as image_mod
 from . import llm as llm_mod
 from . import llm_anthropic
 from . import mock
+from . import model_resolve
 from . import search as search_mod
 from . import tts as tts_mod
 from . import tts_algrow
@@ -102,13 +103,56 @@ class Seats:
                 model = self.settings.key(entry["model_env"]) or model
             if is_placeholder_model(model):
                 model = ""
-            out.append(ProviderSpec(
-                name=pname, type=pdef.get("type", "openai_compat"), model=model,
+            spec = ProviderSpec(
+                name=pname, type=ptype, model=model,
                 base_url=self.settings.key(pdef.get("base_url_env", "")) or pdef.get("base_url", ""),
                 api_key=self.settings.key(pdef.get("key_env", "")),
                 options={**pdef.get("options", {}), **entry.get("options", {})},
-            ))
-        return out
+            )
+            match = entry.get("model_match")
+            if not spec.model and isinstance(match, dict) and spec.api_key and (
+                    spec.base_url or spec.type == "anthropic"):
+                spec.model = model_resolve.resolve(spec, match, self.log)
+            out.append(spec)
+        return self._preferred_first(out)
+
+    def _preferred_first(self, specs: list[ProviderSpec]) -> list[ProviderSpec]:
+        """Move providers named in VIDBUSH_PREFER_PROVIDER (comma list) to the front, keeping their order.
+
+        Which provider is primary for a while is an operator switch in .env, not a config edit, so a
+        temporary primary (promo credits, an outage) needs no change to seats.yaml. VIDBUSH_PREFER_UNTIL
+        (an ISO date or date and time, UTC) ends the preference by itself, with one log line.
+        """
+        names = [n.strip() for n in self.settings.key("VIDBUSH_PREFER_PROVIDER").split(",") if n.strip()]
+        if not names or not self._preference_active():
+            return specs
+        rank = {n: i for i, n in enumerate(names)}
+        front = sorted((s for s in specs if s.name in rank), key=lambda s: rank[s.name])
+        return front + [s for s in specs if s.name not in rank]
+
+    def _preference_active(self) -> bool:
+        until = self.settings.key("VIDBUSH_PREFER_UNTIL").strip()
+        if not until:
+            return True
+        from datetime import datetime, timezone
+        try:
+            end = datetime.fromisoformat(until.replace("Z", "+00:00"))
+        except ValueError:
+            self._log_once("prefer_bad", "VIDBUSH_PREFER_UNTIL is not an ISO date, preference ignored", until)
+            return False
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < end:
+            return True
+        self._log_once("prefer_expired", "VIDBUSH_PREFER_UNTIL has passed, configured provider order used", until)
+        return False
+
+    def _log_once(self, key: str, msg: str, value: str) -> None:
+        with self._lock:
+            first = (key, value) not in _UNKNOWN_LOGGED
+            _UNKNOWN_LOGGED.add((key, value))
+        if first:
+            self.log.warn(msg, value=value)
 
     def _warn_unknown_type(self, role: str, provider: str, ptype: str) -> None:
         with self._lock:

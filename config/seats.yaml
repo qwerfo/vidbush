@@ -17,50 +17,72 @@
 # image providers: cost_per_image, quality (gpt-image: low|medium|high, default low),
 # size, mode: chat (OpenRouter style image output from /chat/completions), aspect_ratio.
 # elevenlabs: model_preference (list used when the brand model is auto), language_models.
+# LLM providers stream by default (options.stream: true); set stream: false per provider to turn it off.
+# A role entry may name model_match: {family, version} instead of a model: the id is read from the
+# provider's GET /models at startup, matched by family and version, and logged once (no guessed ids).
+# model_env still wins when that variable is set, so an operator can pin an exact id.
+# tts providers: force_align: true ignores a provider's word timings and aligns the audio to the script.
+# A tts entry whose type is not registered in this build is skipped with one warning.
+# VIDBUSH_PREFER_PROVIDER in .env moves named providers to the front of every role (see .env.example).
 
 roles:
+  # Seat policy (Adam, 2026-11-05). Anthropic models: Sonnet 5.5 for director and researcher, Opus 5.5
+  # for writer. Primary wellflow_cheap (the Wellflow key whose name contains "cheap"; it serves Anthropic
+  # models only), anthropic_direct (Adam's own Anthropic key) as the alternative primary, CloseRouter's
+  # Anthropic ids as the cross relay fallback so a Wellflow outage never stops a script.
   researcher:
-    - {provider: primary_llm, model_env: LLM_PRIMARY_MODEL, model: "your-strong-model"}
-    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+    - {provider: wellflow_cheap, model_env: LLM_RESEARCHER_MODEL, model_match: {family: sonnet, version: "5.5"}}
+    - {provider: anthropic_direct, model_match: {family: sonnet, version: "5.5"}}
+    - {provider: closerouter, model_match: {family: sonnet, version: "5.5"}}
   writer:
-    - {provider: primary_llm, model_env: LLM_WRITER_MODEL, model: "your-best-writing-model"}
-    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+    - {provider: wellflow_cheap, model_env: LLM_WRITER_MODEL, model_match: {family: opus, version: "5.5"}}
+    - {provider: anthropic_direct, model_match: {family: opus, version: "5.5"}}
+    - {provider: closerouter, model_match: {family: opus, version: "5.5"}}
   director:
-    - {provider: primary_llm, model_env: LLM_PRIMARY_MODEL, model: "your-strong-model"}
-    - {provider: fallback_llm, model_env: LLM_FALLBACK_MODEL, model: "your-fallback-model"}
+    - {provider: wellflow_cheap, model_env: LLM_DIRECTOR_MODEL, model_match: {family: sonnet, version: "5.5"}}
+    - {provider: anthropic_direct, model_match: {family: sonnet, version: "5.5"}}
+    - {provider: closerouter, model_match: {family: sonnet, version: "5.5"}}
+  # Non-Anthropic models: CloseRouter primary, Wellflow normal key fallback, both streamed.
+  # Ids verified live on 2026-11-04 (docs/PROVIDER_NOTES.md); set the *_MODEL variables to change them.
   editor:
-    - {provider: primary_llm, model_env: LLM_CHEAP_MODEL, model: "your-cheap-fast-model"}
-    - {provider: fallback_llm, model_env: LLM_FALLBACK_CHEAP_MODEL, model: "your-fallback-model"}
+    - {provider: closerouter, model_env: LLM_CHEAP_MODEL, model: "google/gemini-3.8-flash"}
+    - {provider: wellflow, model_env: LLM_FALLBACK_CHEAP_MODEL, model: "gemini-3.8-flash"}
   judge:
-    - {provider: vision_llm, model_env: VISION_MODEL, model: "your-vision-model"}
-    - {provider: vision_fallback, model_env: VISION_FALLBACK_MODEL, model: "your-fallback-vision-model"}
+    - {provider: closerouter, model_env: VISION_MODEL, model: "google/gemini-3.8-flash"}
+    - {provider: wellflow, model_env: VISION_FALLBACK_MODEL, model: "gemini-3.8-flash"}
   vision:
-    - {provider: vision_llm, model_env: VISION_MODEL, model: "your-vision-model"}
-    - {provider: vision_fallback, model_env: VISION_FALLBACK_MODEL, model: "your-fallback-vision-model"}
+    - {provider: closerouter, model_env: VISION_MODEL, model: "google/gemini-3.8-flash"}
+    - {provider: wellflow, model_env: VISION_FALLBACK_MODEL, model: "gemini-3.8-flash"}
   cheap_classifier:
-    - {provider: vision_llm, model_env: VISION_CHEAP_MODEL, model: "your-cheap-vision-model"}
-    - {provider: vision_fallback, model_env: VISION_FALLBACK_MODEL, model: "your-fallback-vision-model"}
+    - {provider: closerouter, model_env: VISION_CHEAP_MODEL, model: "google/gemini-3.8-flash"}
+    - {provider: wellflow, model_env: VISION_FALLBACK_MODEL, model: "gemini-3.8-flash"}
+  # Images: Elevate then Algrow, unchanged.
   image:
     - {provider: image_primary, model_env: IMAGE_MODEL, model: "your-image-model"}
     - {provider: image_fallback, model_env: IMAGE_FALLBACK_MODEL, model: "your-fallback-image-model"}
   video:
     - {provider: video_primary, model_env: VIDEO_MODEL, model: "your-image-to-video-model"}
+  # TTS order (Adam): Elevate, then Algrow, then ElevenLabs direct. elevate_tts is the type the laptop
+  # lane adds; until it is registered the entry is skipped with one warning and Algrow serves.
   tts:
+    - {provider: elevate_tts, model: "eleven_v4"}
+    - {provider: algrow_tts, model: "eleven_v4"}
     - {provider: elevenlabs, model: "auto"}
   search:
     - {provider: web_search, model: ""}
 
-# Live-run-1 seat map (docs/PROVIDER_NOTES.md): CloseRouter primary text and vision, Wellflow fallback
-# (stream: true, Wellflow drops idle connections near 240 s), Elevate then Algrow images (async job APIs).
 providers:
-  primary_llm:    {type: openai_compat, base_url_env: LLM_PRIMARY_BASE_URL, key_env: LLM_PRIMARY_API_KEY,
-                   options: {max_concurrency: 6}}
-  fallback_llm:   {type: openai_compat, base_url_env: LLM_FALLBACK_BASE_URL, key_env: LLM_FALLBACK_API_KEY,
-                   options: {stream: true, max_concurrency: 2}}
-  vision_llm:     {type: openai_compat, base_url_env: VISION_BASE_URL, key_env: VISION_API_KEY,
-                   options: {max_concurrency: 8}}
-  vision_fallback: {type: openai_compat, base_url_env: VISION_FALLBACK_BASE_URL, key_env: VISION_FALLBACK_API_KEY,
-                   options: {stream: true, max_concurrency: 2}}
+  # Wellflow cheap key: Anthropic models only (HTTP 403 model_not_in_channel for anything else).
+  wellflow_cheap: {type: openai_compat, base_url_env: WELLFLOW_BASE_URL, base_url: "https://api.wellflow.dev/v1",
+                   key_env: WELLFLOW_CHEAP, options: {stream: true, max_concurrency: 4}}
+  # Wellflow normal key: every model. Streamed: Wellflow drops a silent connection near 240 s.
+  wellflow:       {type: openai_compat, base_url_env: WELLFLOW_BASE_URL, base_url: "https://api.wellflow.dev/v1",
+                   key_env: WELLFLOW_API_KEY, options: {stream: true, max_concurrency: 2}}
+  closerouter:    {type: openai_compat, base_url_env: CLOSEROUTER_BASE_URL, base_url: "https://api.closerouter.dev/v1",
+                   key_env: CLOSEROUTER_API_KEY, options: {stream: true, max_concurrency: 8}}
+  # Adam's own Anthropic key, native Messages API (vidbush/providers/llm_anthropic.py).
+  anthropic_direct: {type: anthropic, base_url_env: ANTHROPIC_DIRECT_BASE_URL, base_url: "https://api.anthropic.com",
+                   key_env: ANTHROPIC_DIRECT_API_KEY, options: {stream: true, max_concurrency: 4}}
   # Elevate is a subscription (gpt-image-2.5-fast is 4 credits, 3 at once, 200 an hour): no per call charge.
   image_primary:  {type: elevate, base_url_env: IMAGE_BASE_URL, key_env: IMAGE_API_KEY,
                    options: {cost_per_image: 0.0, max_concurrency: 3, timeout_s: 300, edge_trim: 0.05}}  # sparkle mark bottom right
@@ -68,6 +90,12 @@ providers:
   image_fallback: {type: algrow, base_url_env: IMAGE_FALLBACK_BASE_URL, key_env: IMAGE_FALLBACK_API_KEY,
                    options: {cost_per_image: 0.01085, max_concurrency: 3, timeout_s: 600}}
   video_primary:  {type: fal, base_url_env: VIDEO_BASE_URL, key_env: VIDEO_API_KEY}
+  # Elevate TTS (type added by the laptop lane in vidbush/providers/tts_elevate.py).
+  elevate_tts:    {type: elevate_tts, base_url_env: ELEVATE_BASE_URL, key_env: ELEVATE_API_KEY,
+                   options: {max_concurrency: 3}}
+  # Algrow TTS fronts ElevenLabs; subscription credits, recorded as 0 USD with the credit count.
+  algrow_tts:     {type: algrow_tts, base_url_env: ALGROW_BASE_URL, key_env: ALGROW_API_KEY,
+                   options: {max_concurrency: 3, timeout_s: 600, fallback_model: eleven_multilingual_v2}}
   elevenlabs:     {type: elevenlabs, base_url_env: ELEVENLABS_BASE_URL, key_env: ELEVENLABS_API_KEY,
                    options: {max_concurrency: 3,   # raise to your plan's concurrency limit
                              model_preference: [eleven_v4, eleven_multilingual_v2]}}

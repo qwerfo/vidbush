@@ -16,6 +16,8 @@ from vidbush.providers.base import (CallResult, CostTracker, ProviderClient, Pro
                                     RateLimitError, RefusalError, TransportError, http_error_to_exc)
 from vidbush.providers.seats import Seats
 
+pytestmark = pytest.mark.usefixtures("generic_seats")
+
 
 @pytest.fixture(autouse=True)
 def _clean():

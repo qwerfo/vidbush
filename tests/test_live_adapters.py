@@ -13,6 +13,8 @@ from vidbush.providers import llm as llm_mod
 from vidbush.providers import tts as tts_mod
 from vidbush.providers.base import ProviderSpec, RefusalError, TransportError
 
+pytestmark = pytest.mark.usefixtures("generic_seats")
+
 
 def _png(w: int = 1376, h: int = 768) -> bytes:
     buf = io.BytesIO()

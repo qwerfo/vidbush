@@ -11,6 +11,8 @@ from vidbush.providers import base, llm
 from vidbush.providers.base import CostTracker, ProviderError, ProviderSpec, RefusalError
 from vidbush.providers.seats import Seats
 
+pytestmark = pytest.mark.usefixtures("generic_seats")
+
 
 @pytest.fixture(autouse=True)
 def _clean():
