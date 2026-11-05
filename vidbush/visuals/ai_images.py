@@ -73,9 +73,28 @@ def next_ai_index(shot: Shot, work: Path) -> int:
     return n
 
 
+SAFE_SYSTEM = ("You rewrite prompts for a photographic image model used in documentaries. Keep the scene, place, "
+               "era, mood and composition. Remove every named real person (describe an anonymous person of the right "
+               "age and role instead), every brand, company, channel or station name, and anything that asks for "
+               "readable text: headlines, signs, captions, labels, numbers, charts, maps with words. Return JSON "
+               '{"prompt": "<one paragraph, under 90 words>"}.')
+
+
+def safe_prompt(text: str, ctx: Any) -> str:
+    """The prompt with named people, brands and readable text rewritten out by the editor seat. Image models
+    render names as fake likenesses and text as invented, often wrong, facts. Unchanged when no model answers."""
+    try:
+        raw = ctx.seats.llm_json("editor", "ai_prompt_safety", SAFE_SYSTEM, text, ctx.stage or "judge", temperature=0.2)
+    except Exception as e:  # noqa: BLE001 - the original prompt still goes out; the negatives still apply
+        ctx.log.warn("ai prompt rewrite failed, original prompt kept", error=str(e)[:200])
+        return text
+    new = raw.get("prompt") if isinstance(raw, dict) else None
+    return no_em_dash(" ".join(str(new).split())) if isinstance(new, str) and len(new) > 20 else text
+
+
 def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Candidate:
     """Generate one still for the shot and return it as an ai_image candidate (not appended)."""
-    text = build_prompt(shot, prompt)
+    text = safe_prompt(build_prompt(shot, prompt), ctx)
     n = next_ai_index(shot, ctx.work)
     out = ctx.work / "ai" / f"{shot.id}_{n}.png"
     path, is_mock = _call_image(ctx, text, negative_prompt(shot, prompt), out)

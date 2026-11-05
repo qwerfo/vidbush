@@ -50,6 +50,7 @@ One line each: the decision and why.
 - Wikimedia 429s left as they are: its User-Agent policy wants a contact address (VIDBUSH_CONTACT), and Adam's email is not sent to a third party without his say.
 - AI image negatives (text, logos, chyrons, the likeness of a named real person) travel as a prose "Do not include" sentence for providers with no negative field; before this fix they were silently dropped, and the first render had a fake TV interview of a real person and stills with invented headlines.
 - Shots whose AI stills carry baked text, a fake logo or a real person's likeness are regenerated with the regenerate_ai edit op (segment re-render only), not by re-running the whole project.
+- AI image prompts pass through the editor seat first (safe_prompt), which rewrites named real people into anonymous people of the right age and role and removes brands, station names and readable text. Negatives alone did not stop it: a name in the positive prompt still produced a likeness. If no model answers, the original prompt goes out with its negatives.
 
 ## Footage quality and YouTube (parallel lane)
 

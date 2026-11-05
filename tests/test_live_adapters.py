@@ -182,3 +182,19 @@ def test_negatives_become_prose_for_providers_without_a_field(tmp_path: Path, mo
                         {"images": [{"url": "u"}]})
     image_mod.generate(fal, "A dog sled.", tmp_path / "f.png", 0.02, negative="text")
     assert sent["prompt"] == "A dog sled." and sent["negative_prompt"] == "text"
+
+
+def test_ai_prompt_is_rewritten_without_named_people(make_ctx, monkeypatch) -> None:
+    from vidbush.visuals import ai_images
+    ctx = make_ctx()
+    seen = {}
+
+    def fake_llm(role, task, system, user, stage, temperature=0.6, timeout=0):
+        seen["role"], seen["user"] = role, user
+        return {"prompt": "An anonymous football mother in a Florida living room holding fundraising flyers."}
+
+    monkeypatch.setattr(ctx.seats, "llm_json", fake_llm)
+    assert "anonymous" in ai_images.safe_prompt("Cathy Parker speaks on WJXT news.", ctx)
+    assert seen["role"] == "editor" and "Cathy Parker" in seen["user"]
+    monkeypatch.setattr(ctx.seats, "llm_json", lambda *a, **k: None)
+    assert ai_images.safe_prompt("A dog sled at dawn.", ctx) == "A dog sled at dawn."

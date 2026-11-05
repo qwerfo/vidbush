@@ -11,3 +11,8 @@ renderer/out/
 *.egg-info/
 .venv/
 .sandbox-ca.crt
+
+notes/
+.workflow/
+.env.local
+
