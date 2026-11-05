@@ -16,7 +16,9 @@ source_shot(shot, ctx, queries=None, exclude_ids=()) -> list[Candidate]
 Politeness: search responses are cached on disk under
 <source_cache_folder>/search/<adapter>/ (SEARCH_CACHE_TTL_S) so a resume or
 a re-run does not query again; each run has a query budget per adapter
-(throttle.take_budget, keyed by run_id(ctx)); requests are rate limited per host and capped
+(throttle.take_budget, keyed by run_id(ctx)), shared fairly by the shots that still need
+candidates (queries go out in rounds and a shot with enough results leaves the pool, see
+_search_all); requests are rate limited per host and capped
 globally in base/throttle. A throttled or over-budget search returns no
 results and is logged once per adapter and run. Searches used per adapter and
 run, the budget and whether it ran out are persisted in
@@ -191,11 +193,13 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
         hit = cache_get(adapter.name, query, media, n, ctx.settings, _variant(hints))
         if hit is not None:
             return hit
-        if not throttle.take_budget(run_id(ctx), adapter.name):
-            _note_once(ctx, f"budget_{adapter.name}", "source query budget spent, skipping searches "
-                       "(see qa_report.md)", source=adapter.name)
-            return []
-        if hints.get("prefer_cc") and not throttle.take_budget(run_id(ctx), adapter.name):
+        if not throttle.take_budget(run_id(ctx), adapter.name, shot.id):
+            if throttle.STATE.spent.get((run_id(ctx), adapter.name), 0) >= throttle.STATE.budget.get(
+                    adapter.name, throttle.STATE.budget.get("*", 0)):
+                _note_once(ctx, f"budget_{adapter.name}", "source query budget spent, skipping searches "
+                           "(see qa_report.md)", source=adapter.name)
+            return []  # otherwise this shot used its fair share; the rest stays for other shots
+        if hints.get("prefer_cc") and not throttle.take_budget(run_id(ctx), adapter.name, shot.id):
             hints.pop("prefer_cc")  # the last search of the budget runs the normal pass only
     try:
         results = adapter.search(query, media, n, ctx.settings, shot=shot, **hints)
@@ -329,13 +333,15 @@ class SearchPools:
 
 def search_shot(shot: Shot, adapters: list[SourceAdapter], media: Media, queries: list[str],
                 ctx: "StageContext", pools: SearchPools) -> dict[str, list[RawResult]]:
-    """Run every query on every adapter (in its pool); results merged per adapter."""
+    """Run every query on every adapter (in its pool); results merged per adapter. The shot rejoins the
+    fair share pools for these searches and leaves them when done (a re-query of one shot)."""
     cap = ctx.settings.sources.max_candidates
     jobs = [(a, q, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap), shot, ctx))
             for a in adapters if media in a.media for q in queries]
     merged: dict[str, list[RawResult]] = defaultdict(list)
     for a, _q, fut in jobs:
         merged[a.name].extend(fut.result())
+    throttle.release_shot(run_id(ctx), shot.id)
     return {name: _merge(results) for name, results in merged.items()}
 
 
@@ -493,22 +499,49 @@ def source_all(shotlist: ShotList, ctx: "StageContext", force: bool = False) -> 
     return shotlist
 
 
+def enough_results(per_adapter: dict[str, list[RawResult]], cap: int) -> bool:
+    """A shot has enough when its web sources (budgeted, unlike the local library) gave a full plan."""
+    keys = {raw_key(r) for name, res in per_adapter.items() if name not in UNCACHED for r in res}
+    return len(keys) >= cap + cap // 2
+
+
 def _search_all(targets: list[Shot], adapters: list[SourceAdapter], ctx: "StageContext",
                 pools: SearchPools) -> dict[str, dict[str, list[RawResult]]]:
-    """Searches for every target shot, all submitted before any result is awaited."""
+    """Searches for every target shot in query rounds that share each run budget fairly.
+
+    Round k sends every still searching shot's k-th query to every adapter, all submitted before any
+    result is awaited. After each round a shot whose web results already fill its plan leaves the
+    budget pools (throttle.release_shot), so its unused share goes to the shots that still need
+    candidates. Each shot spends at most its fair share of a budget (throttle.take_budget).
+    """
     cap = ctx.settings.sources.max_candidates
-    jobs: dict[str, list[tuple[str, Future]]] = {}
-    for s in targets:
-        media = shot_media(s)
-        jobs[s.id] = [(a.name, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap), s, ctx))
-                      for a in adapters if media in a.media for q in shot_queries(s)]
-    found: dict[str, dict[str, list[RawResult]]] = {}
-    for sid, futs in jobs.items():
-        merged: dict[str, list[RawResult]] = defaultdict(list)
-        for name, fut in futs:
-            merged[name].extend(fut.result())
-        found[sid] = {name: _merge(res) for name, res in merged.items()}
-    ctx.log.info("source searches", sent=throttle.spent(run_id(ctx)))
+    rid = run_id(ctx)
+    throttle.register_shots(rid, [a.name for a in adapters], [s.id for s in targets])
+    merged: dict[str, dict[str, list[RawResult]]] = {s.id: defaultdict(list) for s in targets}
+    queries = {s.id: shot_queries(s) for s in targets}
+    pending = list(targets)
+    for k in range(QUERIES_PER_SHOT):
+        jobs: list[tuple[str, str, Future]] = []
+        for s in pending:
+            if k >= len(queries[s.id]):
+                continue
+            media = shot_media(s)
+            jobs += [(s.id, a.name, pools.submit(a, _search_one, a, queries[s.id][k], media,
+                                                 _per_adapter_n(a, cap), s, ctx))
+                     for a in adapters if media in a.media]
+        for sid, name, fut in jobs:
+            merged[sid][name].extend(fut.result())
+        still: list[Shot] = []
+        for s in pending:
+            if k + 1 < len(queries[s.id]) and not enough_results(merged[s.id], cap):
+                still.append(s)
+            else:
+                throttle.release_shot(rid, s.id)
+        pending = still
+    for s in pending:
+        throttle.release_shot(rid, s.id)
+    found = {sid: {name: _merge(res) for name, res in per.items()} for sid, per in merged.items()}
+    ctx.log.info("source searches", sent=throttle.spent(rid))
     record_usage(ctx)
     return found
 
