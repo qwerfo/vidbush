@@ -13,6 +13,7 @@ import yaml
 from .batch_cli import BATCH_COMMANDS, add_batch_parsers
 from .config import Settings, load_settings
 from .models import Brief, InputMode, VideoFormat
+from .review_cli import REVIEW_COMMANDS, add_review_parsers
 
 AUDIO_EXT = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 
@@ -276,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
     ck.add_argument("project")
     ck.add_argument("--min-minutes", type=float, default=3.0)
     add_batch_parsers(sub)
+    add_review_parsers(sub)
     return p
 
 
@@ -315,6 +317,7 @@ COMMANDS = {"demo": cmd_demo, "run": cmd_run, "resume": cmd_resume, "serve": cmd
             "duration": _shot_cmd("set_duration", "operator set the duration", seconds="seconds"),
             "remove-overlay": _shot_cmd("remove_overlay", "operator removed the overlay")}
 COMMANDS.update(BATCH_COMMANDS)
+COMMANDS.update(REVIEW_COMMANDS)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
