@@ -22,7 +22,7 @@ RATE_LIMIT_MAX_WAIT_S = 60.0
 # model names in config/seats.yaml that are placeholders, never real model ids
 PLACEHOLDER_PREFIX = "your-"
 # provider types whose requests name a model, so an empty model means not configured
-MODEL_TYPES = {"openai_compat", "fal", "runware", "elevate", "algrow"}
+MODEL_TYPES = {"openai_compat", "anthropic", "fal", "runware", "elevate", "algrow"}
 
 
 class ProviderError(Exception):
@@ -54,7 +54,7 @@ class ProviderSpec:
     """One entry in a role's ordered provider list."""
 
     name: str
-    type: str  # openai_compat | elevenlabs | fal | runware | elevate | algrow | pexels | pixabay | tavily | serper | brave | mock
+    type: str  # openai_compat | anthropic | elevenlabs | algrow_tts | fal | runware | elevate | algrow | pexels | pixabay | tavily | serper | brave | mock
     model: str = ""
     base_url: str = ""
     api_key: str = ""
@@ -178,6 +178,7 @@ class CallResult:
     cost_usd: float = 0.0
     units: float = 0.0
     unit_kind: str = ""
+    credits: Optional[float] = None  # subscription credits the provider reported, recorded beside cost_usd
 
 
 class ProviderClient:
@@ -246,7 +247,8 @@ class ProviderClient:
                 return None
             HEALTH.mark_up(key)
             self._record(role, stage, spec, ok=True, latency=time.time() - t0, note=note,
-                         cost=res.cost_usd, units=res.units, unit_kind=res.unit_kind, mock=res.mock)
+                         cost=res.cost_usd, units=res.units, unit_kind=res.unit_kind, mock=res.mock,
+                         credits=res.credits)
             return res
 
     @staticmethod
@@ -263,10 +265,12 @@ class ProviderClient:
         return min(self.backoff_s * (2 ** n), RATE_LIMIT_MAX_WAIT_S)
 
     def _record(self, role: str, stage: str, spec: ProviderSpec, ok: bool, latency: float, note: str = "",
-                cost: float = 0.0, units: float = 0.0, unit_kind: str = "", mock: bool = False) -> None:
+                cost: float = 0.0, units: float = 0.0, unit_kind: str = "", mock: bool = False,
+                credits: Optional[float] = None) -> None:
         self.tracker.add(CostEntry(role=role, provider=spec.name, model=spec.model, stage=stage, ok=ok,
                                    latency_s=round(latency, 3), note=note, cost_usd=round(cost, 6),
-                                   units=units, unit_kind=unit_kind, mock=mock or spec.type == "mock"))
+                                   units=units, unit_kind=unit_kind, mock=mock or spec.type == "mock",
+                                   credits=credits))
 
 
 def http_error_to_exc(status: int, body: str, retry_after: Optional[str] = None) -> ProviderError:

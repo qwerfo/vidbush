@@ -17,6 +17,7 @@ from PIL import Image
 from . import llm as llm_mod
 from . import search as search_mod
 from . import tts as tts_mod
+from . import tts_algrow
 from .base import ProviderError, ProviderSpec
 from .http import get_json
 
@@ -85,6 +86,8 @@ def probe_spec(role: str, spec: ProviderSpec, voice_id: str = "") -> str:
     from .seats import LLM_ROLES, VISION_ROLES
     if spec.type == "elevenlabs":
         return _probe_tts(spec, voice_id or tts_mod.DEFAULT_VOICE_ID)
+    if spec.type == "algrow_tts":
+        return tts_algrow.probe(spec, PROBE_TIMEOUT_S)
     if role == "search":
         search_mod.search(spec, "test", n=1)
         return "search ok"

@@ -23,6 +23,7 @@ from . import llm as llm_mod
 from . import mock
 from . import search as search_mod
 from . import tts as tts_mod
+from . import tts_algrow
 from .base import HEALTH, CallResult, CostTracker, ProviderClient, ProviderError, ProviderSpec, is_placeholder_model
 
 ROLES = ["researcher", "writer", "director", "judge", "editor", "cheap_classifier", "image", "video",
@@ -34,6 +35,18 @@ _BAD_DETAILS_LOGGED: set[str] = set()
 # per role default LLM timeout in seconds; long form writing needs minutes, others keep the old default
 DEFAULT_LLM_TIMEOUT_S = 600.0  # live run 1: slow relays ran past 180 s on every text role
 ROLE_TIMEOUT_S = {"writer": 600.0}
+
+# TTS provider types to their synthesize function, one line per type so a new adapter registers with
+# one added line. Each takes (spec, text, voice_id, model, out_path, settings, cost_per_1k, language=,
+# previous_text=, next_text=) and returns CallResult value=(path, words or None[, model_id]).
+TTS_TYPES: dict[str, Any] = {
+    "elevenlabs": tts_mod.synthesize,
+    "algrow_tts": tts_algrow.synthesize,
+}
+# roles whose providers must name a registered type; an entry with an unknown type is skipped with one
+# warning per process (a config may name a type another branch is still adding, and must not fail)
+_TYPE_REGISTRIES: dict[str, dict[str, Any]] = {"tts": TTS_TYPES}
+_UNKNOWN_LOGGED: set[tuple[str, str]] = set()
 
 
 class Seats:
@@ -62,9 +75,14 @@ class Seats:
         roles = self.settings.seats.get("roles", {})
         provs = self.settings.seats.get("providers", {})
         out: list[ProviderSpec] = []
+        registry = _TYPE_REGISTRIES.get(role)
         for entry in roles.get(role, []) or []:
             pname = entry.get("provider", "")
             pdef = provs.get(pname, {})
+            ptype = pdef.get("type", "openai_compat")
+            if registry is not None and ptype not in registry and ptype != "mock":
+                self._warn_unknown_type(role, pname, ptype)
+                continue
             model = entry.get("model", "")
             if entry.get("model_env"):
                 model = self.settings.key(entry["model_env"]) or model
@@ -77,6 +95,13 @@ class Seats:
                 options={**pdef.get("options", {}), **entry.get("options", {})},
             ))
         return out
+
+    def _warn_unknown_type(self, role: str, provider: str, ptype: str) -> None:
+        with self._lock:
+            first = (provider, ptype) not in _UNKNOWN_LOGGED
+            _UNKNOWN_LOGGED.add((provider, ptype))
+        if first:
+            self.log.warn("provider type not registered, entry skipped", role=role, provider=provider, type=ptype)
 
     def is_real(self, role: str) -> bool:
         return any(p.configured for p in self.providers_for(role))
@@ -256,24 +281,40 @@ class Seats:
 
     # ------------------------------------------------------------ tts
 
-    def voice_id(self, voice: VoiceConfig) -> str:
-        """Brand voice id, else ELEVENLABS_VOICE_ID, else the premade default voice."""
+    def voice_id(self, voice: VoiceConfig, spec: Optional[ProviderSpec] = None) -> str:
+        """Voice ids differ by provider: the brand's voice_ids entry for this provider (by name, then
+        type), else the brand default voice_id, else ELEVENLABS_VOICE_ID, else the premade default."""
+        ids = getattr(voice, "voice_ids", None) or {}
+        if spec is not None:
+            vid = ids.get(spec.name) or ids.get(spec.type)
+            if vid:
+                return str(vid)
         return voice.voice_id or self.settings.key("ELEVENLABS_VOICE_ID") or tts_mod.DEFAULT_VOICE_ID
+
+    def tts_option(self, provider: str, key: str, default: Any = None) -> Any:
+        """One option of a configured tts provider by name (e.g. force_align), else default."""
+        for p in self.providers_for("tts"):
+            if p.name == provider:
+                return p.options.get(key, default)
+        return default
 
     def tts(self, text: str, voice: VoiceConfig, out_path: Path, stage: str, language: str = "",
             previous_text: str = "", next_text: str = "") -> tuple[Path, Optional[list[dict]], bool, str]:
         """Synthesize narration. Returns (audio_path, words or None, is_mock, engine)."""
         def fn(spec: ProviderSpec) -> CallResult:
             settings = {"stability": voice.stability, "similarity_boost": voice.similarity}
-            return tts_mod.synthesize(spec, text, self.voice_id(voice), voice.model, out_path.with_suffix(".mp3"),
-                                      settings, self.settings.cost.tts_per_1k_chars_usd, language=language,
-                                      previous_text=previous_text, next_text=next_text)
+            synth = TTS_TYPES.get(spec.type)
+            if synth is None:
+                raise ProviderError(f"tts provider type {spec.type} is not registered")
+            return synth(spec, text, self.voice_id(voice, spec), voice.model, out_path.with_suffix(".mp3"),
+                         settings, self.settings.cost.tts_per_1k_chars_usd, language=language,
+                         previous_text=previous_text, next_text=next_text)
 
         res = self._call("tts", stage, fn, lambda: mock.mock_tts(text, out_path), note="tts")
         if res.mock:
             path, words, engine = res.value
             return Path(path), words, True, f"mock_{engine}"
-        path, words = res.value
+        path, words = res.value[0], res.value[1]  # a third element (model id) is optional
         return Path(path), words, False, res.provider.name
 
     # ------------------------------------------------------------ search

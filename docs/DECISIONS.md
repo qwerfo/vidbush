@@ -102,3 +102,12 @@ One line each: the decision and why.
 - Batch pause is a flag in state.json read between projects; the running project always finishes. A per-item resume uses the existing stage resume, so an interrupted batch never recreates a project it already started.
 - Batch project ids come from file stems like run (unique suffix _2, _3 within a batch) and replace an existing project of the same id, matching run.
 - Batch CLI uses flat names (batch, batch-status, batch-pause, batch-resume) so `batch <folder>` stays a single positional command.
+
+## TTS seats, Anthropic provider, streaming, seat policy, source budgets (parallel1, branch tts-seats)
+
+- Algrow TTS is its own provider type algrow_tts in vidbush/providers/tts_algrow.py, ported from RadioPlay's gateway/adapters/algrow_tts.py (submit, poll, download), because an async job API does not fit the ElevenLabs request shape.
+- TTS adapters register in one dict in seats.py (TTS_TYPES, one line per type), so the laptop lane's elevate_tts adds one line and the two branches merge without touching the same lines.
+- A tts entry whose type is not registered is skipped with one warning per process, because a seat list may name a type another branch is still adding and a run must not fail for it.
+- Algrow is a subscription: calls are recorded as 0 USD and the reported credit count goes into a new optional CostEntry.credits field, so spend stays visible without inventing a dollar price.
+- Short Algrow scripts are padded with break tags to its 200 character floor, as RadioPlay does, because Algrow answers HTTP 400 below it; Vidbush chunks are whole scenes, so this only touches tiny scenes and single beat re-narrations.
+- Voice ids live per provider in brand voice.voice_ids (name, then type) with voice.voice_id as the one default, because the same voice has different ids on different TTS services.

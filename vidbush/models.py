@@ -644,7 +644,9 @@ class StyleProfile(Model):
 
 class VoiceConfig(Model):
     provider: str = "elevenlabs"
-    voice_id: str = ""
+    voice_id: str = ""  # default voice for every TTS provider without its own entry in voice_ids
+    # voice ids differ by provider: tts provider name (or type) -> voice id, e.g. {algrow_tts: "..."}
+    voice_ids: dict[str, str] = Field(default_factory=dict)
     model: str = "auto"
     stability: float = 0.45
     similarity: float = 0.8
@@ -736,6 +738,7 @@ class CostEntry(Model):
     ok: bool = True
     latency_s: float = 0.0
     note: str = ""
+    credits: Optional[float] = None  # subscription credits the provider reported (cost_usd stays 0)
 
 
 class CostReport(Model):
