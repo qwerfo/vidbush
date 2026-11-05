@@ -218,3 +218,65 @@ def test_seat_error_propagates_and_language_is_passed(make_ctx: Any) -> None:
     ctx.brand.language = "de"
     nar.narrate(_script(), ctx.brand, seats, ctx.settings, ctx.work, ctx.log)
     assert seats.kwargs == {"language": "de"}
+
+
+class NoTimingSeats(FakeRealSeats):
+    """A real TTS provider that returns audio only (Algrow style), with optional seat options."""
+
+    def __init__(self, options: Optional[dict[str, Any]] = None, keep_words: bool = False) -> None:
+        super().__init__()
+        self.options = options or {}
+        self.keep_words = keep_words
+        self.order: list[str] = []
+
+    def tts(self, text: str, voice: VoiceConfig, out_path: Path, stage: str,
+            **kw: Any) -> tuple[Path, Optional[list[dict]], bool, str]:
+        self.order.append(text)
+        path, words, _mock, _engine = super().tts(text, voice, out_path, stage, **kw)
+        return path, (words if self.keep_words else None), False, "algrow_tts"
+
+    def tts_option(self, provider: str, key: str, default: Any = None) -> Any:
+        return self.options.get(key, default) if provider == "algrow_tts" else default
+
+
+def _fake_whisper(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_transcribe(audio: Path, settings: Any, log: Any) -> list[Word]:
+        from vidbush.audio import align
+        regions, dur = align.speech_regions(audio)
+        return [Word(text=w.text.lower().strip(".,"), start=w.start, end=w.end)
+                for w in align.silence_align(align.script_tokens(_script()), regions, 0.0, dur)]
+    monkeypatch.setattr(transcribe, "transcribe_words", fake_transcribe)
+
+
+def test_tts_without_timestamps_is_aligned_against_the_script(make_ctx: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_whisper(monkeypatch)
+    ctx = make_ctx(mode="script", project_id="nar_al1")
+    n = nar.narrate(_script(), ctx.brand, NoTimingSeats(), ctx.settings, ctx.work, ctx.log)
+    assert n.aligned_by == "whisper" and n.provider == "algrow_tts"
+    from vidbush.audio import align
+    assert [w.text for w in n.words] == [t.text for t in align.script_tokens(_script())]
+    _assert_spans(n, ["b1", "b2", "b3"])
+
+
+def test_tts_with_timestamps_is_used_as_is(make_ctx: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_whisper(monkeypatch)
+    ctx = make_ctx(mode="script", project_id="nar_al2")
+    n = nar.narrate(_script(), ctx.brand, NoTimingSeats(keep_words=True), ctx.settings, ctx.work, ctx.log)
+    assert n.aligned_by == "provider"
+
+
+def test_force_align_ignores_provider_timestamps(make_ctx: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_whisper(monkeypatch)
+    ctx = make_ctx(mode="script", project_id="nar_al3")
+    seats = NoTimingSeats(options={"force_align": True}, keep_words=True)
+    n = nar.narrate(_script(), ctx.brand, seats, ctx.settings, ctx.work, ctx.log)
+    assert n.aligned_by == "whisper"
+    _assert_spans(n, ["b1", "b2", "b3"])
+
+
+def test_first_chunk_is_synthesized_before_the_rest(make_ctx: Any) -> None:
+    ctx = make_ctx(mode="script", project_id="nar_al4")
+    seats = NoTimingSeats()
+    chunks = nar.plan_chunks(_script(), per_beat=False)
+    nar.synthesize_all(chunks, ctx.brand, seats, ctx.settings, ctx.work / "narration", ctx.log)
+    assert seats.order[0] == chunks[0].text and len(seats.order) == 2

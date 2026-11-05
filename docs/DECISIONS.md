@@ -111,3 +111,7 @@ One line each: the decision and why.
 - Algrow is a subscription: calls are recorded as 0 USD and the reported credit count goes into a new optional CostEntry.credits field, so spend stays visible without inventing a dollar price.
 - Short Algrow scripts are padded with break tags to its 200 character floor, as RadioPlay does, because Algrow answers HTTP 400 below it; Vidbush chunks are whole scenes, so this only touches tiny scenes and single beat re-narrations.
 - Voice ids live per provider in brand voice.voice_ids (name, then type) with voice.voice_id as the one default, because the same voice has different ids on different TTS services.
+- Alignment routing: a TTS chunk without usable timings (none returned, drifting, mock, or a seat with force_align: true) is aligned against the script with the Aligner that narration_from_voiceover uses, inside the chunk's exact stitched window rather than across the whole file, because the window offsets are known exactly and only narrow the search.
+- force_align is a tts provider option read through Seats.tts_option, because unreliable timings are a property of one provider, not of a brand or a run.
+- The first narration chunk is synthesized alone before the rest run in parallel, so a refused model switches the run (sticky in each adapter) before any other chunk exists and a video never mixes models.
+- A narration whose chunks came from more than one tts provider is logged as a warning, not redone: redoing would ask the same failing seat order again.
