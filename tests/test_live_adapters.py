@@ -122,7 +122,7 @@ def test_malformed_json_is_asked_again_on_the_same_provider(monkeypatch) -> None
                      "usage": {"cost": 0.002}},
                     {"choices": [{"message": {"content": '{"ideas": []}'}}], "usage": {"cost": 0.003}}])
     monkeypatch.setattr(llm_mod, "post_json", lambda *a, **k: next(replies))
-    spec = ProviderSpec("p", "openai_compat", "m", base_url="https://r/v1", api_key="k")
+    spec = ProviderSpec("p", "openai_compat", "m", base_url="https://r/v1", api_key="k", options={"stream": False})
     res = llm_mod.chat(spec, "s", "u", want_json=True)
     assert res.value == {"ideas": []} and res.cost_usd == pytest.approx(0.005)
     broken = {"choices": [{"message": {"content": "{broken"}, "finish_reason": "stop"}], "usage": {}}

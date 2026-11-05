@@ -121,3 +121,6 @@ One line each: the decision and why.
 - Anthropic JSON is asked for in the system prompt and read with the shared loose parser, because the Messages API has no json_object mode and structured outputs would tie every caller to a schema.
 - The Anthropic price table is built in (USD per million, cache reads and 5 minute writes at their own rates) with options.price_per_mtok as the override, because the direct API returns no cost and has no price list endpoint.
 - LLM and TTS type registries map a type to its module and look the function up at call time, so a test or a hot fix that replaces llm.chat still takes effect.
+- Streaming is the default for every openai_compat provider (options.stream: false turns it off per provider), on Adam's rule that Wellflow and CloseRouter calls are faster and stop timing out when streamed.
+- A relay that rejects stream_options teaches a quirk and is streamed again without the usage request, so a strict relay does not lose streaming; its cost then comes from the price list or the estimate.
+- A streamed request answered with plain JSON is accepted as that JSON, because some relays ignore stream and a whole reply is still a whole reply.

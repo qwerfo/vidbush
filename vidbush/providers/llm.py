@@ -8,8 +8,10 @@ cap is only sent when the operator sets options.max_tokens for the provider
 (finish_reason "length" or "max_tokens") is continued once; a second cut
 raises RefusalError so the request moves to the next provider without marking
 this one down. A reply whose JSON does not parse is asked again once on the
-same provider (BadJSONError). options.stream asks for a streamed reply
-(relays that cut idle connections). When a reply carries no usage.cost the
+same provider (BadJSONError). Replies are streamed by default (options.stream,
+default true; false per provider): Adam measured that Wellflow and CloseRouter
+answer faster and stop timing out when streamed, because the relays send
+keepalive pings while generating and drop silent connections. When a reply carries no usage.cost the
 call is priced from the provider's own GET /models price list (or
 options.price_per_mtok), cached per base URL.
 """
@@ -43,6 +45,8 @@ _ADJUSTABLE = {
                     "system prompt is not supported", "developer instruction"),
     # a model that wants the newer token cap name: rename max_tokens to it
     "max_completion_tokens": ("max_completion_tokens",),
+    # a relay that rejects stream_options: stream without asking for the usage chunk
+    "no_stream_options": ("stream_options", "include_usage"),
 }
 _PARAM_QUIRK = {"response_format": "response_format", "temperature": "temperature",
                 "max_tokens": "max_completion_tokens"}
@@ -90,6 +94,14 @@ def _messages(system: str, user: Any, quirks: set[str]) -> list[dict[str, Any]]:
             return [{"role": "user", "content": f"{system}\n\n{user}"}]
         return [{"role": "user", "content": [{"type": "text", "text": system}] + list(user)}]
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def stream_enabled(spec: ProviderSpec) -> bool:
+    """options.stream, default true. Accepts booleans and the usual strings (false, 0, no, off)."""
+    raw = spec.options.get("stream", True)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in ("0", "false", "no", "off", "")
 
 
 def max_tokens_option(spec: ProviderSpec) -> Optional[int]:
@@ -175,8 +187,9 @@ def _post(spec: ProviderSpec, system: str, user: Any, want_json: bool, temperatu
             body["max_completion_tokens" if "max_completion_tokens" in q else "max_tokens"] = cap
         body.update(spec.options.get("extra_body", {}))
         try:
-            if spec.options.get("stream"):
-                return post_stream(url, body, headers, timeout=timeout)
+            if stream_enabled(spec):
+                return post_stream(url, body, headers, timeout=timeout,
+                                   include_usage="no_stream_options" not in q)
             return post_json(url, body, headers, timeout=timeout)
         except RefusalError as e:
             last = e
