@@ -94,22 +94,25 @@ def test_missed_rejects():
            selected_reject="burned_in_captions (prefilter: 3 of 4 keyframes)"),
         # missed: nothing on the pick says text
         _e("b", 1, "quality_problem", 80, rejects=["burned_in_text", "watermark_logo"], reason="nice canyon"),
-        # caught via the judge reason and via a flag
-        _e("c", 2, "quality_problem", 80, rejects=["watermark_logo"], reason="small channel_logo top right"),
+        # caught via a judge reject label and via a flag
+        _e("c", 2, "quality_problem", 80, rejects=["watermark_logo"], selected_reject="channel_logo"),
         _e("d", 3, "quality_problem", 80, rejects=["anachronism"], flags=["anachronism"]),
         # missed twice over
         _e("e", 4, "other", 80, rejects=["talking_head", "watermark_logo"]),
-        _e("f", 5, "good", 80, rejects=["repeated_clip"], notes="repeats a used segment"),
+        _e("f", 5, "good", 80, rejects=["repeated_clip"], flags=["segment_repeat"]),
+        # free text never counts: "no watermark" must not read as caught
+        _e("g", 6, "quality_problem", 80, rejects=["anachronism"], reason="no anachronism, no watermark"),
     ])
     c = calib(r, 70)
     rows = {m["reject"]: m for m in c["missed_rejects"]}
-    assert set(rows) == {"burned_in_text", "watermark_logo", "talking_head"}
+    assert set(rows) == {"burned_in_text", "watermark_logo", "talking_head", "anachronism"}
+    assert rows["anachronism"]["shots"] == [7]
     assert rows["watermark_logo"]["missed"] == 2 and rows["watermark_logo"]["ticked"] == 3
     assert rows["watermark_logo"]["shots"] == [2, 5]
     assert rows["burned_in_text"]["missed"] == 1 and rows["burned_in_text"]["ticked"] == 2
     assert rows["burned_in_text"]["shots"] == [2]
     assert rows["talking_head"]["tune"].startswith("judge.prefilter face")
-    assert [m["reject"] for m in c["missed_rejects"]] == ["watermark_logo", "burned_in_text", "talking_head"]
+    assert [m["reject"] for m in c["missed_rejects"]] == ["watermark_logo", "burned_in_text", "talking_head", "anachronism"]
 
 
 def test_missed_reject_without_snapshot():

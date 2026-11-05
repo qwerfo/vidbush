@@ -25,7 +25,7 @@ from . import store
 from .store import REJECT_LABELS, VERDICT_LABELS, Review, ShotReview
 
 RESOURCE_TYPES = {ShotType.footage, ShotType.footage_overlay, ShotType.image, ShotType.image_overlay}
-AI_TYPES = {ShotType.ai_image, ShotType.ai_video}
+AI_TYPES = {ShotType.ai_image}  # regenerate_ai makes a still, so an ai_video shot stays a comment
 QUERY_WORDS = 12  # a search query built from a comment keeps this many words
 AVOID_PROMPT_CHARS = 300  # an image prompt avoid note keeps this many characters
 
@@ -38,16 +38,57 @@ def _flat(text: str) -> str:
     return " ".join(no_em_dash(text).split())
 
 
+_WANT_RE = re.compile(r"\b(?:i want|we want|want|wanted|i need|we need|need|needs|should show|should be|show|use|"
+                      r"instead(?: of that)?(?: use| show)?|prefer|looking for|replace (?:it|this) with)\b[:,]?\s+(.*)",
+                      re.I)
+_STOP_RE = re.compile(r"\b(?:no|not|without|but not|avoid|never)\b.*$", re.I)
+
+
 def comment_query(comment: str) -> str:
-    """A search query from a comment: first sentence, at most QUERY_WORDS words, no quote marks."""
-    first = re.split(r"(?<=[.!?])\s+", _flat(comment))[0]
-    words = re.sub(r"[\"'`]", "", first).rstrip(".!?").split()
-    return " ".join(words[:QUERY_WORDS])
+    """A search query from what the comment asks for ("I want steam shovels, mud" -> "steam shovels, mud").
+
+    Only the wanted part becomes a query: a complaint ("this shows a modern ship") would search for the
+    very thing that was rejected, so a comment without a want phrase adds no query (it still goes to
+    must_avoid). At most QUERY_WORDS words, no quote marks, negations cut off.
+    """
+    for sentence in re.split(r"(?<=[.!?;])\s+", _flat(comment)):
+        m = _WANT_RE.search(sentence)
+        if not m:
+            continue
+        text = _STOP_RE.sub("", re.sub(r"[\"'`]", "", m.group(1))).strip(" ,.!?;:")
+        words = text.split()
+        if words:
+            return " ".join(words[:QUERY_WORDS])
+    return ""
 
 
-def _pending(e: ShotReview) -> bool:
-    """True when this entry has no fix queued since its last change."""
-    return not (e.fix and e.updated_at is not None and e.fix.applied_at >= e.updated_at)
+def _fix_failed(settings: Optional[Settings], project_id: str, e: ShotReview) -> bool:
+    """True when the job that carried this entry's fix failed, or its edit plan lists an error for the shot."""
+    if settings is None or e.fix is None or e.fix.job_id is None:
+        return False
+    try:
+        from sqlmodel import Session
+
+        from ..jobs import runner
+        with Session(runner.engine_for(settings)) as s:
+            job = s.get(runner.Job, e.fix.job_id)
+        if job is not None and job.status == "failed":
+            return True
+        from ..editor.ops import read_plan
+        plan_ = read_plan(settings, project_id)
+        if plan_.get("job_id") == e.fix.job_id:
+            return any(e.shot_id in str(err) for err in plan_.get("errors", []))
+    except Exception:  # noqa: BLE001  unknown job state: trust the record
+        return False
+    return False
+
+
+def _pending(e: ShotReview, settings: Optional[Settings] = None, project_id: str = "") -> bool:
+    """True when this entry has no fix queued since its verdict or rejects last changed (or that fix failed)."""
+    judged = e.judged_at or e.updated_at
+    if not (e.fix and judged is not None and e.fix.applied_at >= judged):
+        return True
+    return _fix_failed(settings, project_id, e)
 
 
 def _resource_op(shot: Shot, avoid: list[str], queries: list[str], reason: str, why: str) -> EditOp:
@@ -76,6 +117,8 @@ def op_for(shot: Shot, e: ShotReview) -> tuple[Optional[EditOp], str]:
         if shot.type in AI_TYPES:
             why = f"review: shot {n} wrong picture, new AI image"
             return _ai_op(shot, comment or "the previous image, it did not fit the narration", why), why
+        if shot.type == ShotType.ai_video:
+            return None, "AI video: regenerating would turn it into a still, edit by hand"
         return None, "motion graphic: a wrong picture needs a hand edit"
     if e.verdict == "quality_problem":
         if not e.rejects:
@@ -87,6 +130,8 @@ def op_for(shot: Shot, e: ShotReview) -> tuple[Optional[EditOp], str]:
             return _resource_op(shot, avoid, [], f"operator review: {', '.join(labels)}", why), why
         if shot.type in AI_TYPES:
             return _ai_op(shot, ", ".join(avoid), why), why
+        if shot.type == ShotType.ai_video:
+            return None, "AI video: regenerating would turn it into a still, edit by hand"
         return None, "motion graphic: a quality problem needs a hand edit"
     if e.verdict == "wrong_timing":
         return None, "wrong timing: open the duration editor"
@@ -112,7 +157,7 @@ def plan(settings: Settings, project_id: str, review: Optional[Review] = None,
         row = {"shot_id": shot.id, "number": shot.index + 1, "start": shot.start, "duration": shot.duration,
                "type": shot.type.value, "verdict": e.verdict, "verdict_label": VERDICT_LABELS[e.verdict],
                "comment": e.comment, "rejects": list(e.rejects)}
-        if not _pending(e):
+        if not _pending(e, settings, project_id):
             skipped.append({**row, "why": f"fix already queued ({e.fix.op if e.fix else ''})"})
             continue
         op, why = op_for(shot, e)

@@ -42,7 +42,7 @@ JUDGE_EQUIVALENTS: dict[str, tuple[str, ...]] = {
     "repeated_clip": ("segment_repeat", "repeats a used segment", "repeated"),
 }
 
-_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS: dict[str, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
@@ -55,6 +55,8 @@ class RejectedCandidate(Model):
 class ShotSnapshot(Model):
     """What the shot was when the operator last changed its review."""
     type: str
+    number: int = 0  # 1-based shot number in the reviewed render
+    beat_id: str = ""
     start: float
     end: float
     duration: float
@@ -88,6 +90,7 @@ class ShotReview(Model):
     rejects: list[str] = Field(default_factory=list)
     created_at: Optional[float] = None
     updated_at: Optional[float] = None
+    judged_at: Optional[float] = None  # last change of verdict or rejects (a comment edit alone does not count)
     snapshot: Optional[ShotSnapshot] = None
     fix: Optional[FixRecord] = None
 
@@ -157,9 +160,9 @@ def load_shotlist(settings: Settings, project_id: str) -> Optional[ShotList]:
     return None
 
 
-def _lock(project_id: str) -> threading.Lock:
+def _lock(project_id: str) -> threading.RLock:
     with _LOCKS_GUARD:
-        return _LOCKS.setdefault(project_id, threading.Lock())
+        return _LOCKS.setdefault(project_id, threading.RLock())
 
 
 def snapshot(shot: Shot) -> ShotSnapshot:
@@ -170,7 +173,7 @@ def snapshot(shot: Shot) -> ShotSnapshot:
     rejected = [RejectedCandidate(id=c.id, source=c.source.value, reason=c.reject_reason)
                 for c in shot.candidates if c.reject_reason and (not sel or c.id != sel.id)]
     return ShotSnapshot(
-        type=shot.type.value, start=shot.start, end=shot.end, duration=shot.duration, intent=shot.intent,
+        type=shot.type.value, number=shot.index + 1, beat_id=shot.beat_id, start=shot.start, end=shot.end, duration=shot.duration, intent=shot.intent,
         selected=shot.selected, source=sel.source.value if sel else "", site=host or (sel.source.value if sel else ""),
         licence=sel.licence if sel else "", title=sel.title if sel else "", url=url,
         judge_score=shot.judge_score, judge_reason=sel.judge_reason if sel else "", judge_notes=shot.judge_notes,
@@ -183,10 +186,18 @@ def reconcile(review: Review, shotlist: Optional[ShotList]) -> Review:
         return review
     by_id = {e.shot_id: e for e in review.shots}
     ordered: list[ShotReview] = []
+    archived: list[ShotReview] = []
     for s in shotlist.shots:
-        e = by_id.pop(s.id, None) or ShotReview(shot_id=s.id)
+        e = by_id.pop(s.id, None)
+        if e is not None and not e.in_shotlist and not _same_shot(e, s):
+            # a split reused the id of a shot that left the list: keep the old review archived
+            e.shot_id = f"{e.shot_id}~{int(e.updated_at or e.created_at or 0)}"
+            archived.append(e)
+            e = None
+        e = e or ShotReview(shot_id=s.id)
         e.index, e.in_shotlist = s.index, True
         ordered.append(e)
+    ordered += archived
     for e in by_id.values():
         e.in_shotlist = False
         ordered.append(e)
@@ -194,14 +205,29 @@ def reconcile(review: Review, shotlist: Optional[ShotList]) -> Review:
     return review
 
 
+def _same_shot(e: ShotReview, s: Shot) -> bool:
+    """True when a returning entry still describes this shot (same beat, pick and length)."""
+    sn = e.snapshot
+    if sn is None:
+        return not e.touched
+    return sn.beat_id == s.beat_id and sn.selected == s.selected and abs(sn.duration - s.duration) < 0.05
+
+
 def load(settings: Settings, project_id: str, shotlist: Optional[ShotList] = None) -> Review:
     """review.json reconciled with the current shot list (an empty review when there is no file yet)."""
     path = review_path(settings, project_id)
-    if path.exists():
-        review = Review.model_validate(read_json(path))
-    else:
-        review = Review(project_id=project_id)
-    return reconcile(review, shotlist if shotlist is not None else load_shotlist(settings, project_id))
+    if not path.exists():
+        return reconcile(Review(project_id=project_id),
+                         shotlist if shotlist is not None else load_shotlist(settings, project_id))
+    review = Review.model_validate(read_json(path))
+    before = [(e.shot_id, e.in_shotlist) for e in review.shots]
+    review = reconcile(review, shotlist if shotlist is not None else load_shotlist(settings, project_id))
+    if any(not e.in_shotlist for e in review.shots) and \
+            sorted(before) != sorted((e.shot_id, e.in_shotlist) for e in review.shots):
+        # remember that a shot left the list, so a later split reusing its id starts a fresh entry
+        with _lock(project_id):
+            write_json(path, review)
+    return review
 
 
 def save(settings: Settings, review: Review) -> Path:
@@ -253,6 +279,7 @@ def update_shot(settings: Settings, project_id: str, shot_ref: Any, verdict: Any
         shot = _resolve(sl, shot_ref)
         review = load(settings, project_id, sl)
         e = review.entry(shot.id)
+        before = (e.verdict, list(e.rejects))
         if verdict is not _UNSET:
             e.verdict = _clean_verdict(verdict)  # type: ignore[assignment]
         if comment is not _UNSET:
@@ -260,9 +287,15 @@ def update_shot(settings: Settings, project_id: str, shot_ref: Any, verdict: Any
         if rejects is not _UNSET:
             e.rejects = _clean_rejects(rejects)
         now = time.time()
+        judged = (e.verdict, list(e.rejects)) != before
+        fixed_since = e.fix is not None and e.fix.applied_at >= (e.judged_at or e.updated_at or 0)
         e.created_at = e.created_at or now
         e.updated_at = now
-        e.snapshot = snapshot(shot)
+        if judged:
+            e.judged_at = now
+        # after a fix the shot shows a new pick; a comment edit alone must not pin the old verdict on it
+        if judged or e.snapshot is None or not fixed_since:
+            e.snapshot = snapshot(shot)
         save(settings, review)
         return review, e
 

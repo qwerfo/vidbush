@@ -23,7 +23,7 @@ def _shot(typ: ShotType) -> Shot:
 
 
 RESOURCE = ["footage", "footage_overlay", "image", "image_overlay"]
-AI = ["ai_image", "ai_video"]
+AI = ["ai_image"]
 # (verdict, rejects) -> expected op per type group: change_type, regenerate_ai or None
 CASES = [
     ("wrong_picture", [], {"resource": "change_type", "ai": "regenerate_ai", "motion": None}),
@@ -59,7 +59,7 @@ def test_wrong_picture_resource_args():
                    comment=f"Too modern {EM} the boats have outboard motors. Show 1931 canyon walls.")
     op, _ = fixes.op_for(shot, e)
     assert op.args["add_must_avoid"] == ["Too modern, the boats have outboard motors. Show 1931 canyon walls."]
-    assert op.args["add_queries"] == ["Too modern, the boats have outboard motors"]
+    assert op.args["add_queries"] == ["1931 canyon walls"]  # the wanted part, never the complaint
     assert op.args["reject_selected"] == "operator review: wrong picture"
     assert EM not in op.reason
 
@@ -87,17 +87,18 @@ def test_quality_problem_rejects_to_avoid():
     assert "add_queries" not in op.args
     assert op.args["reject_selected"] == "operator review: burned-in text, watermark or logo"
     assert why == "review: shot 9 quality problem (burned-in text, watermark or logo)"
-    ai, _ = fixes.op_for(_shot(ShotType.ai_video), e)
+    ai, _ = fixes.op_for(_shot(ShotType.ai_image), e)
     assert ai.args["prompt_delta"] == "Avoid: burned-in text, subtitles or captions, watermark or channel logo"
 
 
 @pytest.mark.parametrize("comment,query", [
-    ("Too modern. Show 1931 canyon walls.", "Too modern"),
-    ("Show the \"Six Companies\" trucks! Not cars.", "Show the Six Companies trucks"),
-    ("one two three four five six seven eight nine ten eleven twelve thirteen fourteen",
+    ("Too modern. Show 1931 canyon walls.", "1931 canyon walls"),
+    ("Show the \"Six Companies\" trucks! Not cars.", "the Six Companies trucks"),
+    ("I want one two three four five six seven eight nine ten eleven twelve thirteen fourteen",
      "one two three four five six seven eight nine ten eleven twelve"),
-    ("  multi\nline   spaced  text  ", "multi line spaced text"),
-    ("Is this 1931? Looks later.", "Is this 1931"),
+    ("  need\nline   spaced  text  ", "line spaced text"),
+    ("Is this 1931? Looks later.", ""),
+    ("This is generic harbour footage. I want steam shovels and mud, no modern ships.", "steam shovels and mud"),
     ("", ""),
 ])
 def test_comment_query(comment, query):
@@ -145,6 +146,9 @@ def test_plan_skips_queued_until_changed(settings, root):
     assert "Already queued: 1" in fixes.plan_text(again)
     time.sleep(0.01)
     store.update_shot(settings, PID, 1, comment="still wrong")
+    assert fixes.plan(settings, PID)["ops"] == []  # a comment edit alone does not re-arm
+    store.update_shot(settings, PID, 1, verdict="good")
+    store.update_shot(settings, PID, 1, verdict="wrong_picture")
     assert len(fixes.plan(settings, PID)["ops"]) == 1
 
 
@@ -241,9 +245,9 @@ def test_apply_planned_change_type_does_not_reselect_old_pick(settings, monkeypa
     rejected = {c.id: c.reject_reason for c in after.candidates}
     assert rejected[old] == "operator review: wrong picture"
     assert "Not this dam. Show Hoover Dam concrete pour." in after.must_avoid
-    assert "Not this dam" in after.queries
+    assert "Hoover Dam concrete pour" in after.queries
     assert seen["must_avoid"][-1] == "Not this dam. Show Hoover Dam concrete pour."
-    assert "Not this dam" in seen["queries"]
+    assert "Hoover Dam concrete pour" in seen["queries"]
 
 
 def test_apply_planned_change_type_with_mock_judge(settings, monkeypatch, tmp_path):

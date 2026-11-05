@@ -229,6 +229,10 @@ def test_fixes_plan_apply_and_skip(client, settings, root):
     assert again["ops"] == [] and [s["shot_id"] for s in again["skipped"]] == ["shot_001"]
     time.sleep(0.01)
     put(client, "shot_001", comment="Still wrong: no dam workers visible.")
+    # a comment edit alone does not re-arm the fix (it may be a typo fix on the old pick's review)
+    assert client.get(f"{BASE}/fixes").json()["ops"] == []
+    time.sleep(0.01)
+    put(client, "shot_001", rejects=["anachronism"])
     third = client.get(f"{BASE}/fixes").json()
     assert [o["args"]["shot_id"] for o in third["ops"]] == ["shot_001"] and third["skipped"] == []
 

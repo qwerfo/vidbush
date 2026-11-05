@@ -22,7 +22,8 @@ def clock(sec: Optional[float]) -> str:
 
 
 def _num(e: ShotReview) -> int:
-    return e.index + 1
+    """The shot number in the reviewed render (snapshot), so it matches the snapshot time."""
+    return e.snapshot.number if e.snapshot and e.snapshot.number else e.index + 1
 
 
 def _start(e: ShotReview) -> Optional[float]:

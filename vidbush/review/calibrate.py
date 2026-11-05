@@ -13,14 +13,18 @@ reason, judge reason or flags carry none of the equivalent judge labels).
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Any, Optional
 
 from ..config import Settings
 from . import store
-from .store import JUDGE_EQUIVALENTS, REJECT_LABELS, REJECTS, Review, ShotReview
+from .store import REJECT_LABELS, REJECTS, Review, ShotReview
 
 WRONG = ("wrong_picture", "quality_problem")
+JUDGE_LABELS: dict[str, tuple[str, ...]] = {  # judge reject labels and shot flags per review checklist item
+    "burned_in_text": ("burned_in_captions",), "watermark_logo": ("watermark", "channel_logo"),
+    "talking_head": ("talking_head",), "anachronism": ("anachronism",), "repeated_clip": ("segment_repeat",)}
 PREFILTER_HINT = {"burned_in_text": "judge.prefilter text (text_min_keyframes, text_min_width, text_min_confidence)",
                   "watermark_logo": "judge.prefilter logo (logo_min_area, logo_max_diff); semi-transparent marks need the vision judge",
                   "talking_head": "judge.prefilter face (face_min_area, face_min_share)",
@@ -56,8 +60,10 @@ def _caught(e: ShotReview, reject: str) -> bool:
     sn = e.snapshot
     if sn is None:
         return False
-    text = " ".join([sn.selected_reject or "", sn.judge_reason, sn.judge_notes, " ".join(sn.flags)]).lower()
-    return any(k.lower() in text for k in JUDGE_EQUIVALENTS[reject])
+    # only structured labels count: free text such as "no watermark visible" would read as caught
+    labels = [x.strip().lower() for x in re.split(r"[;,]", re.sub(r"\(.*?\)", "", sn.selected_reject or ""))]
+    labels += [f.lower() for f in sn.flags]
+    return any(lab in JUDGE_LABELS[reject] for lab in labels if lab)
 
 
 def calibrate(review: Review, threshold: float) -> dict[str, Any]:

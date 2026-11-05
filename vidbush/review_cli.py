@@ -130,8 +130,10 @@ def cmd_review_fixes(settings: Settings, args: argparse.Namespace) -> int:
     if not args.apply or not p["ops"]:
         return 0
     ops = [EditOp.model_validate(o) for o in p["ops"]]
-    store.mark_fixed(settings, args.project, p["ops"], None)
     result = apply_and_render(settings, args.project, ops, echo=not args.quiet)
+    failed = " ".join(result.errors)
+    done = [o for o in p["ops"] if str(o["args"].get("shot_id")) not in failed]
+    store.mark_fixed(settings, args.project, done, None)
     for line in result.applied:
         print(f"applied {line}")
     for line in result.errors:
