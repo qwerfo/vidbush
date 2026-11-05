@@ -448,7 +448,7 @@ export default function Review({ id }) {
             <h1>Review: {project.title || id}</h1>
           </div>
           <div className="review-progress" aria-live="polite">
-            <strong>{review.reviewed}</strong> of {review.total} shots reviewed
+            <span><strong>{review.reviewed}</strong> of {review.total} shots reviewed</span>
             <div className="mini-progress wide"><span style={{ width: `${pct}%` }} /></div>
             <span className={`small ${saveState.kind === "error" ? "bad" : "muted"}`}>{saveText}</span>
           </div>
