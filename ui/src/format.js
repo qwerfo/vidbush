@@ -25,7 +25,7 @@ export const TYPE_LABELS = {
 
 export function clock(sec) {
   if (sec === null || sec === undefined || Number.isNaN(sec)) return "-";
-  const s = Math.max(0, sec);
+  const s = Math.round(Math.max(0, sec) * 10) / 10;
   const m = Math.floor(s / 60);
   const r = s - m * 60;
   return `${m}:${r < 10 ? "0" : ""}${r.toFixed(1)}`;
