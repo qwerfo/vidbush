@@ -102,3 +102,35 @@ One line each: the decision and why.
 - Batch pause is a flag in state.json read between projects; the running project always finishes. A per-item resume uses the existing stage resume, so an interrupted batch never recreates a project it already started.
 - Batch project ids come from file stems like run (unique suffix _2, _3 within a batch) and replace an existing project of the same id, matching run.
 - Batch CLI uses flat names (batch, batch-status, batch-pause, batch-resume) so `batch <folder>` stays a single positional command.
+
+## Review sheet (parallel2, branch review-page)
+
+- The review lives in output/<id>/review.json, one entry per shot in shot list order plus the project comment. Unreviewed shots are entries with verdict null, so the file always has one object per shot.
+- Comments have no length limit anywhere: no max_length in the pydantic models or the API bodies, no maxlength on the textareas, and the export quotes every line. This is Adam's standing rule for review sheets.
+- Each shot entry stores a snapshot of the shot (type, intent, pick, site, licence, judge score and reasons, rejected candidates) taken at its last change, so the export and the calibration describe the pick Adam actually saw even after Apply fixes re-sources the shot.
+- A shot that leaves the shot list (merge, split) keeps its entry with in_shotlist false and is not counted in "Reviewed: n of m".
+- "Reviewed" means a verdict is set. Ticking rejects or typing a comment alone does not count.
+- The hard reject checklist maps onto judge labels for calibration: burned-in text to burned_in_captions, watermark or logo to watermark and channel_logo, talking head, anachronism, repeated clip to the segment_repeat flag.
+- Export replaces em dashes inside comments with a comma pause (no_em_dash); review.json keeps Adam's text verbatim.
+- review.md also lists shots marked not good without a comment, in a table, so an AI reading it cold sees every problem, not only the commented ones.
+- The re-source fix uses the existing change_type path (_resource) with three new optional args: add_must_avoid, add_queries, reject_selected. No new EditOp name, so the chat editor, CLI op and edit log keep one vocabulary.
+- reject_selected marks the reviewed pick rejected (score 0) before re-sourcing; without it the judge would usually pick the same candidate again.
+- When must_avoid grows, every unrejected candidate loses its score so the judge rescores it against the new must_avoid. This costs a few vision calls for one shot and is the only way the new avoid note can change the pick.
+- The comment goes to must_avoid in full. Only the part that says what Adam wants (after want, need, show, use, instead, prefer; negations cut off; at most 12 words) goes to queries. The literal spec said the comment goes to queries too, but the audit showed a complaint such as "this is generic harbour footage" then searches for the very picture he rejected, so a comment with no want phrase adds no query.
+- Wrong picture on an AI image maps to regenerate_ai with "Avoid: <comment>" (cut to 300 characters for the image prompt). On an AI video or a motion graphic it stays a comment: regenerate_ai would turn a video into a still, and a graphic has no safe automatic edit.
+- Quality problem maps to a re-source only when a hard reject is ticked, with that reject's plain words added to must_avoid. Without a tick it stays a comment.
+- Wrong timing produces no op. The plan lists those shots with an "Open duration editor" link to #/p/<id>/<shot_id>, which opens the existing shot panel with the duration box focused.
+- Apply fixes records the queued op on each shot entry. A shot is planned again only when its verdict or rejects change after that (a comment edit alone may be a typo fix on the old review), or when the fix job failed or its edit plan lists an error for the shot. The CLI marks only the ops that applied.
+- After a fix, a comment edit keeps the old snapshot, so the export and calibration never pin the old verdict on a pick Adam has not seen. Setting the verdict again reviews the new pick; the row says so.
+- Calibration reads only structured labels on the pick (its reject labels and flags) to decide whether the judge caught a ticked reject. Free text reasons also say things like "no watermark visible".
+- A review entry is matched to a shot by id, beat, pick and length. When a shot leaves the list its entry is kept with in_shotlist false (saved on the next load); if a later split reuses that id for a different piece, the old entry is archived as <id>~<time> and the new piece starts unreviewed.
+- Export numbers and times come from the snapshot, so they describe the render Adam reviewed even after edits renumbered the shots.
+- Apply posts exactly the ops shown in the preview (like the chat panel) to POST /review/fixes, which enqueues one apply_ops job.
+- Calibration counts only picture verdicts: good against wrong picture and quality problem. Wrong timing and other say nothing about the judge. Shots without a judge score are skipped.
+- Suggested threshold: the whole number 0 to 100 with the fewest disagreements; ties go to the value closest to the current threshold, then to the stricter one. Simple, explainable and stable on small samples.
+- A ticked reject counts as missed by the judge when the reviewed pick's reject reason, judge reason, notes and flags carry none of its equivalent labels. Each missed reject names the prefilter setting to tune.
+- Every Review page action is a CLI subcommand too: review-set, review-comment, review-export, review-summary, review-fixes (with --apply) and review-calibrate.
+- The review page docks the player in the lower right corner once it scrolls out of view, so the video stays visible while reviewing row 80 of 100. The same video element moves, so playback never restarts.
+- Arrow keys move between shots and seek the player to the shot start; number keys 1 to 5 toggle the verdict; Space plays or pauses; c focuses the comment; Esc leaves a text box.
+- Comment autosave is debounced 600 ms and flushed on blur, before export, before Apply fixes and on page leave. Saves for one shot run in order so a slow request never overwrites newer text.
+- The demo render for the screenshot ran with --offline: the default config reached YouTube from this sandbox, and the brief allows no network beyond GitHub and package registries.

@@ -697,7 +697,7 @@ class EditOp(Model):
     set_duration: shot_id, seconds
     split_shot: shot_id, at (seconds into shot)
     merge_shots: a, b
-    change_type: shot_id, type
+    change_type: shot_id, type, optional add_must_avoid, add_queries (lists), reject_selected (reason)
     set_overlay: shot_id, motion_spec
     remove_overlay: shot_id
     reorder: shot_id, new_index

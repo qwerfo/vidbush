@@ -106,7 +106,17 @@ def get_project(project_id: str, settings: Settings = Depends(get_settings)) -> 
     data["active_job"] = job_dict(job) if job else None
     last = root / "work" / "last_edit.json"
     data["last_edit"] = read_json(last) if last.exists() else None
+    data["review"] = _review_progress(settings, project_id)
     return data
+
+
+def _review_progress(settings: Settings, project_id: str) -> Optional[dict[str, int]]:
+    """{"reviewed": n, "total": m} once output/<id>/review.json exists, else None."""
+    from ..review.store import progress
+    try:
+        return progress(settings, project_id)
+    except Exception:  # noqa: BLE001  a broken review file must not break the project page
+        return None
 
 
 def _outputs(project_id: str, root: Path) -> dict[str, Any]:

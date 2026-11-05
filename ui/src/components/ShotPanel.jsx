@@ -11,11 +11,18 @@ function Preview({ cand, fallback }) {
 }
 
 // Details and actions for one shot. Every action enqueues an apply_ops job via onJob(jobId).
-export default function ShotPanel({ projectId, shot, busy, onJob, onClose }) {
+export default function ShotPanel({ projectId, shot, busy, onJob, onClose, focusDuration = false }) {
   const [prompt, setPrompt] = useState("");
   const [secs, setSecs] = useState(shot.duration);
   const [error, setError] = useState(null);
   const fileRef = useRef(null);
+  const durRef = useRef(null);
+  useEffect(() => {
+    if (focusDuration && durRef.current) {
+      durRef.current.focus();
+      durRef.current.select();
+    }
+  }, [focusDuration, shot.id]);
   useEffect(() => {
     setSecs(shot.duration);
     setError(null);
@@ -70,7 +77,7 @@ export default function ShotPanel({ projectId, shot, busy, onJob, onClose }) {
         </form>
         <form className="action inline" onSubmit={(e) => { e.preventDefault(); act(() => api.duration(projectId, shot.id, Number(secs)), "Changing duration"); }}>
           <label className="inline-label">Duration (s)
-            <input type="number" min={0.6} max={60} step={0.1} value={secs} onChange={(e) => setSecs(e.target.value)} />
+            <input ref={durRef} type="number" min={0.6} max={60} step={0.1} value={secs} onChange={(e) => setSecs(e.target.value)} />
           </label>
           <button className="btn" disabled={busy || Number(secs) === shot.duration}>Edit duration</button>
         </form>

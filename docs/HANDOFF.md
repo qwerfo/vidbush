@@ -511,5 +511,67 @@ entry's `options`): `max_tokens` is an optional output cap, unset by default
 roles 180 s). A reply cut off by the length limit is continued once and
 joined; if it is cut off again the request moves to the next provider.
 
+## 9. Reviewing a render
+
+After every real render, review it in the tool instead of a voice note. The
+review becomes structured data the next tuning session reads.
+
+**In the UI.** Open the project and press **Review** (or go to
+http://localhost:8080/#/review/<project_id>). The video plays at the top; below
+it is one row per shot with its thumbnail, start time (click to seek), type,
+intent, selected source (site and licence), judge score and flags, and the
+reasons its rejected candidates were turned down. For each shot pick a verdict
+(good, wrong picture, wrong timing, quality problem, other), tick any hard
+reject (burned-in text, watermark or logo, talking head, anachronism, repeated
+clip) and write a comment. Comments have no length limit. The header shows
+"n of m reviewed" and has a project comment box. Everything saves by itself.
+
+Keys: Left and Right move between shots (the player seeks there), 1 to 5 set
+the verdict (press again to clear), c jumps to the comment, Space plays or
+pauses, Esc leaves a text box. The project page shows "Reviewed: n of m".
+
+**Apply fixes** previews the edits first, like chat revisions: wrong picture
+re-sources the shot with your comment added to its must_avoid and search
+queries (an AI image is regenerated with your comment as an avoid note);
+quality problem with a hard reject ticked re-sources with that reject added
+to must_avoid; wrong timing gets an "Open duration editor" link. Everything
+else stays a comment. Only changed segments re-render.
+
+**Files.** `output/<id>/review.json` (one object per shot plus the project
+comment, with timestamps) and `output/<id>/review.md` (Export button: verdict
+counts, hard rejects with timestamps, then every commented shot in order;
+hand this file to the next tuning session).
+
+**CLI** (Windows: same commands in PowerShell; Docker: prefix with
+`docker compose exec vidbush`):
+
+```bash
+python -m vidbush review-summary <id>
+```
+
+```bash
+python -m vidbush review-export <id>
+```
+
+```bash
+python -m vidbush review-calibrate <id>
+```
+
+```bash
+python -m vidbush review-fixes <id>
+```
+
+`review-fixes <id> --apply` applies them and re-renders. `review-set <id>
+<shot> --verdict wrong_picture --comment "..." --reject watermark_logo` and
+`review-comment <id> "..."` do what the page does (`--comment -` reads stdin).
+
+**Calibration.** `review-calibrate` lists every shot you marked wrong picture
+or quality problem that the judge scored at or above `judge.threshold`, every
+shot you marked good below it, a suggested threshold (fewest disagreements)
+and the hard rejects the judge missed most often, each with the
+`judge.prefilter` setting to tune. Wrong timing and other are left out: they
+say nothing about the judge. Change `judge.threshold` and `judge.prefilter` in
+`config/vidbush.yaml` from this output after each run.
+
 See also: `docs/ARCHITECTURE.md` (stage graph, contracts, cache rule),
 `docs/DECISIONS.md`, `docs/PROGRESS.md`, `docs/BLOCKERS.md`, `docs/SPEC.md`.

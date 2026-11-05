@@ -5,6 +5,7 @@ import Project from "./pages/Project.jsx";
 import Brands from "./pages/Brands.jsx";
 import SettingsPage from "./pages/Settings.jsx";
 import Queue from "./pages/Queue.jsx";
+import Review from "./pages/Review.jsx";
 
 const NAV = [
   ["projects", "Projects"],
@@ -14,10 +15,11 @@ const NAV = [
 ];
 
 export default function App() {
-  const [page, arg] = useRoute();
-  const active = page === "p" ? "projects" : page;
+  const [page, arg, sub] = useRoute();
+  const active = page === "p" || page === "review" ? "projects" : page;
   let body;
-  if (page === "p" && arg) body = <Project id={arg} key={arg} />;
+  if (page === "p" && arg) body = <Project id={arg} key={arg} initialShot={sub} />;
+  else if (page === "review" && arg) body = <Review id={arg} key={arg} />;
   else if (page === "brands") body = <Brands initial={arg} />;
   else if (page === "settings") body = <SettingsPage />;
   else if (page === "queue") body = <Queue initial={arg} key={arg || "queue"} />;
