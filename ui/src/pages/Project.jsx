@@ -25,7 +25,7 @@ function isTyping(el) {
   return el && (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable);
 }
 
-export default function Project({ id }) {
+export default function Project({ id, initialShot }) {
   const [live, setLive] = useState(true);
   const [project, error, reloadProject] = usePoll(() => api.project(id), [id], live ? 2000 : 0);
   const [shots, setShots] = useState(null);
@@ -37,6 +37,7 @@ export default function Project({ id }) {
   const player = useRef(null);
   const resumeAt = useRef(null);
   const threshold = useThreshold();
+  const [focusDuration, setFocusDuration] = useState(false);
 
   const loadShots = useCallback(() => api.shots(id).then(setShots).catch(() => setShots(null)), [id]);
 
@@ -65,6 +66,18 @@ export default function Project({ id }) {
 
   const list = shots ? shots.shots : [];
   const shot = list.find((s) => s.id === shotId) || null;
+
+  // #/p/<id>/<shot_id> (the review page's "Open duration editor") opens that shot's panel
+  useEffect(() => {
+    if (!initialShot || !list.length) return;
+    const s = list.find((x) => x.id === initialShot);
+    if (s) {
+      setShotId(s.id);
+      setTab("shot");
+      setFocusDuration(true);
+      if (player.current) player.current.currentTime = s.start + 0.01;
+    }
+  }, [initialShot, list.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pick = useCallback((s) => {
     setShotId(s.id);
@@ -125,6 +138,12 @@ export default function Project({ id }) {
           <div className="muted small">{project.id}, {project.input_mode}, {project.format === "top10" ? "Top 10" : "documentary"}, brand {project.brand_id}, target {project.target_minutes} min</div>
         </div>
         <div className="head-actions">
+          {project.review && (
+            <span className="small muted review-count">Reviewed: {project.review.reviewed} of {project.review.total}</span>
+          )}
+          {project.final_url && (
+            <a className="btn" href={`#/review/${encodeURIComponent(id)}`}>{project.review ? "Continue review" : "Review"}</a>
+          )}
           <StatusPill status={busy ? "running" : project.status} label={busy ? "re-rendering" : undefined} />
           {canResume && <button className="btn primary" onClick={resume}>Resume</button>}
         </div>
@@ -191,7 +210,8 @@ export default function Project({ id }) {
         </section>
         {tab === "chat" && <ChatPanel projectId={id} busy={busy} onJob={onJob} />}
         {tab !== "chat" && shot && (
-          <ShotPanel projectId={id} shot={shot} busy={busy} onJob={onJob} onClose={() => setShotId(null)} />
+          <ShotPanel projectId={id} shot={shot} busy={busy} onJob={onJob} focusDuration={focusDuration && shot.id === initialShot}
+            onClose={() => { setShotId(null); setFocusDuration(false); }} />
         )}
       </div>
     </div>
