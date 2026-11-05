@@ -41,6 +41,9 @@ output/<id>/
   shotlist.json             ShotList (copy of work/shotlist.json after assembly)
   qa_report.json, qa_report.md
   cost_report.json          CostReport
+  review.json               operator review: one entry per shot (verdict, comment, hard rejects,
+                            timestamps, snapshot of the reviewed pick) plus the project comment
+  review.md                 review export for the next tuning session (review-export)
   sources/<shot_id>/...     downloaded assets, each with <file>.json sidecar
   inputs/                   copies of the operator's input files
   work/
@@ -113,6 +116,10 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | judge/qa.py | `build_qa(shotlist, ctx) -> list[Path]` | post-render judge pass, qa_report.json and .md |
 | editor/ops.py | `apply_ops(settings, project_id, ops) -> EditResult`, `apply_and_render(settings, project_id, ops, echo=True) -> EditResult` | fixed EditOp vocabulary |
 | editor/revise.py | `map_message(settings, project_id, message) -> list[EditOp]` | editor seat with rule-based fallback |
+| review/store.py | `load(settings, id) -> Review`, `update_shot(settings, id, shot, verdict=, comment=, rejects=)`, `set_project_comment`, `mark_fixed`, `progress` | review.json, reconciled with the shot list on every load |
+| review/export.py | `summary(review)`, `markdown(review, title, threshold)`, `write_export(settings, id) -> Path` | review.md |
+| review/fixes.py | `plan(settings, id) -> {ops, timing, comments, skipped}` | verdicts to EditOps (change_type re-source with add_must_avoid, add_queries, reject_selected; regenerate_ai for AI shots) |
+| review/calibrate.py | `calibrate(review, threshold) -> dict`, `calibration_text(c)` | judge scores against the review verdicts, suggested threshold, missed rejects |
 | learn/style_learner.py | `learn_style(source, name, settings) -> Path` | writes config/style_profiles/<name>.yaml |
 
 ### Motion graphics
@@ -225,6 +232,14 @@ candidates, edit ops, chat revisions, brands, settings and seat status, and
 serves the built UI from `ui/dist`. A worker pool (`vidbush/jobs/runner.py`)
 pulls jobs from a SQLite table in `data/vidbush.db`, one job per project at a
 time. Everything the UI does is also a CLI subcommand.
+
+Review (`vidbush/api/routes_review.py`): `GET /api/projects/{id}/review`,
+`PUT /api/projects/{id}/review/shots/{shot}` (`{verdict, comment, rejects, clear_verdict}`, fields left
+out stay), `PUT /api/projects/{id}/review/comment`, `GET .../review/summary`, `POST .../review/export`,
+`GET .../review/fixes` (the plan), `POST .../review/fixes` (`{ops}`, one apply_ops job) and
+`GET .../review/calibration`. `GET /api/projects/{id}` carries `review: {reviewed, total}` once
+review.json exists. UI: `ui/src/pages/Review.jsx` at `#/review/<id>`; `#/p/<id>/<shot>` opens a shot's
+panel with the duration box focused. CLI: `vidbush/review_cli.py`.
 
 Batches (`vidbush/api/routes_batches.py`): `GET /api/batches`,
 `GET /api/batches/{id}` (report rows plus state), `POST /api/batches`
