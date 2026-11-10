@@ -28,7 +28,7 @@ def fake_ai(monkeypatch):
     """generate_ai_candidate stand-in writing a real PNG (another engineer owns the real one)."""
     calls: list = []
 
-    def gen(shot, ctx, prompt=None):
+    def gen(shot, ctx, prompt=None, problem=""):
         n = sum(1 for c in shot.candidates if c.source == SourceKind.ai_image) + 1
         p = ctx.work / "ai" / f"{shot.id}_{n}.png"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -116,13 +116,15 @@ def test_regenerate_ai_appends_prompt_delta(settings, work, fake_ai):
     assert "golden hour light" in shot.ai_prompt
 
 
-def test_regenerate_ai_without_delta_keeps_a_better_old_pick(settings, work, fake_ai, monkeypatch):
+def test_regenerate_ai_without_delta_always_takes_the_new_batch(settings, work, fake_ai, monkeypatch):
+    """An operator reroll overrides the judge: the old pick may be wrong in a way the judge missed."""
     monkeypatch.setattr("vidbush.judge.judge.score_candidate", lambda shot, cand, ctx, narration="": (40.0, "x", None))
     old = load_shotlist(work).by_id("shot_002").selected
     assert not run(settings, op("regenerate_ai", shot_id="shot_002")).errors
     shot = load_shotlist(work).by_id("shot_002")
-    assert shot.selected == old and shot.judge_score is not None
-    assert [c.score for c in shot.candidates if c.source == SourceKind.ai_image] == [40.0, 40.0, 40.0]
+    new = [c for c in shot.candidates if c.source == SourceKind.ai_image]
+    assert [c.score for c in new] == [40.0, 40.0, 40.0] and shot.selected == new[0].id
+    assert old in {c.id for c in shot.candidates}  # the old pick stays pickable
 
 
 # ---------------------------------------------------------------- change_type

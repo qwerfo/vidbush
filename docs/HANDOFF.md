@@ -478,14 +478,18 @@ with counts.
 
 **AI stills** (`judge.ai_retries: 2`): every generated still is judged against
 the narration, intent and must_show before use. A still below the threshold
-is regenerated with "Must clearly show: ..." and the judge's reason, up to
-`ai_retries` times, and the best take wins. Each regeneration is a cost entry
-with the note `image retry`; the per image ceiling still applies. The
-regenerate_ai edit op uses the same loop and, without a prompt_delta, keeps
-the old pick when the new still is judged no better. A shot whose subject is
-readable text (a labelled map, headline, document, web page, sheet music,
-chart) is never converted to an AI still: it keeps its best sourced candidate
-and gets the flag `needs_motion_graphic` (listed in qa_report).
+is regenerated with "Must clearly show: ..." up to `ai_retries` times, and
+the best take wins. The judge's reason goes to the editor rewrite as a
+"Problem:" line only, never into the prompt or the negative prompt. A mock
+judge score never triggers a retry. Each regeneration is a cost entry with the
+note `image retry`; the per image ceiling still applies. The regenerate_ai
+edit op uses the same loop and always selects the new batch (old takes stay
+in candidates). A shot whose subject is a text artifact (a newspaper
+headline, a labelled map or a map of a route, the text of a letter, a web
+page, sheet music, a chart of data) is never converted to an AI still: it
+keeps its best sourced candidate and gets the flag `needs_motion_graphic`
+(listed in qa_report). Mock fallbacks during titles and thumbnails are added
+to qa_report `mock_used` after package.
 
 **Judge image detail** (`judge`): `first_keyframe_detail: high` and
 `keyframe_detail: low` set the image detail of the first and the other

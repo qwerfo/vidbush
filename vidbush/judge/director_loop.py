@@ -116,15 +116,16 @@ def _seed_ai(shots: list[Shot], ctx: Any) -> None:
 def add_ai(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Candidate:
     """Generate an AI still, judge it, and regenerate a failed one with what it must show and the judge's
     reason as direction, up to settings.judge.ai_retries times. Every take is appended; the best is returned.
-    No still is used unjudged. A failed retry keeps the takes made so far; a failed first take raises."""
-    from ..visuals.ai_images import build_prompt, generate_ai_candidate
+    No still is used unjudged. A failed retry keeps the takes made so far; a failed first take raises.
+    A mock judge score is image statistics, not content, so it never buys a retry."""
+    from ..visuals.ai_images import generate_ai_candidate
     threshold = float(ctx.settings.judge.threshold)
     retries = int(getattr(ctx.settings.judge, "ai_retries", 2))
     takes: list[Candidate] = []
-    base = build_prompt(shot, prompt)
+    problem = ""
     for take in range(1 + max(0, retries)):
         try:
-            cand = generate_ai_candidate(shot, ctx, prompt=prompt)
+            cand = generate_ai_candidate(shot, ctx, prompt=prompt, problem=problem)
         except Exception as e:  # noqa: BLE001  a later take failing keeps the earlier ones
             if not takes:
                 raise
@@ -133,11 +134,9 @@ def add_ai(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Candidate:
         shot.candidates.append(cand)
         _prefilter_and_score([(shot, cand)], ctx, workers=1)
         takes.append(cand)
-        if _ok(cand, threshold):
+        if _ok(cand, threshold) or JUDGE_MOCK_FLAG in cand.flags:
             break
-        why = "; ".join(x for x in (cand.reject_reason, cand.judge_reason) if x)[:300]
-        prompt = (f"{base} Must clearly show: {', '.join(shot.must_show) or shot.intent}."
-                  + (f" Fix: {why.rstrip('.')}." if why else ""))
+        problem = "; ".join(x for x in (cand.reject_reason, cand.judge_reason) if x)[:300] or "judged below threshold"
         ctx.log.info("AI still below threshold, regenerating", shot=shot.id, take=take + 1, score=cand.score)
     return max(takes, key=lambda c: (c.reject_reason is None, c.score or 0.0))  # ties keep the earlier take
 

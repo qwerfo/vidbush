@@ -168,10 +168,23 @@ _TWO_THOUSAND_RE = re.compile(
     re.I)
 
 
+# words after a number that make it a quantity or a range, never a year: 'fifteen twenty minutes', 'twenty thirty
+# miles a day', 'sixteen seventeen year olds' (extract_years skips digits before a unit the same way)
+_QUANTITY_WORDS = set(UNIT_ALIASES) | TIME_UNITS | {u[:-1] for u in TIME_UNITS}
+
+
+def _quantity_follows(m: re.Match) -> bool:
+    nxt = _WORD_RE.match(m.string[m.end():].lstrip())
+    return bool(nxt) and nxt.group(0).lower().split("-")[0] in _QUANTITY_WORDS
+
+
 def spoken_years(text: str) -> str:
     """Years written the way narration says them become digits: 'nineteen twenty-five' -> '1925',
-    'the nineteen twenties' -> 'the 1920s', 'two thousand seven' -> '2007'. Other number words stay."""
+    'the nineteen twenties' -> 'the 1920s', 'two thousand seven' -> '2007'. Other number words stay, and so
+    does a pair followed by a unit ('fifteen twenty minutes later' is a range)."""
     def year(m: re.Match) -> str:
+        if _quantity_follows(m):
+            return m.group(0)
         cent, oh, decade, teen, tens, unit = (g.lower() if g else "" for g in m.groups())
         head = _words_value([cent]) * 100
         if decade:
@@ -179,6 +192,8 @@ def spoken_years(text: str) -> str:
         return str(head + (_words_value([w for w in (oh, teen, tens, unit) if w]) or 0))
 
     def two_k(m: re.Match) -> str:
+        if _quantity_follows(m):
+            return m.group(0)
         return str(2000 + (_words_value([g.lower() for g in m.groups() if g]) or 0))
 
     return _TWO_THOUSAND_RE.sub(two_k, _SPOKEN_YEAR_RE.sub(year, text))

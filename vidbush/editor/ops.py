@@ -260,15 +260,7 @@ def op_regenerate_ai(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> O
         core = shot.ai_prompt.strip() or _subject(shot.intent)
         prompt = f"{core.rstrip('. ')}. {delta.rstrip('.')}."
         shot.ai_prompt = prompt
-    old = None if delta else shot.selected_candidate()
-    cand = _ai_candidate(sess, shot, prompt)
-    if old is not None and old.source != SourceKind.motion and old.local_path:
-        if old.score is None:  # an earlier unjudged pick is judged before it is compared
-            from ..judge.director_loop import _prefilter_and_score
-            _prefilter_and_score([(shot, old)], sess.ctx(), workers=1)
-        if (old.reject_reason is None, old.score or 0.0) >= (cand.reject_reason is None, cand.score or 0.0):
-            select(shot, old, "operator_ai")
-            return Outcome(f"{shot.id} keeps {old.id}: the new AI image {cand.id} judged no better", FORCE_MOTION)
+    cand = _ai_candidate(sess, shot, prompt)  # an operator reroll takes the new batch; old takes stay pickable
     select(shot, cand, "operator_ai")
     return Outcome(f"{shot.id} has a new AI image {cand.id}", FORCE_MOTION)
 

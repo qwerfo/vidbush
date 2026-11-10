@@ -44,6 +44,10 @@ def script(*texts: str) -> Script:
     ("Built in nineteen oh five.", [1905]),
     ("Twenty-five dogs ran.", []),
     ("They left at ten thirty that night.", []),
+    ("fifteen twenty minutes later", []),
+    ("about sixteen seventeen year olds", []),
+    ("twenty thirty miles a day", []),
+    ("In nineteen twenty-five dogs carried the serum.", [1925]),
 ])
 def test_spoken_years_are_years(text, years):
     assert I.extract_years(text) == years
@@ -51,6 +55,7 @@ def test_spoken_years_are_years(text, years):
 
 def test_spelled_to_digits_reads_a_spoken_year_as_one_year():
     assert I.spelled_to_digits("nineteen twenty-five") == "1925"
+    assert "2030" not in I.spelled_to_digits("twenty thirty miles a day")
     assert I.spelled_to_digits("twenty-five dogs") == "25 dogs"
 
 
@@ -97,6 +102,35 @@ def test_rewrite_that_only_removes_names_is_accepted(make_ctx, monkeypatch):
     rewrite = "An anonymous musher with a team of dogs pulling a sled across sea ice."
     ctx, _ = _ctx_with_rewrite(make_ctx, monkeypatch, rewrite)
     assert ai_images.safe_prompt(original, ctx, keep=["Leonhard Seppala", "team of dogs pulling a sled"]) == rewrite
+
+
+def test_rewrite_keeps_counts_and_may_drop_text_objects():
+    lost = ai_images.lost_keep_words("20 dogs pulling a sled.", "A dog pulling a sled.", ["20 dogs pulling a sled"])
+    assert lost == ["20"]
+    assert ai_images.lost_keep_words("One husky beside a sled.", "A husky beside a sled.", ["one husky"]) == ["one"]
+    assert ai_images.lost_keep_words("A man holding a sign reading HELP.", "A man holding a blank board.",
+                                     ["a man holding a sign reading HELP"]) == []
+    # a capitalised first word is content unless the next word is capitalised too
+    lost = ai_images.lost_keep_words("Sled dogs resting.", "Huskies resting.", ["Sled dogs resting"])
+    assert lost == ["Sled", "dogs"]
+
+
+@pytest.mark.parametrize("text, is_text", [
+    ("A soldier writing a letter home by candlelight", False),
+    ("Photographers document the war", False),
+    ("A record label office", False),
+    ("Prospectors map the creek", False),
+    ("A statement of grief, a widow at a grave", False),
+    ("Map-making tools on a drafting table", False),
+    ("Dalton Highway map showing Coldfoot", True),
+    ("A map of the Iditarod trail", True),
+    ("Newspaper headline announcing statehood", True),
+    ("The text of the telegram", True),
+    ("Texas Our Texas sheet music", True),
+    ("A bar chart of gold output", True),
+])
+def test_readable_text_means_a_text_artifact_not_a_word(text, is_text):
+    assert ai_images.needs_readable_text(shot(intent=text, must_show=[])) is is_text
 
 
 # ---------------------------------------------------------------- the judge hears the narration
@@ -156,9 +190,39 @@ def test_failed_still_is_regenerated_with_the_judge_reason_and_the_passing_take_
     s = out.shots[0]
     assert [c.score for c in s.candidates] == [50, 80]
     assert s.selected == s.candidates[1].id and "no_match_accepted" not in s.flags
-    assert "Must clearly show: team of sled dogs pulling a sled" in sent[1] and "no sled in take scored 50" in sent[1]
+    assert "Must clearly show: team of sled dogs pulling a sled" in sent[1] and "no sled" not in sent[1]
     notes = [e.note for e in ctx.tracker.report.entries if e.role == "image"]
     assert notes == ["image", "image retry"]
+
+
+def test_judge_reason_is_rewrite_context_and_never_a_negative(make_ctx, monkeypatch):
+    """The judge describes the wrong picture: its 'no sled' must not reach the negative prompt or the prompt."""
+    ctx = make_ctx()
+    ctx.stage = "judge"
+    s = shot(typ=ShotType.ai_image, must_show=["a team of dogs pulling a sled with a musher riding behind"],
+             ai_prompt="A dog team on sea ice, no modern buildings. Natural light.")
+    negatives: list[str] = []
+    real = ctx.seats.image
+    monkeypatch.setattr(ctx.seats, "image", lambda prompt, out_path, stage, negative_prompt="", note="image": (
+        negatives.append(negative_prompt) or real(prompt, out_path, stage, negative_prompt=negative_prompt)))
+    users: list[str] = []
+    monkeypatch.setattr(ctx.seats, "llm_json", lambda role, task, system, user, stage, **k: users.append(user))
+    reason = "Shows a man holding one husky on a leash, no sled and no team of dogs"
+    ai_images.generate_ai_candidate(s, ctx, problem=reason)
+    assert f"Problem: {reason}" in users[0] and "husky on a leash" not in users[0].splitlines()[0]
+    for word in ("sled", "team", "dogs"):
+        assert word not in negatives[0]
+    assert "modern buildings" in negatives[0]  # the base prompt's own negations still apply
+
+
+def test_a_mock_judge_score_buys_no_retry(make_ctx, monkeypatch):
+    ctx = make_ctx()
+    ctx.stage = "judge"
+    monkeypatch.setattr(ctx.seats, "vision_json", lambda role, task, system, prompt, images, stage, **k: {
+        "score": 40, "reason": "mock score image statistics", "rejects": [], "_mock": True})
+    s = dl.judge_and_select(ShotList(project_id="t1", duration=1.0, shots=[shot(typ=ShotType.ai_image)]),
+                            ctx).shots[0]
+    assert len([c for c in s.candidates if c.source == SourceKind.ai_image]) == 1
 
 
 def test_retries_stop_at_the_limit_and_the_best_take_is_accepted(make_ctx, monkeypatch):
@@ -199,3 +263,16 @@ def test_packaging_writes_the_qa_report_before_the_thumbnails(monkeypatch):
     with pytest.raises(RuntimeError):
         stages.stage_packaging(ctx)
     assert order == ["qa", "package"]
+
+
+def test_mock_roles_from_packaging_reach_the_qa_report(make_ctx):
+    from vidbush.util import read_json, write_json
+    ctx = make_ctx()
+    report = qa.make_report(ShotList(project_id="t1", duration=1.0, shots=[]), ctx, 70.0, {}, 1.0, 1.0, [])
+    report.mock_used = []
+    write_json(ctx.root / "qa_report.json", report)
+    ctx.seats.mock_roles.add("image")  # a thumbnail fell back to mock after build_qa
+    qa.refresh_mock_used(ctx)
+    used = read_json(ctx.root / "qa_report.json")["mock_used"]
+    assert "image" in used and used == sorted(used)
+    assert "Mock seats: " in (ctx.root / "qa_report.md").read_text(encoding="utf-8")

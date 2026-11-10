@@ -295,6 +295,25 @@ def _nc_nd(shotlist: ShotList, flag: str = "nc_nd") -> list[str]:
     return [f"{label[k]} (shots {', '.join(v)})" for k, v in seen.items()]
 
 
+def _mock_roles(ctx: Any) -> set[str]:
+    return set(getattr(ctx.seats, "mock_roles", set())) | {e.role for e in ctx.tracker.report.entries if e.mock}
+
+
+def refresh_mock_used(ctx: Any) -> None:
+    """Add the roles that fell back to mock after build_qa (packaging: titles, thumbnails) to qa_report, so
+    final_status still sees them. Only mock_used and its markdown line change."""
+    path = ctx.root / "qa_report.json"
+    if not path.exists():
+        return
+    report = QAReport.model_validate(read_json(path))
+    mocks = sorted(set(report.mock_used) | _mock_roles(ctx))
+    if mocks == report.mock_used:
+        return
+    report.mock_used = mocks
+    write_json(path, report)
+    (ctx.root / "qa_report.md").write_text(render_markdown(report, intro_offset(ctx)), encoding="utf-8")
+
+
 def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, tuple[float, str]],
                 coverage: float, match: float, notes: list[str]) -> QAReport:
     """Assemble the QAReport from the shot list, post-render scores and caption check."""
@@ -313,7 +332,7 @@ def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, 
         c = s.selected_candidate()
         attributed += int(c is not None and c.source not in NO_ATTRIBUTION and bool(c.attribution.strip()))
     mix, pacing = mix_and_pacing(shotlist)
-    mocks = set(getattr(ctx.seats, "mock_roles", set())) | {e.role for e in ctx.tracker.report.entries if e.mock}
+    mocks = _mock_roles(ctx)
     report = QAReport(project_id=shotlist.project_id, threshold=threshold, shots=shots,
                       pct_above_threshold=round(100.0 * above / len(judged), 1) if judged else 100.0,
                       pct_no_match_accepted=round(100.0 * no_match / len(judged), 1) if judged else 0.0,
