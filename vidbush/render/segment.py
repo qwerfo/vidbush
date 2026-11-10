@@ -88,7 +88,9 @@ def _graph(shot: Shot, profile: StyleProfile, settings: Settings, base: str, win
     ov = resolve_media(shot.overlay_path, settings) if shot.overlay_path else None
     if ov is not None and ov.exists():
         extra = ["-i", str(ov)]
-        nodes.append(f"[1:v]setpts=PTS-STARTPTS,fps={r.fps},scale={r.width}:{r.height},format=yuva420p[ov]")
+        lead = shot.overlay.start_at if shot.overlay is not None else 0.0  # text appears when its anchor is said
+        nodes.append(f"[1:v]setpts=PTS-STARTPTS+{lead:.3f}/TB,fps={r.fps},scale={r.width}:{r.height},"
+                     "format=yuva420p[ov]")
         nodes.append("[base][ov]overlay=0:0:eof_action=pass:format=yuv420[comp]")
         top = "[comp]"
     elif ov is not None:

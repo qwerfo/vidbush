@@ -4,6 +4,7 @@ Samples one frame every settings.judge.post_render_every_s seconds of
 final.mp4 (after any intro), maps frames to shots, rescores each shot against
 its intent with the vision seat (task "qa"), checks captions against the
 narration, and reports mix, pacing, judge pass rate, flags, attribution,
+on-screen text timing and repeats of the narration,
 NC/ND and Standard YouTube Licence assets, mock seats and the sourcing
 search usage per run (work/source_notes.json, written by source/registry.py)
 with a warning when a search budget ran out.
@@ -12,12 +13,15 @@ from __future__ import annotations
 
 import re
 import shutil
+import statistics
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import SHOT_TYPES, FallbackNote, Narration, QAReport, QAShot, Shot, ShotList, ShotType, SourceKind
+from ..models import (SHOT_TYPES, FallbackNote, MotionKind, Narration, QAReport, QAShot, Shot, ShotList, ShotType,
+                      SourceKind, Word)
+from ..shots import ideas as I
 from ..util import ToolError, media_duration, read_json, run, write_json
 from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, parse_verdict
 
@@ -27,7 +31,9 @@ SOURCE_NOTES = "source_notes.json"
 SOURCE_LABELS = {"youtube": "YouTube", "pexels": "Pexels", "pixabay": "Pixabay", "wikimedia": "Wikimedia Commons",
                  "archive": "Internet Archive", "loc": "Library of Congress", "nasa": "NASA"}
 NO_MATCH_TARGET_PCT = 1.0
+OVERLAY_TIMING_MAX_S = 0.5  # median gap between a text overlay and its anchor word above this reads as off
 MIX_TOLERANCE_PTS = 5.0
+OVERLAY_SIBLING = {"footage": "footage_overlay", "image": "image_overlay"}
 FRAMES_PER_SHOT = 3
 NO_ATTRIBUTION = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
 
@@ -59,7 +65,8 @@ def build_qa(shotlist: ShotList, ctx: Any) -> list[Path]:
         notes.append("final.mp4 not found, post-render pass skipped")
     post = score_post_render(shotlist, frames, ctx)
     coverage, match = caption_check(ctx)
-    report = make_report(shotlist, ctx, threshold, post, coverage, match, notes)
+    nar = ctx.maybe_load("narration", Narration)
+    report = make_report(shotlist, ctx, threshold, post, coverage, match, notes, nar.words if nar else [])
     json_path = write_json(ctx.root / "qa_report.json", report)
     md_path = ctx.root / "qa_report.md"
     md_path.write_text(render_markdown(report, offset), encoding="utf-8")
@@ -256,6 +263,35 @@ def animation_share(shotlist: ShotList) -> dict[str, float]:
             "inset_overlays": round(100.0 * insets / n, 1)}
 
 
+def overlay_text_stats(shotlist: ShotList, words: list[Word]) -> dict[str, float]:
+    """On-screen text against the narration. text_items: text overlays on the picture plus full screen quote
+    and callout cards. timing_error_s: median absolute gap between a text overlay's first frame and the
+    narration word where its anchor (else its title) is spoken within REPEAT_WINDOW_S; unanchored: text
+    overlays whose anchor is not spoken that close. verbatim_pct: share of text items that repeat the
+    narration spoken around them."""
+    gaps: list[float] = []
+    items = repeats = unanchored = 0
+    for s in shotlist.shots:
+        card = s.type == ShotType.motion_graphic and s.motion is not None and s.motion.kind in (
+            MotionKind.callout, MotionKind.text_overlay)
+        spec = s.motion if card else s.overlay if s.type != ShotType.motion_graphic else None
+        if spec is None or spec.kind not in I.TEXT_OVERLAY_KINDS:
+            continue
+        shown = s.start + spec.start_at
+        items += 1
+        repeats += I.spec_repeats_narration(spec, I.spoken_near(words, shown))
+        if card:
+            continue
+        t = I.anchor_time(spec.anchor or I.overlay_title(spec), words, shown - I.REPEAT_WINDOW_S,
+                          shown + I.REPEAT_WINDOW_S)
+        if t is None:
+            unanchored += 1
+        else:
+            gaps.append(abs(shown - t))
+    return {"text_items": float(items), "timing_error_s": round(statistics.median(gaps), 2) if gaps else 0.0,
+            "unanchored": float(unanchored), "verbatim_pct": round(100.0 * repeats / items, 1) if items else 0.0}
+
+
 def heuristic_fallbacks(ctx: Any) -> list[FallbackNote]:
     """Writer sections and director chunks that fell back to heuristics with a real provider configured
     (work/fallbacks.json, written by the script and shotlist stages)."""
@@ -291,7 +327,7 @@ def _nc_nd(shotlist: ShotList, flag: str = "nc_nd") -> list[str]:
 
 
 def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, tuple[float, str]],
-                coverage: float, match: float, notes: list[str]) -> QAReport:
+                coverage: float, match: float, notes: list[str], words: Optional[list[Word]] = None) -> QAReport:
     """Assemble the QAReport from the shot list, post-render scores and caption check."""
     shots = []
     for s in shotlist.shots:
@@ -318,7 +354,8 @@ def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, 
                       caption_word_match=match, attribution_count=attributed, mock_used=sorted(mocks),
                       heuristic_fallbacks=heuristic_fallbacks(ctx),
                       nc_nd_assets=_nc_nd(shotlist), notes=list(notes),
-                      standard_youtube_assets=_nc_nd(shotlist, "standard_youtube_licence"))
+                      standard_youtube_assets=_nc_nd(shotlist, "standard_youtube_licence"),
+                      overlay_text=overlay_text_stats(shotlist, words or []))
     report.notes += review_notes(report, ctx) + source_usage_notes(ctx)
     return report
 
@@ -360,11 +397,26 @@ def review_notes(r: QAReport, ctx: Any) -> list[str]:
                    "target: review the flagged shots in the editor")
     for t, target in r.mix_target.items():
         got = r.mix_achieved.get(t, 0.0)
+        if t in OVERLAY_SIBLING.values():  # a ceiling: a shot carries text only when it adds to the narration
+            if got - target > MIX_TOLERANCE_PTS:
+                out.append(f"{t} share of shots {got}% above its ceiling {target}%")
+            continue
+        name = t
+        if t in OVERLAY_SIBLING:  # plain shots take the overlay slots that had nothing honest to show
+            sib = OVERLAY_SIBLING[t]
+            got, target = round(got + r.mix_achieved.get(sib, 0.0), 1), round(target + r.mix_target.get(sib, 0.0), 1)
+            name = f"{t} (with or without overlay)"
         if abs(got - target) > MIX_TOLERANCE_PTS:
-            out.append(f"{t} share of shots {got}% versus target {target}%")
+            out.append(f"{name} share of shots {got}% versus target {target}%")
     if ctx.profile.captions.enabled and (r.caption_coverage < 0.95 or r.caption_word_match < 0.9):
         out.append(f"captions cover {r.caption_coverage:.0%} of narration time and match {r.caption_word_match:.0%} "
                    "of narration words")
+    ot = r.overlay_text
+    if ot.get("verbatim_pct", 0.0) > 0:
+        out.append(f"{ot['verbatim_pct']:g}% of on-screen text repeats the narration the captions already show")
+    if ot.get("timing_error_s", 0.0) > OVERLAY_TIMING_MAX_S or ot.get("unanchored", 0.0) > 0:
+        out.append(f"text overlays sit {ot['timing_error_s']:g} s (median) from the words they belong to, "
+                   f"{ot['unanchored']:g} far from any of their words")
     low = sum(1 for s in r.shots if "post_render_low" in s.flags)
     if low:
         out.append(f"{low} shots scored below threshold on the rendered video")
@@ -402,7 +454,11 @@ def render_markdown(r: QAReport, offset: float = 0.0) -> str:
           f"- Attributed assets: {r.attribution_count}; NC or ND assets: {len(r.nc_nd_assets)}; "
           f"Standard YouTube Licence assets: {len(r.standard_youtube_assets)}",
           f"- Mock seats: {', '.join(r.mock_used) or 'none'}",
-          f"- Heuristic fallbacks with a real provider: {len(r.heuristic_fallbacks)}", ""]
+          f"- Heuristic fallbacks with a real provider: {len(r.heuristic_fallbacks)}",
+          f"- On-screen text: {r.overlay_text.get('text_items', 0):g} items, "
+          f"{r.overlay_text.get('verbatim_pct', 0):g}% repeat the narration, text overlays "
+          f"{r.overlay_text.get('timing_error_s', 0):g} s (median) from their words, "
+          f"{r.overlay_text.get('unanchored', 0):g} unanchored", ""]
     if r.notes:
         md += ["## Notes", ""] + [f"- {n}" for n in r.notes] + [""]
     if r.heuristic_fallbacks:

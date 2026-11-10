@@ -76,7 +76,12 @@ def new_shot_id(shotlist: ShotList, base: str) -> str:
 # ---------------------------------------------------------------- invariants
 
 def finalize(shotlist: ShotList, total: float) -> None:
-    """Round durations, absorb rounding drift in the last shot, reindex, retime motion specs."""
+    """Round durations, absorb rounding drift in the last shot, reindex, retime motion specs.
+
+    A text overlay keeps its moment on the timeline (the narration does not move): its start_at follows the
+    shot's new start, never before the shot and leaving at least READ_MIN_S before the cut."""
+    from ..shots.ideas import READ_MIN_S
+    moment = {s.id: s.start + s.overlay.start_at for s in shotlist.shots if s.overlay is not None and s.overlay.anchor}
     for s in shotlist.shots:
         s.duration = round(s.duration, 3)
     if shotlist.shots:
@@ -88,6 +93,9 @@ def finalize(shotlist: ShotList, total: float) -> None:
             s.motion = retime_motion(s.motion, s.duration)
         if s.overlay is not None:
             s.overlay = retime_motion(s.overlay, s.duration)
+            if s.id in moment:
+                at = min(max(0.0, moment[s.id] - s.start), max(0.0, s.duration - READ_MIN_S))
+                s.overlay = s.overlay.model_copy(update={"start_at": round(at, 3)})
 
 
 def retime_motion(spec: MotionSpec, duration: float) -> MotionSpec:

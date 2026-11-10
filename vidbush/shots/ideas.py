@@ -1,19 +1,21 @@
 """Heuristic visual ideas from beat text: the deterministic fallback for the director seat.
 
-ideas_for_beat(bc, palette, rng) returns at least one footage, one still and one
-motion VisualIdea for a beat, built from the concrete nouns, people, places,
-era and numbers it mentions. Text helpers here are also used by the director
-to validate model output (numbers cited by charts, places on maps).
+ideas_for_beat(bc, palette, rng) returns at least one footage and one still
+VisualIdea for a beat, plus the motion ideas its concrete nouns, people,
+places, era and numbers support. Text helpers here are also used by the
+director to validate model output (numbers cited by charts, places on maps)
+and to time on-screen text to the narration and keep it from repeating it.
 """
 from __future__ import annotations
 
+import math
 import random
 import re
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from ..models import Beat, FactCard, MotionSpec, Research, Scene, ScenePurpose, VisualIdea
+from ..models import Beat, FactCard, MotionKind, MotionSpec, Research, Scene, ScenePurpose, VisualIdea, Word
 from ..util import no_em_dash
 
 # ---------------------------------------------------------------- vocabulary
@@ -510,7 +512,10 @@ def _named_overlays(bc: BeatContext, ent: BeatEntities, palette: str) -> dict[st
 
 
 def overlay_options(bc: BeatContext, ent: BeatEntities, palette: str, rng: random.Random) -> list[MotionSpec]:
-    """Generic overlays any footage or still of the beat can carry, best first (no named lower thirds)."""
+    """Generic overlays any footage or still of the beat can carry, best first (no named lower thirds).
+
+    Labels only (a year, a noun): a heuristic cannot paraphrase, and a clause of the narration on screen
+    repeats what the captions already show."""
     from ..mg import builders as b
     out: list[MotionSpec] = []
     if CTA_RE.search(bc.beat.text):
@@ -518,8 +523,6 @@ def overlay_options(bc: BeatContext, ent: BeatEntities, palette: str, rng: rando
     for y in ent.years[:1]:
         sub = next((p[0] for p in ent.places if p[0] not in ent.areas), "")
         out.append(b.text_overlay_spec(str(y), position="upper_left", subtitle=sub, palette=palette))
-    if ent.phrase and len(ent.phrase.split()) >= 3:
-        out.append(b.callout_spec(ent.phrase, palette=palette))
     roll = rng.random()
     if roll < 0.12 and ent.nouns:
         out.append(b.highlight_box_spec(0.3 + rng.random() * 0.2, 0.3, 0.32, 0.3, ent.nouns[0].title(),
@@ -572,13 +575,85 @@ def _place_sub(name: str) -> str:
     return "United States" if hit.country == geo.US else hit.country
 
 
-def default_overlay(bc: BeatContext, palette: str, must_show: Optional[list[str]] = None) -> MotionSpec:
-    """First overlay choice for a shot, else a key phrase callout."""
-    from ..mg import builders as b
-    opts = overlay_choices(bc, palette, must_show or [])
-    if opts:
-        return opts[0]
-    return b.callout_spec(beat_entities(bc).phrase or bc.scene.title, palette=palette)
+# ---------------------------------------------------------------- on-screen text against the narration
+
+TEXT_OVERLAY_KINDS = {MotionKind.callout, MotionKind.text_overlay, MotionKind.lower_third, MotionKind.highlight_box,
+                      MotionKind.arrow}
+ANCHOR_LEAD_S = 0.2  # a text overlay appears this long after its anchor's first word starts
+READ_MIN_S = 1.5
+READ_PER_WORD_S = 0.3
+REPEAT_WINDOW_S = 8.0  # narration this close to on-screen text counts when checking for repeats
+NAME_TOKENS = 3  # texts this short (names, places, years, labels) never count as repeating the narration
+
+
+def norm_tokens(text: str) -> list[str]:
+    """Lowercase word and number tokens, spelled numbers as digits, thousands commas dropped."""
+    return [re.sub(r"[,']", "", t) for t in re.findall(r"[a-z0-9]+(?:[,'.][a-z0-9]+)*",
+                                                       spelled_to_digits(text).lower())]
+
+
+def repeats_narration(text: str, narration: str) -> bool:
+    """True when on-screen text copies the narration, which the captions already show: 4 or more consecutive
+    tokens of it are spoken, or 60 percent or more of its content words are. Texts of NAME_TOKENS tokens or
+    fewer never count, so names, places and years pass."""
+    toks, said = norm_tokens(text), norm_tokens(narration)
+    if len(toks) <= NAME_TOKENS:
+        return False
+    grams = {tuple(said[i:i + 4]) for i in range(len(said) - 3)}
+    if any(tuple(toks[i:i + 4]) in grams for i in range(len(toks) - 3)):
+        return True
+    content = {t for t in toks if t not in STOP}
+    return bool(content) and len(content & set(said)) >= 0.6 * len(content)
+
+
+def spec_repeats_narration(spec: Optional[MotionSpec], narration: str) -> bool:
+    """A text overlay or card whose title or subtitle repeats the narration."""
+    return spec is not None and spec.kind in TEXT_OVERLAY_KINDS and any(
+        repeats_narration(str(t), narration) for t in (overlay_title(spec), spec.payload.get("subtitle")) if t)
+
+
+def overlay_title(spec: MotionSpec) -> str:
+    """The main text a viewer reads on an overlay: title, else label."""
+    return str(spec.payload.get("title") or spec.payload.get("label") or "")
+
+
+def read_seconds(spec: MotionSpec) -> float:
+    """Reading time of an overlay's text: at least READ_MIN_S, about READ_PER_WORD_S per word."""
+    text = f"{overlay_title(spec)} {spec.payload.get('subtitle') or ''}"
+    return max(READ_MIN_S, READ_PER_WORD_S * len(text.split()))
+
+
+def anchor_time(anchor: str, words: list[Word], lo: float, hi: float) -> Optional[float]:
+    """Start of the narration word where the anchor is spoken, among words starting in [lo, hi]; None when
+    it is not. The match holds the most of the anchor's content words (at least half) within its length
+    plus two words; the earliest best match wins."""
+    toks = norm_tokens(anchor)
+    want = {t for t in toks if t not in STOP} or set(toks)
+    if not want:
+        return None
+    span = [(w.start, "".join(norm_tokens(w.text))) for w in words if lo <= w.start <= hi]
+    best: Optional[tuple[int, float]] = None
+    for i, (start, tok) in enumerate(span):
+        if tok not in want:
+            continue
+        got = len(want & {t for _s, t in span[i:i + len(toks) + 2]})
+        if got >= max(1, math.ceil(0.5 * len(want))) and (best is None or got > best[0]):
+            best = (got, start)
+    return best[1] if best else None
+
+
+def overlay_start(spec: MotionSpec, words: list[Word], start: float, end: float) -> Optional[float]:
+    """Seconds into the shot [start, end] where a text overlay appears: ANCHOR_LEAD_S after its anchor (the
+    seat's anchor, else its title) is spoken, with its reading time left before the cut. None when the shot
+    does not hold that moment."""
+    t = anchor_time(spec.anchor or overlay_title(spec), words, start - ANCHOR_LEAD_S,
+                    end - read_seconds(spec) - ANCHOR_LEAD_S)
+    return None if t is None else round(max(0.0, t + ANCHOR_LEAD_S - start), 3)
+
+
+def spoken_near(words: list[Word], t: float, window: float = REPEAT_WINDOW_S) -> str:
+    """Narration spoken within window seconds of t."""
+    return " ".join(w.text for w in words if abs(w.start - t) <= window)
 
 
 # ---------------------------------------------------------------- motion ideas
@@ -844,24 +919,18 @@ def number_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research]
     return None
 
 
-def text_ideas(bc: BeatContext, ent: BeatEntities, palette: str) -> list[VisualIdea]:
-    """Title card at scene starts, quote card of the key phrase, and a callout card."""
+def text_ideas(bc: BeatContext, palette: str) -> list[VisualIdea]:
+    """Title card at scene starts, and a closing title card on a call to action beat. No quote or callout
+    card of the beat's own words: the captions already show them."""
     from ..mg import builders as b
     out: list[VisualIdea] = []
     if bc.first_in_scene and bc.scene.purpose not in (ScenePurpose.hook,):
         sub = era_label(bc.era) if bc.era else ""
         out.append(_motion_idea(bc, b.title_card_spec(bc.scene.title, sub, palette=palette),
                                 f"Chapter title card: {bc.scene.title}.", 0.7))
-    phrase = ent.phrase or bc.scene.title
-    if CTA_RE.search(bc.beat.text):
-        if not out:
-            out.append(_motion_idea(bc, b.title_card_spec(bc.scene.title, palette=palette),
-                                    f"Closing title card: {bc.scene.title}.", 0.4))
-        return out
-    out.append(_motion_idea(bc, b.text_overlay_spec(phrase, position="center", palette=palette, background="solid"),
-                            f"Quote card: {phrase}.", 0.45))
-    out.append(_motion_idea(bc, b.callout_spec(phrase, subtitle=bc.scene.title, position="center", palette=palette,
-                                               background="solid"), f"Callout card: {phrase}.", 0.3))
+    if CTA_RE.search(bc.beat.text) and not out:
+        out.append(_motion_idea(bc, b.title_card_spec(bc.scene.title, palette=palette),
+                                f"Closing title card: {bc.scene.title}.", 0.4))
     return out
 
 
@@ -885,7 +954,7 @@ def _attach_overlays(bc: BeatContext, ent: BeatEntities, ideas: list[VisualIdea]
 
 def ideas_for_beat(bc: BeatContext, research: Optional[Research], palette: str,
                    rng: random.Random) -> list[VisualIdea]:
-    """All heuristic ideas for one beat; always includes footage, still and motion.
+    """All heuristic ideas for one beat; always includes footage and still, motion when the beat supports one.
 
     Call-to-action beats get plain footage and stills with no overlay, and a closing title card only.
     """
@@ -893,11 +962,11 @@ def ideas_for_beat(bc: BeatContext, research: Optional[Research], palette: str,
     foot = footage_ideas(bc, ent)
     still = still_ideas(bc, ent)
     if CTA_RE.search(bc.beat.text):
-        return foot + still + text_ideas(bc, ent, palette)
+        return foot + still + text_ideas(bc, palette)
     _attach_overlays(bc, ent, foot + still, palette, rng)
     motion = [x for x in (chart_idea(bc, ent, research, palette), line_idea(bc, ent, research, palette),
                           map_idea(bc, ent, palette), number_idea(bc, ent, research, palette)) if x]
-    return foot + still + motion + text_ideas(bc, ent, palette)
+    return foot + still + motion + text_ideas(bc, palette)
 
 
 def beat_contexts(script_scenes: list[Scene], research: Optional[Research], topic: str) -> list[BeatContext]:

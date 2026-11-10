@@ -8,7 +8,7 @@ import pytest
 
 from test_shots_helpers import brand, doc_script, narrate, profile, project, top10_script
 from vidbush.config import REPO_ROOT, load_settings, load_style_profile
-from vidbush.judge.qa import animation_share
+from vidbush.judge.qa import animation_share, overlay_text_stats
 from vidbush.mg import builders as b
 from vidbush.models import MotionKind, Shot, ShotList, ShotType, StyleProfile, VisualIdea
 from vidbush.shots.director import build_shotlist, card_exempt_ranges, structural_anchors
@@ -81,8 +81,10 @@ def test_built_documentary_keeps_one_card_per_45_seconds(seed: int) -> None:
     for k, t in enumerate(starts):
         assert not card_too_close(t, starts[:k] + starts[k + 1:], prof.pacing.card_spacing_s, exempt), starts
     anim = animation_share(sl)
-    assert anim["full_screen_cards"] <= 17 and anim["overlay_shots"] >= 50  # animation moves over the picture
+    assert anim["full_screen_cards"] <= 17 and anim["overlay_shots"] >= 20  # animation moves over the picture
     assert anim["inset_overlays"] > 0
+    text = overlay_text_stats(sl, nar.words)  # overlays are a ceiling: only honest, timed text is on screen
+    assert text["verbatim_pct"] == 0 and text["timing_error_s"] <= 0.5 and text["unanchored"] == 0
 
 
 def test_top10_keeps_every_number_card() -> None:

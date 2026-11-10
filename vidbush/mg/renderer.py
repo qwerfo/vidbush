@@ -156,7 +156,8 @@ def _plan(shotlist: ShotList, ctx: Any, mg_dir: Path) -> list[tuple[Any, MotionS
                 ctx.log.warn(warn, shot=shot.id)
             jobs.append((shot, spec, mg_dir / f"{mg_key(spec, ctx.settings)}.mp4", False))
         if shot.overlay is not None and shot.type in OVERLAY_SHOT_TYPES:
-            spec, warn = prepare_spec(shot.overlay, shot.duration, shotlist, shot.intent, True)
+            # a text overlay starts at its anchor (start_at), so it renders only the rest of the shot
+            spec, warn = prepare_spec(shot.overlay, shot.duration - shot.overlay.start_at, shotlist, shot.intent, True)
             if warn:
                 ctx.log.warn(warn, shot=shot.id)
             jobs.append((shot, spec, mg_dir / f"{mg_key(spec, ctx.settings)}.mov", True))

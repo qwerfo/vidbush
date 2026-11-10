@@ -372,6 +372,8 @@ class MotionSpec(Model):
     style: StyleTokens = Field(default_factory=StyleTokens)
     source_note: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
+    anchor: str = ""  # text overlays: the narration words it belongs to (director seat; else its title is matched)
+    start_at: float = 0.0  # text overlays: seconds into the shot it appears, just after its anchor is spoken
 
     def typed_payload(self) -> BaseModel:
         """Parse payload into the model for this kind."""
@@ -793,6 +795,9 @@ class QAReport(Model):
     nc_nd_assets: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     standard_youtube_assets: list[str] = Field(default_factory=list)  # selected Standard YouTube Licence clips
+    # On-screen text against the narration: text_items, timing_error_s (median gap between a text overlay and its
+    # anchor word), unanchored (text overlays whose anchor is not spoken near them), verbatim_pct.
+    overlay_text: dict[str, float] = Field(default_factory=dict)
 
 
 ALL_MODELS: dict[str, type[BaseModel]] = {

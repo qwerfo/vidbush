@@ -741,7 +741,11 @@ def _renarrate_and_fit(sess: EditSession, sl: ShotList, beat_id: str, new_text: 
     new_nar = renarrate_beat(nar, sess.script(), beat_id, new_text, ctx.brand, ctx.seats, sess.settings, sess.work,
                              ctx.log)
     total = round(new_nar.duration + TAIL, 3)
-    fit_beat_shots(sl, beat_id, span, new_nar.duration - nar.duration)
+    delta = new_nar.duration - nar.duration
+    fit_beat_shots(sl, beat_id, span, delta)
+    for s in sl.shots:  # narration after the beat moves by delta, and so do the overlay moments on it
+        if s.start >= span[1] - 1e-3:
+            s.start = round(s.start + delta, 3)
     retime.finalize(sl, total)
     retime.check_timeline(sl, total)
     return new_nar, total
