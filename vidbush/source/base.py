@@ -124,18 +124,21 @@ def relevance(query: str, raw: "RawResult") -> float:
 # ---------------------------------------------------------------- network seams
 
 def user_agent_for(contact: str) -> str:
-    """User-Agent with the operator contact (Wikimedia and loc.gov ask for one)."""
+    """User-Agent with the operator contact (Wikimedia's policy asks for one)."""
     contact = (contact or "").strip()
     return f"Vidbush/1.0 (self-hosted documentary tool; {contact})" if contact else DEFAULT_USER_AGENT
 
 
+CONTACT_USER_AGENT = DEFAULT_USER_AGENT
+# The operator contact goes only to hosts whose policy asks for it, never to every source.
+CONTACT_HOSTS = ("wikimedia.org", "wikipedia.org")
 HTTP_PROXY = ""  # ffmpeg does not read proxy env vars; passed explicitly when set
 
 
 def configure(settings: Settings) -> None:
     """Set the User-Agent contact and the throttle overrides for this process."""
-    global USER_AGENT, HTTP_PROXY
-    USER_AGENT = user_agent_for(settings.key("VIDBUSH_CONTACT"))
+    global CONTACT_USER_AGENT, HTTP_PROXY
+    CONTACT_USER_AGENT = user_agent_for(settings.key("VIDBUSH_CONTACT"))
     HTTP_PROXY = settings.key("HTTPS_PROXY") or settings.key("HTTP_PROXY")
 
     throttle.configure(settings.sources)
@@ -166,15 +169,21 @@ def is_challenge(err: Exception) -> bool:
     return ("403" in low or "503" in low or "429" in low) and any(m in low for m in _CHALLENGE_MARKS)
 
 
+def user_agent_to(url: str) -> str:
+    """The contact User-Agent for hosts in CONTACT_HOSTS, the plain one for everything else."""
+    host = (urlparse(url).hostname or "").lower()
+    return CONTACT_USER_AGENT if any(host == h or host.endswith("." + h) for h in CONTACT_HOSTS) else USER_AGENT
+
+
 def http_get_json(url: str, params: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None,
                   timeout: float = 20.0) -> Any:
-    hdrs = {"User-Agent": USER_AGENT, **(headers or {})}
+    hdrs = {"User-Agent": user_agent_to(url), **(headers or {})}
     return _rate_limited(lambda: provider_http.get_json(url, params=params, headers=hdrs, timeout=timeout), url)
 
 
 def http_get_bytes(url: str, headers: Optional[dict[str, str]] = None, timeout: float = 60.0) -> bytes:
     """Small downloads held in memory (kept for callers outside sourcing; sourcing streams to disk)."""
-    hdrs = {"User-Agent": USER_AGENT, **(headers or {})}
+    hdrs = {"User-Agent": user_agent_to(url), **(headers or {})}
     return _rate_limited(lambda: provider_http.get_bytes(url, headers=hdrs, timeout=max(timeout, 60.0)), url)
 
 
@@ -189,7 +198,7 @@ class DownloadTooLarge(TransportError):
 def http_download(url: str, dest: Path, headers: Optional[dict[str, str]] = None, timeout: float = 60.0,
                   max_bytes: int = MAX_DOWNLOAD_BYTES) -> Path:
     """Stream url into dest. Raises DownloadTooLarge (dest removed) when over max_bytes."""
-    hdrs = {"User-Agent": USER_AGENT, **(headers or {})}
+    hdrs = {"User-Agent": user_agent_to(url), **(headers or {})}
     return _rate_limited(lambda: _stream(url, dest, hdrs, max(timeout, 60.0), max_bytes), url)
 
 

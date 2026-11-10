@@ -106,7 +106,7 @@ def _setup_warnings(adapters: list[SourceAdapter], ctx: "StageContext") -> None:
             _note_once(ctx, "youtube_runtime", msg)
     web = names - {"local"}
     if web and not ctx.settings.key("VIDBUSH_CONTACT"):
-        _note_once(ctx, "contact", "VIDBUSH_CONTACT is not set: Wikimedia and loc.gov ask for a contact "
+        _note_once(ctx, "contact", "VIDBUSH_CONTACT is not set: Wikimedia asks for a contact "
                                    "(email or URL) in the User-Agent and may throttle anonymous clients")
 
 

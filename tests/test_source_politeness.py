@@ -90,7 +90,10 @@ def test_user_agent_carries_contact(settings) -> None:
     settings.env["VIDBUSH_CONTACT"] = "ops@example.org"
     base.configure(settings)
     try:
-        assert "ops@example.org" in base.USER_AGENT
+        assert "ops@example.org" in base.user_agent_to("https://commons.wikimedia.org/w/api.php")
+        assert "ops@example.org" in base.user_agent_to("https://upload.wikimedia.org/a.jpg")
+        assert "ops@example.org" not in base.user_agent_to("https://api.pexels.com/v1/search")
+        assert "ops@example.org" not in base.user_agent_to("https://notwikimedia.org/x")
     finally:
         settings.env.pop("VIDBUSH_CONTACT")
         base.configure(settings)
