@@ -57,7 +57,7 @@ class _Ctx:
 def no_ai(monkeypatch):
     """Offline: AI still generation adds nothing unless a test swaps in a generator."""
     calls: list[str] = []
-    monkeypatch.setattr(dl, "_add_ai", lambda shot, ctx: calls.append(shot.id))
+    monkeypatch.setattr(dl, "add_ai", lambda shot, ctx: calls.append(shot.id))
     return calls
 
 
@@ -213,7 +213,7 @@ def test_ai_still_generated_when_only_banned_segments_remain(monkeypatch):
     def add_ai(s: Shot, ctx: Any) -> None:
         s.candidates.append(still("ai", 72).model_copy(update={"source": SourceKind.ai_image}))
 
-    monkeypatch.setattr(dl, "_add_ai", add_ai)
+    monkeypatch.setattr(dl, "add_ai", add_ai)
     out, _ = select([shot(0, "s1", [vid("a", 95, 10.0)]), shot(1, "s1", [vid("b", 95, 10.0)])])
     assert out[1].selected == "ai" and out[1].flags == []
 

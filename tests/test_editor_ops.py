@@ -110,9 +110,19 @@ def test_regenerate_ai_appends_prompt_delta(settings, work, fake_ai):
     res = run(settings, op("regenerate_ai", shot_id="shot_002", prompt_delta="golden hour light"))
     assert not res.errors, res.errors
     shot = load_shotlist(work).by_id("shot_002")
-    assert shot.type == ShotType.ai_image and shot.selected == "shot_002_ai_image_1"
+    assert shot.type == ShotType.ai_image and shot.selected_candidate().source == SourceKind.ai_image
+    assert shot.judge_score is not None  # every take is judged, the best one is picked
     assert "golden hour light" in fake_ai[0] and fake_ai[0].startswith("The Panama Canal, view 2")
     assert "golden hour light" in shot.ai_prompt
+
+
+def test_regenerate_ai_without_delta_keeps_a_better_old_pick(settings, work, fake_ai, monkeypatch):
+    monkeypatch.setattr("vidbush.judge.judge.score_candidate", lambda shot, cand, ctx, narration="": (40.0, "x", None))
+    old = load_shotlist(work).by_id("shot_002").selected
+    assert not run(settings, op("regenerate_ai", shot_id="shot_002")).errors
+    shot = load_shotlist(work).by_id("shot_002")
+    assert shot.selected == old and shot.judge_score is not None
+    assert [c.score for c in shot.candidates if c.source == SourceKind.ai_image] == [40.0, 40.0, 40.0]
 
 
 # ---------------------------------------------------------------- change_type

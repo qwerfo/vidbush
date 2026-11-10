@@ -476,6 +476,17 @@ pre-filtered; logo and face checks run on video only. A missing package
 disables its check with one warning. Each judge pass logs one `prefilter` line
 with counts.
 
+**AI stills** (`judge.ai_retries: 2`): every generated still is judged against
+the narration, intent and must_show before use. A still below the threshold
+is regenerated with "Must clearly show: ..." and the judge's reason, up to
+`ai_retries` times, and the best take wins. Each regeneration is a cost entry
+with the note `image retry`; the per image ceiling still applies. The
+regenerate_ai edit op uses the same loop and, without a prompt_delta, keeps
+the old pick when the new still is judged no better. A shot whose subject is
+readable text (a labelled map, headline, document, web page, sheet music,
+chart) is never converted to an AI still: it keeps its best sourced candidate
+and gets the flag `needs_motion_graphic` (listed in qa_report).
+
 **Judge image detail** (`judge`): `first_keyframe_detail: high` and
 `keyframe_detail: low` set the image detail of the first and the other
 keyframes of each judge call (high, low or auto). Post-render QA, thumbnails

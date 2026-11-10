@@ -26,6 +26,7 @@ sources:
 judge:
   threshold: 70
   max_attempts: 3
+  ai_retries: 2                 # a failed AI still is regenerated up to this many times, best take wins
   post_render_every_s: 3
   first_keyframe_detail: high   # image detail for the first keyframe of each candidate (high | low | auto)
   keyframe_detail: low          # the other keyframes; post-render QA is always low

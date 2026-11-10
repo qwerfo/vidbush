@@ -62,6 +62,10 @@ DIRECTOR_RULES = [
     "Vary framing between consecutive shots (wide, medium, close detail) and say it in the intent: two shots "
     "in a row with the same framing read as a jump cut, while a change of framing on the same subject reads "
     "as continuity.",
+    "intent and must_show state the counts and relationships the narration gives: who pulls, rides, carries "
+    "or holds what, and how many (a team of dogs pulling a sled with a musher riding behind, not a musher "
+    "beside a dog). Put the defining relationship into must_show as one item and keep it in frame at every "
+    "framing, because a picture without it tells a different story.",
     "In the first 60 seconds prefer footage with real activity (people working, machines, water, traffic): "
     "movement holds attention while the hook is made. opening_safe true only for footage with real activity, "
     "people or movement.",

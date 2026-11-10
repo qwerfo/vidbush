@@ -167,8 +167,8 @@ def stage_packaging(ctx: StageContext) -> list[str]:
     from ..judge.qa import build_qa
     from ..render.package import package
     shotlist = ctx.load("shotlist", ShotList)
-    outs = package(shotlist, ctx)
-    outs += build_qa(shotlist, ctx)
+    outs = build_qa(shotlist, ctx)  # before the slow thumbnails, so qa_report always describes this final.mp4
+    outs += package(shotlist, ctx)
     minutes = ctx.load("narration", Narration).duration / 60.0
     ctx.tracker.finalize(minutes)
     return [str(p) for p in outs] + [str(ctx.out_path("cost_report.json"))]

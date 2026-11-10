@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 from PIL import Image
 
-from ..models import Candidate, Shot
+from ..models import Candidate, Script, Shot
 
 JUDGE_WORKERS = 6
 MIN_VIDEO_HEIGHT = 720
@@ -35,7 +35,10 @@ JUDGE_SYSTEM = (
     "be right, then the action. Hard rejects: burned in captions or subtitles (burned_in_captions), a big "
     "watermark (watermark), a channel logo (channel_logo), a person speaking to camera (talking_head), a "
     "visible modern anachronism when the brief says to avoid it (anachronism), a clearly wrong subject "
-    "(wrong_subject). " + REJECT_RULES + ", ".join(HARD_REJECTS) + ". Score 0 to 100 where 70 means "
+    "(wrong_subject). " + REJECT_RULES + ", ".join(HARD_REJECTS) + ". The narration is what the viewer "
+    "hears over the picture: a picture that contradicts it is wrong_subject even when it fits the intent. For an "
+    "AI generated still, a missing must show item, a wrong count or a broken relationship (one dog beside a "
+    "person where the brief is a team pulling a sled) scores below 70. Score 0 to 100 where 70 means "
     "usable. Be concise: the reason is one short line. Reply with strict JSON only: "
     '{"score": number, "reason": "one line", "rejects": []}'
 )
@@ -50,9 +53,10 @@ _LABEL_RULES: tuple[tuple[str, str], ...] = (
 Result = tuple[float, str, Optional[str]]
 
 
-def judge_prompt(shot: Shot, cand: Candidate) -> str:
-    """User prompt for one candidate: intent, required and forbidden content, candidate metadata."""
-    lines = [
+def judge_prompt(shot: Shot, cand: Candidate, narration: str = "") -> str:
+    """User prompt for one candidate: narration, intent, required and forbidden content, candidate metadata."""
+    lines = [f"Narration: {narration}"] if narration else []
+    lines += [
         f"Beat intent: {shot.intent}",
         f"Must show: {', '.join(shot.must_show) or 'nothing specific'}",
         f"Must avoid: {', '.join(shot.must_avoid) or 'nothing specific'}",
@@ -139,14 +143,24 @@ def keyframe_details(n: int, settings: Any = None) -> list[str]:
     return ([first] + [rest] * (n - 1)) if n > 0 else []
 
 
-def score_candidate(shot: Shot, cand: Candidate, ctx: Any) -> Result:
-    """Score one candidate. Returns (score, reason, reject or None); flags land on cand.flags."""
+def narration_by_beat(ctx: Any) -> dict[str, str]:
+    """beat id -> narration text from the project's script; empty when there is none."""
+    try:
+        script = ctx.maybe_load("script", Script)
+        return {b.id: b.text for b in script.beats()} if script else {}
+    except Exception:  # noqa: BLE001  no script (or a test context): judge against the intent alone
+        return {}
+
+
+def score_candidate(shot: Shot, cand: Candidate, ctx: Any, narration: str = "") -> Result:
+    """Score one candidate against its shot and the beat narration. Returns (score, reason, reject or None);
+    flags land on cand.flags."""
     rej = local_reject(cand)
     if rej:
         return 0.0, rej, rej
     frames = [k for k in cand.keyframes if Path(k).exists()][:MAX_KEYFRAMES]
     with _VISION_SLOTS:
-        raw = ctx.seats.vision_json("judge", "judge", JUDGE_SYSTEM, judge_prompt(shot, cand), frames,
+        raw = ctx.seats.vision_json("judge", "judge", JUDGE_SYSTEM, judge_prompt(shot, cand, narration), frames,
                                     ctx.stage or "judge", intent=shot.intent,
                                     details=keyframe_details(len(frames), getattr(ctx, "settings", None)))
     if raw.get("_mock") and JUDGE_MOCK_FLAG not in cand.flags:
@@ -188,10 +202,11 @@ def score_many(pairs: list[tuple[Shot, Candidate]], ctx: Any, workers: int = JUD
     """Score every pair in parallel and store the results. Concurrent model calls never exceed JUDGE_WORKERS."""
     if not pairs:
         return
+    beats = narration_by_beat(ctx)
 
     def one(pair: tuple[Shot, Candidate]) -> Result:
         try:
-            return score_candidate(pair[0], pair[1], ctx)
+            return score_candidate(pair[0], pair[1], ctx, beats.get(pair[0].beat_id, ""))
         except Exception as e:  # noqa: BLE001  one bad file must not sink the stage
             ctx.log.warn("judge failed for candidate", shot=pair[0].id, candidate=pair[1].id, error=str(e)[:300])
             return 0.0, f"judge error: {type(e).__name__}", "judge error"
