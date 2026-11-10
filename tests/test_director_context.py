@@ -54,7 +54,7 @@ def test_every_director_call_carries_the_summary_and_rules() -> None:
     for principle in ("keep a visual subject on screen", "vary framing", "first 60 seconds",
                       "narration moves between places", "two or more comparable numbers"):
         assert principle in rules
-    assert prompts[0]["full_screen_card_spacing_s"] == 45
+    assert prompts[0]["full_screen_card_spacing_s"] == 75
 
 
 def test_previous_ideas_cover_the_last_two_chunks_only() -> None:

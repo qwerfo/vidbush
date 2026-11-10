@@ -10,8 +10,8 @@ import pytest
 from test_shots_helpers import brand, doc_script, narrate, profile, project, research, six_minute_script, top10_script
 from vidbush.config import REPO_ROOT
 from vidbush.mg import geo
-from vidbush.models import (OVERLAY_TYPES, ChartPayload, MapPayload, MotionKind, Research, Script, ShotType,
-                            VideoFormat)
+from vidbush.models import (OVERLAY_TYPES, STATIC_CARD_KINDS, ChartPayload, MapPayload, MotionKind, Research, Script,
+                            ShotType, VideoFormat)
 from vidbush.providers.base import CostTracker
 from vidbush.providers.seats import Seats
 from vidbush.shots import director
@@ -96,7 +96,8 @@ def test_motion_graphics_respect_min() -> None:
     prof = profile()
     sl, _plan, _nar = _build(six_minute_script(), seed=2, prof=prof)
     mg_min = prof.pacing.motion_graphic.min
-    short = [s for s in sl.shots if s.type == ShotType.motion_graphic and s.duration < mg_min - 1e-6]
+    short = [s for s in sl.shots if s.type == ShotType.motion_graphic and s.duration < mg_min - 1e-6
+             and s.motion is not None and s.motion.kind not in STATIC_CARD_KINDS]  # text and number cards are brief
     assert len(short) <= 1
     for s in sl.shots:
         if s.type != ShotType.motion_graphic:

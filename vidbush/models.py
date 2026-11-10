@@ -269,6 +269,11 @@ class MotionKind(str, Enum):
     recap_grid = "recap_grid"
 
 
+# Full screen cards that only carry text or a number: read at a glance, so they hold briefly.
+STATIC_CARD_KINDS = frozenset({MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout,
+                               MotionKind.number_card})
+
+
 class StyleTokens(Model):
     font: str = "Inter"
     palette: str = "documentary_warm"
@@ -521,10 +526,14 @@ class PacingProfile(Model):
     hook_seconds: float = 60.0
     hook_multiplier: float = 0.7
     jitter: float = 0.25  # bounded randomisation, fraction of mean
-    # At most one full screen card per this many seconds outside the hook and the recap (0 turns it off).
+    # At most one full screen card per this many seconds outside the recap (and the hook of a top 10 video;
+    # 0 turns it off).
     # Reference channels keep the picture on footage and stills and move maps and charts over it, so a
     # card is a punctuation mark, not a slideshow.
-    card_spacing_s: float = 45.0
+    card_spacing_s: float = 75.0
+    # Longest hold of a static full screen card (title, text, callout, quote, number): a card is read in a
+    # few seconds, and the rest of its beat is better spent on picture.
+    card_hold_max: float = 4.0
 
     def for_type(self, t: ShotType | str) -> TypePacing:
         return getattr(self, ShotType(t).value)
@@ -583,11 +592,11 @@ def default_visual_mix() -> dict[str, float]:
     """Documentary default from a reference analysis of a top geography channel (share of shot count).
 
     The reference measured 42 percent animation. Most of it is maps, charts and callouts moving over
-    footage and stills, so it is split: 12 full screen cards and 30 animated overlays that decorate a
+    footage and stills, so it is split: 5 full screen cards and 37 animated overlays that decorate a
     footage or image shot (counted on top of the shot they decorate, see StyleProfile.shot_mix).
     """
-    return {"footage": 20, "footage_overlay": 21, "image": 7, "image_overlay": 10, CARDS_KEY: 12,
-            OVERLAYS_KEY: 30, "ai_image": 0, "ai_video": 0}
+    return {"footage": 20, "footage_overlay": 21, "image": 7, "image_overlay": 10, CARDS_KEY: 5,
+            OVERLAYS_KEY: 37, "ai_image": 0, "ai_video": 0}
 
 
 class StyleProfile(Model):

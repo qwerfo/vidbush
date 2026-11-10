@@ -240,8 +240,13 @@
           "type": "number"
         },
         "card_spacing_s": {
-          "default": 45.0,
+          "default": 75.0,
           "title": "Card Spacing S",
+          "type": "number"
+        },
+        "card_hold_max": {
+          "default": 4.0,
+          "title": "Card Hold Max",
           "type": "number"
         }
       },

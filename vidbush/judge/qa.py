@@ -17,7 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import SHOT_TYPES, FallbackNote, Narration, QAReport, QAShot, Shot, ShotList, ShotType, SourceKind
+from ..models import (SHOT_TYPES, STATIC_CARD_KINDS, FallbackNote, Narration, QAReport, QAShot, Shot, ShotList, ShotType,
+                      SourceKind)
 from ..util import ToolError, media_duration, read_json, run, write_json
 from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, parse_verdict
 
@@ -247,13 +248,17 @@ INSET_KINDS = ("map", "bar_chart", "line_chart")
 
 def animation_share(shotlist: ShotList) -> dict[str, float]:
     """Achieved animation in percent of shots: full screen cards, shots carrying an overlay, and the
-    subset of overlays that are map or chart insets."""
+    subset of overlays that are map or chart insets. Also what the viewer feels: full screen card time in
+    percent of the runtime, and the longest hold of a static text or number card in seconds."""
     n = len(shotlist.shots) or 1
-    cards = sum(1 for s in shotlist.shots if s.type == ShotType.motion_graphic)
+    cards = [s for s in shotlist.shots if s.type == ShotType.motion_graphic]
     over = [s for s in shotlist.shots if s.overlay is not None and s.type != ShotType.motion_graphic]
     insets = sum(1 for s in over if s.overlay.kind.value in INSET_KINDS)
-    return {"full_screen_cards": round(100.0 * cards / n, 1), "overlay_shots": round(100.0 * len(over) / n, 1),
-            "inset_overlays": round(100.0 * insets / n, 1)}
+    holds = [s.duration for s in cards if s.motion is not None and s.motion.kind in STATIC_CARD_KINDS]
+    return {"full_screen_cards": round(100.0 * len(cards) / n, 1), "overlay_shots": round(100.0 * len(over) / n, 1),
+            "inset_overlays": round(100.0 * insets / n, 1),
+            "full_screen_card_time": round(100.0 * sum(s.duration for s in cards) / (shotlist.duration or 1.0), 1),
+            "max_card_hold_s": round(max(holds, default=0.0), 2)}
 
 
 def heuristic_fallbacks(ctx: Any) -> list[FallbackNote]:
@@ -425,7 +430,9 @@ def render_markdown(r: QAReport, offset: float = 0.0) -> str:
                "they are counted on top of the shot they decorate.", "",
                "| Measure | Target % | Achieved % |", "|---|---|---|"]
         for key, label in (("full_screen_cards", "Full screen cards"), ("overlay_shots", "Shots with an overlay"),
-                           ("inset_overlays", "Map and chart insets over the picture")):
+                           ("inset_overlays", "Map and chart insets over the picture"),
+                           ("full_screen_card_time", "Full screen card time (percent of runtime)"),
+                           ("max_card_hold_s", "Longest text or number card hold (seconds, not percent)")):
             target = r.animation_target.get(key)
             md.append(f"| {label} | {'n/a' if target is None else f'{target:g}'} | "
                       f"{r.animation_achieved.get(key, 0):g} |")

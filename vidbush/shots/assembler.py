@@ -85,6 +85,8 @@ class _Assembler:
         fades = 0
         for k, slot in enumerate(slots):
             beat_id = self.locate.at((slot.start + slot.end) / 2) or self.order[0]
+            if slot.type == ShotType.motion_graphic and not slot.fixed and I.CTA_RE.search(self.bc[beat_id].beat.text):
+                slot = slot.model_copy(update={"type": ShotType.footage})  # a call to action plays over picture
             nxt = slots[k + 1] if k + 1 < len(slots) else None
             self.avoid_kind = {sp.kind for sp in (nxt.motion if nxt and nxt.fixed else None,
                                                   shots[-1].motion if shots else None) if sp is not None}

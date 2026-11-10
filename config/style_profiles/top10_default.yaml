@@ -17,6 +17,7 @@ pacing:
   hook_multiplier: 0.7
   jitter: 0.25
   card_spacing_s: 45  # at most one full screen card per 45 s outside the hook and recap
+  card_hold_max: 4  # seconds a static title, text, quote or number card holds; the rest is footage
 captions: {enabled: true, font: Inter, weight: ExtraBold, size: 64, color: "#FFFFFF", outline_color: "#000000",
            outline: 4, shadow: 0, highlight_color: "#FFD84A", uppercase: false, min_words: 3, max_words: 5,
            position: bottom_band, band_height: 0.5}

@@ -8,7 +8,7 @@ import threading
 import pytest
 
 from test_shots_helpers import brand, doc_script, narrate, profile, project, six_minute_script, top10_script
-from vidbush.models import Beat, MotionKind, Scene, ScenePurpose, Script, ShotType, VisualIdea
+from vidbush.models import STATIC_CARD_KINDS, Beat, MotionKind, Scene, ScenePurpose, Script, ShotType, VisualIdea
 from vidbush.providers.base import ProviderError
 from vidbush.shots import ideas as I
 from vidbush.shots import seat
@@ -139,10 +139,9 @@ def test_card_runs_are_short(seed: int) -> None:
                 assert run_n <= MAX_MG_RUN and run_s <= MAX_MG_RUN_S + 0.5, (seed, s.id)
             else:
                 run_n, run_s = 0, 0.0
-        mg = profile().pacing.motion_graphic
         for s in sl.shots:
-            if s.motion and s.motion.kind in (MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout):
-                assert s.duration <= mg.min + 1.5
+            if s.motion and s.motion.kind in STATIC_CARD_KINDS:
+                assert s.duration <= prof.pacing.card_hold_max + 1e-6, (seed, s.id, s.duration)
 
 
 def test_planner_mix_still_within_five_points_by_count() -> None:
@@ -165,7 +164,9 @@ def test_no_overlay_text_repeats_within_30_seconds() -> None:
         for s in sl.shots:
             if s.overlay is None:
                 continue
-            key = (s.overlay.payload.get("title") or "").lower()
+            key = (s.overlay.payload.get("title") or s.overlay.payload.get("number") or "").lower()
+            if not key:
+                continue  # an untitled map or chart inset
             assert not (key in seen and s.start - seen[key] < 30.0), (seed, s.id, key)
             assert not any(k == key and a - s.end < 30 and s.start - e < 30 for k, a, e in cards), (seed, s.id)
             seen[key] = s.end
@@ -176,7 +177,7 @@ def test_cta_beat_has_no_overlay_map_or_number_card() -> None:
     made = I.ideas_for_beat(bc, None, "documentary_warm", random.Random(1))
     assert all(i.overlay is None for i in made)
     assert not any(i.motion and i.motion.kind in (MotionKind.map, MotionKind.number_card) for i in made)
-    assert {i.family for i in made} == {"footage", "still", "motion"}
+    assert {i.family for i in made} == {"footage", "still"}  # no card over a call to action
     assert I.overlay_choices(bc, "documentary_warm", ["New York"]) == []
 
 

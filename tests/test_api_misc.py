@@ -68,8 +68,8 @@ def test_style_profiles(client):
     assert {"documentary_default", "top10_default"} <= set(profiles)
     assert profiles["top10_default"]["top10"] is True
     doc = profiles["documentary_default"]
-    assert doc["visual_mix"]["full_screen_cards"] == 12 and doc["visual_mix"]["animated_overlays"] == 30
-    assert doc["shot_mix"]["motion_graphic"] == 12 and doc["card_spacing_s"] == 45
+    assert doc["visual_mix"]["full_screen_cards"] == 5 and doc["visual_mix"]["animated_overlays"] == 37
+    assert doc["shot_mix"]["motion_graphic"] == 5 and doc["card_spacing_s"] == 75
 
 
 def test_unknown_api_path_is_json_404(client):

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .models import ShotList
+from .models import PacingProfile, ShotList
 from .util import EM_DASH, ffprobe, read_model
 
 REQUIRED_FILES = ["final.mp4", "captions.srt", "captions.ass", "chapters.txt", "description.md",
@@ -65,21 +65,34 @@ def check_project(settings: Settings, project_id: str, min_minutes: float = 3.0)
     checks["chart"] = bool({"bar_chart", "line_chart"} & kinds)
     checks["title_card"] = "title_card" in kinds
     checks["every_shot_selected"] = all(s.selected for s in sl.shots)
-    checks.update(_animation_checks(sl, facts))
+    checks.update(_animation_checks(sl, facts, _top10(root)))
     checks.update(_text_checks(root))
     return {"ok": all(checks.values()), "checks": checks, "facts": facts}
 
 
 CARD_SHARE_MAX = 25.0  # percent of shots; above this the video reads as a slideshow of cards
+CARD_TIME_MAX = 10.0  # percent of runtime on full screen cards; long cards weigh more than their count
+CARD_HOLD_SLACK_S = 0.5  # a static card may hold this much past the profile's card_hold_max (rounding, splits)
 
 
-def _animation_checks(sl: ShotList, facts: dict[str, Any]) -> dict[str, bool]:
-    """Animation moves over the picture: full screen cards stay a minority and some map or chart rides on
-    footage or a still as an inset."""
+def _top10(root: Path) -> bool:
+    """A top 10 video (project format or profile) opens every item on a full screen number card by design."""
+    def load(p: Path) -> dict[str, Any]:
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    snap = load(root / "work" / "profile_snapshot.json").get("profile") or {}
+    return load(root / "project.json").get("format") == "top10" or bool(snap.get("top10"))
+
+
+def _animation_checks(sl: ShotList, facts: dict[str, Any], top10: bool = False) -> dict[str, bool]:
+    """Animation moves over the picture: full screen cards stay a minority by count and by runtime (top 10
+    number cards are structural, so a top 10 video skips the runtime check), a text or number card holds only
+    briefly, and some map or chart rides on footage or a still as an inset."""
     from .judge.qa import animation_share
     anim = animation_share(sl)
     facts["animation"] = anim
     return {"cards_sparing": anim["full_screen_cards"] <= CARD_SHARE_MAX,
+            "card_time_sparing": top10 or anim["full_screen_card_time"] <= CARD_TIME_MAX,
+            "card_hold_short": anim["max_card_hold_s"] <= PacingProfile().card_hold_max + CARD_HOLD_SLACK_S,
             "overlays_on_picture": anim["overlay_shots"] >= anim["full_screen_cards"],
             "inset_map_or_chart": anim["inset_overlays"] > 0}
 

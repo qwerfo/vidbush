@@ -53,9 +53,11 @@ DIRECTOR_RULES = [
     "search queries, most specific first, era correct. Optional overlay: a MotionSpec of an overlay kind, only "
     "naming or drawing something the narration of that beat supports.",
     "Animation moves over the picture: reference channels show most maps, charts, callouts and arrows as "
-    "overlays on footage or stills, and use full screen cards sparingly (about one per 45 seconds after the "
-    "opening), because a run of cards reads as a slideshow and loses the viewer. Prefer a map or chart as an "
-    "overlay; keep motion ideas for the moments that need the whole frame.",
+    "overlays on footage or stills, and use full screen cards sparingly (at most one per "
+    "full_screen_card_spacing_s seconds, the opening included, each on screen a few seconds as its words are "
+    "spoken), because a run of cards reads as a slideshow and loses the viewer. Prefer a map or chart as an "
+    "overlay, and a name, number or short phrase as a lower third or callout on the picture; keep motion ideas "
+    "for the moments that need the whole frame.",
     "Keep a visual subject on screen across consecutive beats about it rather than cutting to something new "
     "every beat: the viewer follows one thing while the narration develops it. Read previous_ideas and "
     "visual_anchors_so_far and continue the subjects the story is still on.",

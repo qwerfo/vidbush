@@ -169,3 +169,23 @@ One line each: the decision and why.
 - "Enough" counts web results only (not the local library), so owned footage never stops a shot from also searching stock sources, matching the earlier behaviour for local libraries.
 - A re-query of one shot (director loop, editor) rejoins the pool with its earlier spend counted and leaves it afterwards, so late re-queries draw on what the run left over.
 - qa_report shows a usage line for every source with a run budget (not only YouTube), with the number of shots that shared it and the searches deferred by fair shares.
+
+## Run 2: Full screen cards and card holds
+
+- A static full screen card (title, text, quote, callout, number) holds at most pacing.card_hold_max, 4 s in both shipped profiles, because a card is read in a few seconds and run 1 froze them for 6 to 12 s.
+- A full screen map, chart or other animated card holds at most 7 s (rules.MG_HOLD_MAX_S); the planner still draws motion slots from the motion_graphic pacing, and the rule trims them after the slot knows its kind.
+- The excess of a capped card first goes to a free neighbour within 1.15 times its max, and what is left (at least 1.5 s) becomes a footage shot of the same beat right after the card, so the beat stays on picture.
+- enforce_motion_min now grows only motion graphics, and never past their hold cap. It used to grow every shot shorter than the motion graphic min, which moved footage boundaries by up to 2 s and broke the inset gap.
+- The documentary title anchor at the setup and the top 10 number card anchors are card_hold_max long; they are locked, so the cap is applied where they are made.
+- Documentary default visual mix: full_screen_cards 5 (from 12) and animated_overlays 37 (from 30), so animation stays 42 percent and moves onto the picture.
+- card_spacing_s is 75 (from 45) in the model default and the documentary profile; the top 10 profile keeps 45.
+- A documentary hook is no longer exempt from card spacing (run 1 had 6 cards in its first 75 s); the recap stays exempt, and a top 10 hook stays exempt because the countdown opens on cards.
+- Cards on cue: the word that speaks a free text or number card must start at most 0.5 s before the card or 1.5 s into it (its number, digits or spelled out over up to four words, else the first content word of its title), searched inside the card's beat.
+- A card off its cue moves as a whole (one neighbour grows, the other shrinks, both within bounds) to start 0.3 s before the nearest cue; when it cannot, or the beat never says it, it is demoted.
+- demote_card keeps the card's message on footage: a title becomes a lower third, a number, text or callout card the same spec on a transparent background, a map or chart an inset. An inset is kept only when no other inset is within the 15 s inset gap.
+- Chapter titles are a lower third on the first footage idea of a scene's first beat, not a full screen title card.
+- Call to action beats get no motion idea at all (the closing title card is gone), and the assembler turns a free motion slot over a call to action beat into footage.
+- Spoken years ('two thousand seven', 'nineteen fifty-nine', 'eighteen oh five') are read as years in the number card path (ideas._spoken_years_to_digits), so they make a year card instead of a count up of 2,007 or 78. It is local to number_idea; era detection is the ai-images lane's own pass.
+- The director prompt no longer hard codes the spacing: it points at full_screen_card_spacing_s, says the opening is included and cards stay a few seconds on their words, and asks for names, numbers and short phrases as overlays.
+- QA animation_share adds full_screen_card_time (percent of runtime) and max_card_hold_s (static kinds), shown in the qa_report.md Animation table.
+- Acceptance adds card_time_sparing (full screen card time at most 10 percent of runtime) and card_hold_short (longest static card at most card_hold_max plus 0.5 s). A top 10 video (project format or profile snapshot) skips card_time_sparing because its number cards are structural.

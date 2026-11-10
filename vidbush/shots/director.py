@@ -23,6 +23,7 @@ from ..util import NullLogger
 from . import ideas as I
 from .assembler import FAMILY, _Assembler, ai_prompt, overlap, prompt_subject, signature  # noqa: F401 re-exported
 from .pacing import Anchor, plan_slots
+from .rules import MG_HOLD_MAX_S
 from .seat import (MAP_TOLERANCE_DEG, OVERLAY_KINDS, SYSTEM, check_chart, director_ideas,  # noqa: F401 re-exported
                    director_prompt, fix_map, validate_idea)
 
@@ -33,7 +34,7 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
                    profile: StyleProfile, brand: Brand, seats: Any,
                    rng: random.Random) -> tuple[ShotList, DirectorPlan]:
     """Ideas per beat (seat plus heuristics), pacing slots, rules; returns the ShotList and the merged plan."""
-    from .rules import apply_rules, space_cards
+    from .rules import apply_rules, cards_on_cue, space_cards
     log = getattr(seats, "log", None) or NullLogger()
     total = round(narration.duration + 1.0, 3)
     spans = beat_spans(script, narration)
@@ -52,6 +53,10 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
     shots = apply_rules(shots, ctx.ideas, ctx.idea_of, profile, ctx.rebind, ctx.overlay_for, frozenset(ctx.locked),
                         overlay_pool=ctx.overlay_pool, footage_for=ctx.footage_for)
     ensure_chart(shots, ctx, spans, log)
+    off_cue = cards_on_cue(shots, narration.words, spans, profile, ctx.ideas, ctx.rebind, ctx.footage_for,
+                           ctx.overlay_for, frozenset(ctx.locked))
+    if off_cue:
+        log.info("full screen cards moved onto footage (not on their cue)", cards=off_cue)
     demoted = space_cards(shots, profile, exempt, ctx.ideas, ctx.rebind, ctx.footage_for, ctx.overlay_for,
                           frozenset(ctx.locked))
     if demoted:
@@ -85,7 +90,7 @@ def ensure_chart(shots: list[Shot], ctx: _Assembler, spans: dict[str, tuple[floa
             if sh.id in ctx.locked or shared < min(2.0, 0.3 * sh.duration):
                 continue
             is_mg = sh.type == ShotType.motion_graphic
-            if not is_mg and (sh.duration < mg_min or _mg_neighbours(shots, k) >= 1):
+            if not is_mg and (sh.duration < mg_min or sh.duration > MG_HOLD_MAX_S or _mg_neighbours(shots, k) >= 1):
                 continue
             rank = (1 if is_mg else 0, shared)
             if best is None or rank > best[0]:
@@ -105,9 +110,11 @@ def _mg_neighbours(shots: list[Shot], k: int) -> int:
 
 def card_exempt_ranges(script: Script, spans: dict[str, tuple[float, float]], profile: StyleProfile,
                        anchors: list[Anchor]) -> list[tuple[float, float]]:
-    """Where the card spacing cap does not apply: the hook (first hook_seconds) and the recap (the recap
-    anchor, and any scene titled Recap), since a fast open and a closing summary are made of cards."""
-    out = [(0.0, profile.pacing.hook_seconds)]
+    """Where the card spacing cap does not apply: the recap (the recap anchor, and any scene titled Recap),
+    since a closing summary is made of cards, and the hook of a top 10 video (its countdown opens on cards).
+    A documentary hook keeps the cap: a run of cards there reads as a slideshow before the story starts."""
+    top10 = profile.top10 or script.format == VideoFormat.top10
+    out = [(0.0, profile.pacing.hook_seconds)] if top10 else []
     out += [(a.start, a.start + a.duration) for a in anchors if a.tag == "recap"]
     for sc in script.scenes:
         if re.search(r"\brecap\b", sc.title, re.I) and sc.beats and sc.beats[0].id in spans:
@@ -190,7 +197,6 @@ def structural_anchors(script: Script, spans: dict[str, tuple[float, float]], pr
                        top10: bool, total: float, topic: str) -> list[Anchor]:
     """Top 10: number card and item lower third per item, recap grid on the Recap scene (else the outro).
     Documentary: main title at the setup."""
-    mg = profile.pacing.motion_graphic
     pal = profile.palette
     out: list[Anchor] = []
     starts = {sc.id: spans[sc.beats[0].id][0] for sc in script.scenes if sc.beats and sc.beats[0].id in spans}
@@ -206,7 +212,8 @@ def structural_anchors(script: Script, spans: dict[str, tuple[float, float]], pr
     setup = next((sc for sc in script.scenes if sc.purpose == ScenePurpose.setup and sc.id in starts), None)
     if setup is not None and starts[setup.id] >= 5.0:
         main, _, sub = (script.title or topic).partition(":")
-        out.append(Anchor(start=starts[setup.id], duration=mg.min, type=ShotType.motion_graphic, tag="title_card",
+        out.append(Anchor(start=starts[setup.id], duration=profile.pacing.card_hold_max, type=ShotType.motion_graphic,
+                          tag="title_card",
                           motion=b.title_card_spec(main.strip() or topic, sub.strip(), palette=pal)))
     return out
 
@@ -217,6 +224,7 @@ def _item_anchors(sc: Scene, n: int, s0: float, length: float, profile: StylePro
     title = item_title(sc.title)
     nc = min(mg.max, max(mg.min, mg.mean * 0.8))
     nc = max(mg.min * 0.6, min(nc, length - 1.0))
+    nc = min(nc, profile.pacing.card_hold_max)
     out = [Anchor(start=s0, duration=nc, type=ShotType.motion_graphic, tag="number_card", pinned=True,
                   motion=b.number_card_spec(f"#{n}", label=title, palette=profile.palette))]
     fo = min(fo_pace.mean, length - nc - 1.0)

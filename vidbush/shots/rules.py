@@ -5,21 +5,29 @@ motion graphics at their pacing min where the neighbours can give time, make
 the opening dense (opening_safe footage, short motion graphics), avoid
 consecutive shots from the same idea (framing full, tight, detail when an
 idea must repeat), break runs of three identical shot types with count
-preserving swaps inside a family, trim long text cards toward the motion
-graphic min, break runs of full screen cards (more than two in a row or about
-16 s) by turning one into footage, and drop overlay text repeated within 30 s
-(another overlay, or the plain sibling type). Shot times stay contiguous.
-space_cards() (run last by the director) keeps at most one free full screen
-card per profile.pacing.card_spacing_s outside the hook and recap: a card
-that breaks it becomes footage, and a map or chart card moves onto that
-footage as an inset overlay so the information stays on screen.
+preserving swaps inside a family, cap how long a full screen card holds (the
+excess becomes footage of the same beat), break runs of full screen cards
+(more than two in a row or about 16 s) by turning one into footage, and drop
+overlay text repeated within 30 s (another overlay, or the plain sibling
+type). Shot times stay contiguous.
+cards_on_cue() and space_cards() run last in the director: a text or number
+card must start on the word that speaks it, and at most one free full screen
+card per profile.pacing.card_spacing_s outside the exempt ranges. A card that
+breaks either becomes footage carrying its message as an overlay (a title as
+a lower third, a number or text on a transparent background, a map or chart
+as an inset) so the information stays on screen.
 """
 from __future__ import annotations
 
-from typing import Callable, Optional
+import re
+from typing import Callable, Optional, Sequence
 
-from ..models import OVERLAY_TYPES, MotionKind, MotionSpec, Shot, ShotType, StyleProfile, VisualIdea
-from .pacing import MAX_MG_RUN, MAX_MG_RUN_S, bounds, card_too_close
+from ..mg import builders as b
+from ..models import (OVERLAY_TYPES, STATIC_CARD_KINDS, MotionKind, MotionSpec, Shot, ShotType, StyleProfile,
+                      VisualIdea, Word)
+from . import ideas as I
+from .assembler import INSET_GAP_S
+from .pacing import EPS, MAX_MG_RUN, MAX_MG_RUN_S, bounds, card_too_close
 
 MIN_SHOT = 1.5
 FRAMINGS = ("full", "tight", "detail")
@@ -31,7 +39,7 @@ FAMILY_OF = {ShotType.footage: "footage", ShotType.footage_overlay: "footage", S
 
 PLAIN = {ShotType.footage_overlay: ShotType.footage, ShotType.image_overlay: ShotType.image}
 TEXT_CARD_KINDS = {MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout}
-TEXT_CARD_EXTRA_S = 1.0  # text cards hold at most the motion graphic min plus this
+MG_HOLD_MAX_S = 7.0  # a full screen map, chart or other animated card holds at most this
 OVERLAY_REPEAT_S = 30.0
 
 Rebind = Callable[[Shot, VisualIdea, Optional[int]], None]
@@ -49,7 +57,7 @@ def apply_rules(shots: list[Shot], ideas: list[VisualIdea], idea_of: dict[str, i
     densify_opening(shots, ideas, idea_of, profile, rebind, locked)
     avoid_repeats(shots, ideas, idea_of, rebind, locked)
     break_type_runs(shots, overlay_for, locked)
-    trim_text_cards(shots, profile, locked)
+    cap_card_holds(shots, profile, ideas, rebind, footage_for, overlay_for, locked)
     if footage_for is not None:
         break_card_runs(shots, ideas, rebind, footage_for, overlay_for, locked)
     dedupe_overlays(shots, overlay_pool or (lambda sh: [o for o in [overlay_for(sh)] if o is not None]), locked)
@@ -97,11 +105,21 @@ def _slack(shot: Shot, profile: StyleProfile) -> float:
     return max(0.0, shot.duration - max(lo, MIN_SHOT))
 
 
+def hold_cap(spec: Optional[MotionSpec], profile: StyleProfile) -> Optional[float]:
+    """Longest hold of a full screen card: a static text or number card is read in card_hold_max, an animated
+    map or chart plays out in MG_HOLD_MAX_S. None when the card has no spec yet."""
+    if spec is None:
+        return None
+    return profile.pacing.card_hold_max if spec.kind in STATIC_CARD_KINDS else MG_HOLD_MAX_S
+
+
 def enforce_motion_min(shots: list[Shot], profile: StyleProfile) -> None:
-    """Grow motion graphics shorter than their pacing min using slack from neighbours."""
+    """Grow motion graphics shorter than their pacing min using slack from neighbours, never past their hold cap."""
     mg_min = profile.pacing.motion_graphic.min
     for i, s in enumerate(shots):
-        need = mg_min - s.duration
+        if s.type != ShotType.motion_graphic:
+            continue  # footage and stills keep the length the planner drew for them
+        need = min(mg_min, hold_cap(s.motion, profile) or mg_min) - s.duration
         for j in (i + 1, i - 1):
             if need <= 1e-6 or not 0 <= j < len(shots):
                 continue
@@ -229,24 +247,50 @@ def _set_type(shot: Shot, new: ShotType, overlay_for: OverlayFor) -> None:
 
 # ---------------------------------------------------------------- full screen cards
 
-def trim_text_cards(shots: list[Shot], profile: StyleProfile, locked: frozenset[str] = frozenset()) -> None:
-    """Title, quote and callout cards longer than the motion graphic min plus TEXT_CARD_EXTRA_S give the
-    excess to a non motion neighbour that stays within 1.15 times its max."""
-    cap = profile.pacing.motion_graphic.min + TEXT_CARD_EXTRA_S
-    for i, s in enumerate(shots):
-        if s.type != ShotType.motion_graphic or s.motion is None or s.motion.kind not in TEXT_CARD_KINDS:
-            continue
-        if s.id in locked:
-            continue
-        excess = s.duration - cap
-        for j in (i + 1, i - 1):
+def cap_card_holds(shots: list[Shot], profile: StyleProfile, ideas: list[VisualIdea], rebind: Rebind,
+                   footage_for: Optional[FootageFor], overlay_for: OverlayFor,
+                   locked: frozenset[str] = frozenset()) -> None:
+    """A free full screen card holds at most its hold_cap. The excess goes to a non motion neighbour that
+    stays within 1.15 times its max; what is left becomes a footage shot of the same beat right after the
+    card (at least MIN_SHOT long), so the beat stays on picture instead of on a frozen card."""
+    k = 0
+    while k < len(shots):
+        s = shots[k]
+        cap = hold_cap(s.motion, profile) if s.type == ShotType.motion_graphic and s.id not in locked else None
+        excess = s.duration - cap if cap is not None else 0.0
+        for j in (k + 1, k - 1):
             if excess <= 1e-6 or not 0 <= j < len(shots) or shots[j].type == ShotType.motion_graphic:
                 continue
             room = bounds(profile, shots[j].type, shots[j].start)[1] * 1.15 - shots[j].duration
             give = min(excess, max(0.0, room))
             if give > 0:
-                _move(shots, j, i, give)
+                _move(shots, j, k, give)
                 excess -= give
+        if excess > 1e-6 and footage_for is not None:
+            cut = round(max(excess, MIN_SHOT), 3)
+            rest = s.model_copy(deep=True, update={"id": f"{s.id}_hold", "type": ShotType.footage, "motion": None,
+                                                   "overlay": None, "transition_in": "cut", "duration": cut})
+            s.duration = round(s.duration - cut, 3)
+            shots.insert(k + 1, rest)
+            _retime(shots)
+            if not _to_footage(shots, k + 1, ideas, rebind, footage_for, overlay_for):
+                del shots[k + 1]
+                s.duration = round(s.duration + cut, 3)
+                _retime(shots)
+        k += 1
+
+
+def _to_footage(shots: list[Shot], k: int, ideas: list[VisualIdea], rebind: Rebind, footage_for: FootageFor,
+                overlay_for: OverlayFor) -> bool:
+    """Make shot k footage of its beat, with an overlay unless that makes a run; False when no idea fits."""
+    idx = footage_for(shots[k])
+    if idx is None:
+        return False
+    shots[k].type = ShotType.footage
+    rebind(shots[k], ideas[idx], idx)
+    if not _creates_run(shots, k, ShotType.footage_overlay):
+        _set_type(shots[k], ShotType.footage_overlay, overlay_for)
+    return True
 
 
 def _card_runs(shots: list[Shot]) -> list[list[int]]:
@@ -276,13 +320,8 @@ def break_card_runs(shots: list[Shot], ideas: list[VisualIdea], rebind: Rebind, 
         mid = (bad[0] + bad[-1]) / 2
         k = min(free, key=lambda x: (shots[x].motion is None or shots[x].motion.kind not in TEXT_CARD_KINDS,
                                      abs(x - mid)))
-        idx = footage_for(shots[k])
-        if idx is None:
+        if not _to_footage(shots, k, ideas, rebind, footage_for, overlay_for):
             return
-        shots[k].type = ShotType.footage
-        rebind(shots[k], ideas[idx], idx)
-        if not _creates_run(shots, k, ShotType.footage_overlay):
-            _set_type(shots[k], ShotType.footage_overlay, overlay_for)
 
 
 # ---------------------------------------------------------------- overlay text
@@ -367,7 +406,7 @@ def space_cards(shots: list[Shot], profile: StyleProfile, exempt: list[tuple[flo
 
 def demote_card(shots: list[Shot], k: int, ideas: list[VisualIdea], rebind: Rebind, footage_for: FootageFor,
                 overlay_for: OverlayFor) -> bool:
-    """Turn a free card into footage of its beat; a map or chart rides on it as an inset overlay."""
+    """Turn a free card into footage of its beat that keeps the card's message as an overlay (card_overlay)."""
     shot = shots[k]
     spec = shot.motion
     idx = footage_for(shot)
@@ -375,9 +414,97 @@ def demote_card(shots: list[Shot], k: int, ideas: list[VisualIdea], rebind: Rebi
         return False
     shot.type = ShotType.footage
     rebind(shot, ideas[idx], idx)
-    if spec is not None and spec.kind in INSET_CARD_KINDS:
-        shot.type = ShotType.footage_overlay
-        shot.overlay = spec.model_copy(update={"background": "transparent"})
+    keep = card_overlay(spec) if spec is not None else None
+    if keep is not None and keep.kind in INSET_CARD_KINDS and any(
+            o is not shot and o.overlay is not None and o.overlay.kind in INSET_CARD_KINDS
+            and abs(o.start - shot.start) < INSET_GAP_S for o in shots):
+        keep = None  # an inset needs room to be read (assembler.insets)
+    if keep is not None:
+        shot.type, shot.overlay = ShotType.footage_overlay, keep
     elif not _creates_run(shots, k, ShotType.footage_overlay):
         _set_type(shot, ShotType.footage_overlay, overlay_for)
     return True
+
+
+def card_overlay(spec: MotionSpec) -> Optional[MotionSpec]:
+    """A full screen card's message as an overlay on footage: a title as a lower third, a map or chart as an
+    inset, a number, text or callout card on a transparent background. None for other kinds."""
+    if spec.kind == MotionKind.title_card:
+        p = spec.payload
+        return b.lower_third_spec(str(p.get("title", "")), str(p.get("subtitle", "")), duration=spec.duration,
+                                  palette=spec.style.palette)
+    if spec.kind in INSET_CARD_KINDS or spec.kind in STATIC_CARD_KINDS:
+        return spec.model_copy(update={"background": "transparent"})
+    return None
+
+
+# ---------------------------------------------------------------- cards on cue
+
+CUE_EARLY_S = 0.5  # the cue word may start this long before the card
+CUE_LATE_S = 1.5  # or at most this far into it
+CUE_LEAD_S = 0.3  # a card moved to its cue starts this long before the word
+_SAID_NUMBER_RE = re.compile(r"\$?(\d[\d,]*(?:\.\d+)?)\s*(?:%|percent)?")
+
+
+def _norm(word: str) -> str:
+    return re.sub(r"'s$", "", word.lower().strip(".,;:!?\"'()[]"))
+
+
+def cue_times(spec: MotionSpec, words: Sequence[Word]) -> list[float]:
+    """Start times of the words that speak a card's key text: a number card's number (digits or spelled out,
+    up to four words), else the first content word of the card's title."""
+    p = spec.payload
+    if spec.kind != MotionKind.number_card:
+        key = next((t for t in map(_norm, str(p.get("title", "")).split()) if len(t) > 2 and t not in I.STOP), "")
+        return [w.start for w in words if key and _norm(w.text) == key]
+    m = re.search(r"\d[\d,]*(?:\.\d+)?", str(p.get("number", "")))
+    if m is None:
+        return []
+    key = float(m.group(0).replace(",", ""))
+    out: list[float] = []
+    for i, w in enumerate(words):
+        for n in range(1, 5):
+            said = _SAID_NUMBER_RE.fullmatch(I.spelled_to_digits(" ".join(_norm(x.text) for x in words[i:i + n])))
+            if said and float(said.group(1).replace(",", "")) == key:
+                out.append(w.start)
+                break
+    return out
+
+
+def _shift(shots: list[Shot], k: int, delta: float, profile: StyleProfile, locked: frozenset[str]) -> bool:
+    """Move card k by delta seconds, keeping its length: one neighbour grows and the other shrinks. Both must
+    be free non card shots that stay within their min and 1.15 times their max."""
+    if k == 0 or k + 1 >= len(shots):
+        return False
+    for sh, new in ((shots[k - 1], shots[k - 1].duration + delta), (shots[k + 1], shots[k + 1].duration - delta)):
+        lo, hi, _ = bounds(profile, sh.type, sh.start)
+        if sh.type == ShotType.motion_graphic or sh.id in locked or not max(lo, MIN_SHOT) - EPS <= new <= hi * 1.15:
+            return False
+    shots[k - 1].duration = round(shots[k - 1].duration + delta, 3)
+    shots[k + 1].duration = round(shots[k + 1].duration - delta, 3)
+    _retime(shots)
+    return True
+
+
+def cards_on_cue(shots: list[Shot], words: Sequence[Word], spans: dict[str, tuple[float, float]],
+                 profile: StyleProfile, ideas: list[VisualIdea], rebind: Rebind, footage_for: FootageFor,
+                 overlay_for: OverlayFor, locked: frozenset[str] = frozenset()) -> int:
+    """A free text or number card appears on its cue: a word of its beat that speaks its number or name
+    (cue_times) starts at most CUE_EARLY_S before the card or CUE_LATE_S into it. Otherwise the card moves to
+    start CUE_LEAD_S before the nearest cue (_shift); when it cannot move, or the beat never says it, it
+    becomes footage carrying its message (demote_card). Returns cards demoted."""
+    demoted = 0
+    for k, s in enumerate(shots):
+        if s.type != ShotType.motion_graphic or s.id in locked or s.motion is None \
+                or s.motion.kind not in STATIC_CARD_KINDS:
+            continue
+        a, z = spans.get(s.beat_id, (s.start, s.end))
+        cues = cue_times(s.motion, [w for w in words if a - EPS <= w.start <= z + EPS])
+        if any(s.start - CUE_EARLY_S <= c <= s.start + CUE_LATE_S for c in cues):
+            continue
+        cue = min(cues, key=lambda c: abs(c - s.start)) if cues else None
+        if cue is not None and _shift(shots, k, cue - CUE_LEAD_S - s.start, profile, locked):
+            continue
+        if demote_card(shots, k, ideas, rebind, footage_for, overlay_for):
+            demoted += 1
+    return demoted

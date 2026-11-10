@@ -20,24 +20,26 @@ def _cards(sl: ShotList) -> list[Shot]:
     return [s for s in sl.shots if s.type == ShotType.motion_graphic]
 
 
-def test_default_split_is_twelve_cards_and_thirty_overlays() -> None:
+def test_default_split_is_five_cards_and_thirty_seven_overlays() -> None:
     prof = StyleProfile(id="x")
-    assert prof.visual_mix["full_screen_cards"] == 12 and prof.visual_mix["animated_overlays"] == 30
+    assert prof.visual_mix["full_screen_cards"] == 5 and prof.visual_mix["animated_overlays"] == 37
     mix = prof.shot_mix()
     assert sum(mix.values()) == pytest.approx(100.0, abs=0.05)
-    assert mix["motion_graphic"] == 12 and mix["footage"] == 20 and mix["image"] == 7
-    # 30 animated overlays decorate footage and stills in the 41 to 17 ratio of the picture mix
-    assert mix["footage_overlay"] == pytest.approx(21 + 30 * 41 / 58, abs=0.05)
-    assert mix["image_overlay"] == pytest.approx(10 + 30 * 17 / 58, abs=0.05)
-    assert prof.animation_target() == {"full_screen_cards": 12.0, "overlay_shots": pytest.approx(61.0)}
+    assert mix["motion_graphic"] == 5 and mix["footage"] == 20 and mix["image"] == 7
+    # 37 animated overlays decorate footage and stills in the 41 to 17 ratio of the picture mix
+    assert mix["footage_overlay"] == pytest.approx(21 + 37 * 41 / 58, abs=0.05)
+    assert mix["image_overlay"] == pytest.approx(10 + 37 * 17 / 58, abs=0.05)
+    assert prof.animation_target() == {"full_screen_cards": 5.0, "overlay_shots": pytest.approx(68.0)}
+    assert prof.pacing.card_spacing_s == 75 and prof.pacing.card_hold_max == 4
 
 
 def test_shipped_profiles_load_the_split() -> None:
     settings = load_settings(REPO_ROOT)
     doc = load_style_profile(settings, "documentary_default")
     top = load_style_profile(settings, "top10_default")
-    assert doc.shot_mix()["motion_graphic"] == 12 and doc.pacing.card_spacing_s == 45
+    assert doc.shot_mix()["motion_graphic"] == 5 and doc.pacing.card_spacing_s == 75
     assert top.top10 and top.shot_mix()["motion_graphic"] == 20  # number cards are full screen by design
+    assert doc.pacing.card_hold_max == top.pacing.card_hold_max == 4
 
 
 def test_legacy_motion_graphic_key_reads_as_full_screen_cards() -> None:
@@ -69,7 +71,7 @@ def test_planner_keeps_card_spacing_and_mix(seed: int) -> None:
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
-def test_built_documentary_keeps_one_card_per_45_seconds(seed: int) -> None:
+def test_built_documentary_keeps_one_card_per_75_seconds_hook_included(seed: int) -> None:
     script = doc_script(n_scenes=8, beats_per_scene=7)
     nar = narrate(script)
     prof = profile()
@@ -77,11 +79,13 @@ def test_built_documentary_keeps_one_card_per_45_seconds(seed: int) -> None:
     from vidbush.shots.director import beat_spans
     spans = beat_spans(script, nar)
     exempt = card_exempt_ranges(script, spans, prof, structural_anchors(script, spans, prof, False, sl.duration, "x"))
+    assert all(a > 0.0 for a, _z in exempt)  # a documentary hook is not exempt
     starts = [s.start for s in _cards(sl)]
     for k, t in enumerate(starts):
         assert not card_too_close(t, starts[:k] + starts[k + 1:], prof.pacing.card_spacing_s, exempt), starts
     anim = animation_share(sl)
-    assert anim["full_screen_cards"] <= 17 and anim["overlay_shots"] >= 50  # animation moves over the picture
+    assert anim["full_screen_cards"] <= 8 and anim["overlay_shots"] >= 50  # animation moves over the picture
+    assert anim["full_screen_card_time"] <= 10.0 and anim["max_card_hold_s"] <= prof.pacing.card_hold_max + 1e-6
     assert anim["inset_overlays"] > 0
 
 
@@ -141,7 +145,8 @@ def test_qa_animation_share_counts_overlays_on_top_of_their_shot() -> None:
     sl = ShotList(project_id="p", duration=4, shots=[
         shot(0, ShotType.footage), shot(1, ShotType.footage_overlay, inset),
         shot(2, ShotType.image_overlay, b.lower_third_spec("Colon")), shot(3, ShotType.motion_graphic)])
-    assert animation_share(sl) == {"full_screen_cards": 25.0, "overlay_shots": 50.0, "inset_overlays": 25.0}
+    assert animation_share(sl) == {"full_screen_cards": 25.0, "overlay_shots": 50.0, "inset_overlays": 25.0,
+                                   "full_screen_card_time": 25.0, "max_card_hold_s": 0.0}
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
