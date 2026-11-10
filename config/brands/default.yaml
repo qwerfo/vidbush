@@ -5,10 +5,12 @@ name: Default brand
 # An empty voice_id uses ELEVENLABS_VOICE_ID from .env, then Brian.
 # Voice ids differ by TTS provider: voice_ids maps a tts provider name (config/seats.yaml) to its own id;
 # a provider without an entry uses voice_id. Elevate and Algrow front ElevenLabs, so the same id may work.
+# JBFqnCBsd6RMkjVDRZzb is the premade voice "George", RadioPlay's narrator, verified live on Elevate and on
+# Algrow (RadioPlay config/audio.yaml); Brian is not verified there. ElevenLabs direct keeps Brian.
 voice:
   provider: elevenlabs
   voice_id: "nPczCjzI2devNBz1zQrb"
-  voice_ids: {}   # e.g. {elevate_tts: "...", algrow_tts: "...", elevenlabs: "..."}
+  voice_ids: {elevate_tts: "JBFqnCBsd6RMkjVDRZzb", algrow_tts: "JBFqnCBsd6RMkjVDRZzb"}
   model: auto
   stability: 0.45
   similarity: 0.8

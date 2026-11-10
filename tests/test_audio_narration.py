@@ -217,7 +217,7 @@ def test_seat_error_propagates_and_language_is_passed(make_ctx: Any) -> None:
     seats = FakeRealSeats()
     ctx.brand.language = "de"
     nar.narrate(_script(), ctx.brand, seats, ctx.settings, ctx.work, ctx.log)
-    assert seats.kwargs == {"language": "de"}
+    assert seats.kwargs["language"] == "de"
 
 
 class NoTimingSeats(FakeRealSeats):

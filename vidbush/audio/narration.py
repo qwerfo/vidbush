@@ -83,8 +83,9 @@ def plan_chunks(script: Script, per_beat: bool, max_chars: int = MAX_CHUNK_CHARS
 
 
 def synthesize_chunk(chunk: Chunk, brand: Brand, seats: Any, nar_dir: Path, log: JsonLogger,
-                     allow_mock_fallback: bool = False) -> Chunk:
+                     allow_mock_fallback: bool = False, previous_text: str = "", next_text: str = "") -> Chunk:
     """TTS for one chunk, cached on disk by text, voice and language (a sidecar json keeps words).
+    previous_text and next_text are the neighbouring chunks' text, for models that keep prosody across them.
 
     With a real TTS seat, a chunk that came back from the mock voice raises ProviderError
     unless allow_mock_fallback: mock audio is never spliced silently into real narration.
@@ -98,7 +99,8 @@ def synthesize_chunk(chunk: Chunk, brand: Brand, seats: Any, nar_dir: Path, log:
             return chunk.model_copy(update={"path": cached.path, "words": cached.words,
                                             "is_mock": cached.is_mock, "engine": cached.engine})
     path, words, is_mock, engine = seats.tts(chunk.text, brand.voice, nar_dir / f"chunk_{key}.wav", "narration",
-                                             language=brand.language)
+                                             language=brand.language, previous_text=previous_text,
+                                             next_text=next_text)
     if real and is_mock:
         if not allow_mock_fallback:
             raise ProviderError(f"tts returned mock audio for scene {chunk.scene_id} with a real tts seat")
@@ -114,11 +116,15 @@ def synthesize_all(chunks: list[Chunk], brand: Brand, seats: Any, settings: Sett
     """First chunk alone (it settles the model for the run), then the rest in parallel."""
     if not chunks:
         return []
-    first = synthesize_chunk(chunks[0], brand, seats, nar_dir, log, settings.allow_mock_fallback)
+    def one(i: int) -> Chunk:
+        return synthesize_chunk(chunks[i], brand, seats, nar_dir, log, settings.allow_mock_fallback,
+                                previous_text=chunks[i - 1].text if i > 0 else "",
+                                next_text=chunks[i + 1].text if i + 1 < len(chunks) else "")
+
+    first = one(0)
     workers = max(1, min(4, settings.render.workers))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        rest = list(pool.map(lambda c: synthesize_chunk(c, brand, seats, nar_dir, log,
-                                                        settings.allow_mock_fallback), chunks[1:]))
+        rest = list(pool.map(one, range(1, len(chunks))))
     done = [first] + rest
     engines = sorted({c.engine for c in done if not c.is_mock})
     if len(engines) > 1:

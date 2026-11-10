@@ -20,54 +20,69 @@
 # LLM providers stream by default (options.stream: true); set stream: false per provider to turn it off.
 # A role entry may name model_match: {family, version} instead of a model: the id is read from the
 # provider's GET /models at startup, matched by family and version, and logged once (no guessed ids).
-# model_env still wins when that variable is set, so an operator can pin an exact id.
+# model_match may add prefix: "" for non Claude families (grok, gemini); the default prefix is claude.
+# model_env still wins when that variable is set, so an operator can pin an exact id, unless the pin names
+# another family or version than the entry's model_match: then it is a stale leftover, ignored with one warning.
+# An exact model (no model_match) carries no model_env, so an old .env pin never replaces the policy id.
 # tts providers: force_align: true ignores a provider's word timings and aligns the audio to the script.
 # A tts entry whose type is not registered in this build is skipped with one warning.
 # VIDBUSH_PREFER_PROVIDER in .env moves named providers to the front of every role (see .env.example).
+# An error about the seat itself (401, 402, 403, model_not_in_channel, usage or credit limits) marks that
+# provider:model down until the next probe (10 min); an error about one request falls back for that request.
 
 roles:
-  # Seat policy (Adam, 2026-11-05). Anthropic models: Sonnet 5.5 for director and researcher, Opus 5.5
-  # for writer. Primary wellflow_cheap (the Wellflow key whose name contains "cheap"; it serves Anthropic
-  # models only), anthropic_direct (Adam's own Anthropic key) as the alternative primary, CloseRouter's
-  # Anthropic ids as the cross relay fallback so a Wellflow outage never stops a script.
-  researcher:
-    - {provider: wellflow_cheap, model_env: LLM_RESEARCHER_MODEL, model_match: {family: sonnet, version: "5.5"}}
-    - {provider: anthropic_direct, model_match: {family: sonnet, version: "5.5"}}
-    - {provider: closerouter, model_match: {family: sonnet, version: "5.5"}}
+  # Seat policy (Adam, 2026-11-11), exact order. Exact ids where they are verified; model_match where a
+  # relay's spelling is not. Prices (options.price_per_mtok, USD per million tokens) sit on the role entry
+  # because one relay serves models at different prices; an entry without one is priced from the
+  # provider's own GET /models price list, else the generic estimate.
+  # Writer, Opus 5.5: wellflow_cheap (Anthropic models only, flat 0.30), CloseRouter, Adam's Anthropic key.
   writer:
-    - {provider: wellflow_cheap, model_env: LLM_WRITER_MODEL, model_match: {family: opus, version: "5.5"}}
-    - {provider: anthropic_direct, model_match: {family: opus, version: "5.5"}}
-    - {provider: closerouter, model_match: {family: opus, version: "5.5"}}
+    - {provider: wellflow_cheap, model: "claude-opus-5-5", options: {price_per_mtok: {prompt: 0.30, completion: 0.30}}}
+    - {provider: closerouter, model: "anthropic/claude-opus-5.5",
+       options: {price_per_mtok: {prompt: 0.205866, completion: 1.029332}}}
+    - {provider: anthropic_direct, model: "claude-opus-5-5"}
+  # Director and researcher, Sonnet 5.5: CloseRouter (its Sonnet 5.5 id is unverified, so model_match),
+  # openlux, Adam's Anthropic key. Not wellflow_cheap: it answers 403 model_not_in_channel for Sonnet.
+  researcher:
+    - {provider: closerouter, model_env: LLM_RESEARCHER_MODEL, model_match: {family: sonnet, version: "5.5"}}
+    - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824}}}
+    - {provider: anthropic_direct, model: "claude-sonnet-5-5"}
   director:
-    - {provider: wellflow_cheap, model_env: LLM_DIRECTOR_MODEL, model_match: {family: sonnet, version: "5.5"}}
-    - {provider: anthropic_direct, model_match: {family: sonnet, version: "5.5"}}
-    - {provider: closerouter, model_match: {family: sonnet, version: "5.5"}}
-  # Non-Anthropic models: CloseRouter primary, Wellflow normal key fallback, both streamed.
-  # Ids verified live on 2026-11-04 (docs/PROVIDER_NOTES.md); set the *_MODEL variables to change them.
+    - {provider: closerouter, model_env: LLM_DIRECTOR_MODEL, model_match: {family: sonnet, version: "5.5"}}
+    - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824}}}
+    - {provider: anthropic_direct, model: "claude-sonnet-5-5"}
+  # Editor, Grok 4.7: a text only role (revise, rewrite_beat and the AI image prompt safety rewrite), the
+  # role that must not refuse or water down a prompt. openlux and Wellflow grok ids are unverified.
   editor:
-    - {provider: closerouter, model_env: LLM_CHEAP_MODEL, model: "google/gemini-3.8-flash"}
-    - {provider: wellflow, model_env: LLM_FALLBACK_CHEAP_MODEL, model: "gemini-3.8-flash"}
+    - {provider: closerouter, model: "x-ai/grok-4.7"}
+    - {provider: openlux, model_match: {family: grok, version: "4.7", prefix: ""}}
+    - {provider: wellflow, model_match: {family: grok, version: "4.7", prefix: ""}}
+  # Judge, vision and cheap_classifier, Gemini 3.8 Flash: they send images and run in volume.
+  # CloseRouter and Wellflow ids verified live on 2026-11-04; the openlux id is unverified.
   judge:
-    - {provider: closerouter, model_env: VISION_MODEL, model: "google/gemini-3.8-flash"}
-    - {provider: wellflow, model_env: VISION_FALLBACK_MODEL, model: "gemini-3.8-flash"}
+    - {provider: closerouter, model: "google/gemini-3.8-flash"}
+    - {provider: openlux, model_match: {family: gemini, version: "3.8-flash", prefix: ""}}
+    - {provider: wellflow, model: "gemini-3.8-flash"}
   vision:
-    - {provider: closerouter, model_env: VISION_MODEL, model: "google/gemini-3.8-flash"}
-    - {provider: wellflow, model_env: VISION_FALLBACK_MODEL, model: "gemini-3.8-flash"}
+    - {provider: closerouter, model: "google/gemini-3.8-flash"}
+    - {provider: openlux, model_match: {family: gemini, version: "3.8-flash", prefix: ""}}
+    - {provider: wellflow, model: "gemini-3.8-flash"}
   cheap_classifier:
-    - {provider: closerouter, model_env: VISION_CHEAP_MODEL, model: "google/gemini-3.8-flash"}
-    - {provider: wellflow, model_env: VISION_FALLBACK_MODEL, model: "gemini-3.8-flash"}
+    - {provider: closerouter, model: "google/gemini-3.8-flash"}
+    - {provider: openlux, model_match: {family: gemini, version: "3.8-flash", prefix: ""}}
+    - {provider: wellflow, model: "gemini-3.8-flash"}
   # Images: Elevate then Algrow, unchanged.
   image:
     - {provider: image_primary, model_env: IMAGE_MODEL, model: "your-image-model"}
     - {provider: image_fallback, model_env: IMAGE_FALLBACK_MODEL, model: "your-fallback-image-model"}
   video:
     - {provider: video_primary, model_env: VIDEO_MODEL, model: "your-image-to-video-model"}
-  # TTS order (Adam): Elevate, then Algrow, then ElevenLabs direct. elevate_tts is the type the laptop
-  # lane adds; until it is registered the entry is skipped with one warning and Algrow serves.
+  # TTS order (Adam, 2026-11-11): ElevenLabs direct first while that key has credits (the brand model auto
+  # picks eleven_v4 from model_preference), then Elevate eleven_v4, then Algrow.
   tts:
+    - {provider: elevenlabs, model: "eleven_v4"}
     - {provider: elevate_tts, model: "eleven_v4"}
     - {provider: algrow_tts, model: "eleven_v4"}
-    - {provider: elevenlabs, model: "auto"}
   search:
     - {provider: web_search, model: ""}
 
@@ -80,9 +95,13 @@ providers:
                    key_env: WELLFLOW_API_KEY, options: {stream: true, max_concurrency: 2}}
   closerouter:    {type: openai_compat, base_url_env: CLOSEROUTER_BASE_URL, base_url: "https://api.closerouter.dev/v1",
                    key_env: CLOSEROUTER_API_KEY, options: {stream: true, max_concurrency: 8}}
-  # Adam's own Anthropic key, native Messages API (vidbush/providers/llm_anthropic.py).
+  # openlux: OpenAI compatible relay; GET /models lists ids (claude-sonnet-5-5, claude-opus-5-5) without prices.
+  openlux:        {type: openai_compat, base_url_env: OPENLUX_BASE_URL, base_url: "https://api.openlux.ai/v1",
+                   key_env: OPENLUX_API_KEY, options: {stream: true, max_concurrency: 4}}
+  # Adam's own Anthropic key, native Messages API (vidbush/providers/llm_anthropic.py). Never base_url_env
+  # ANTHROPIC_BASE_URL: the process env of a Claude Code session sets it, and process env wins.
   anthropic_direct: {type: anthropic, base_url_env: ANTHROPIC_DIRECT_BASE_URL, base_url: "https://api.anthropic.com",
-                   key_env: ANTHROPIC_DIRECT_API_KEY, options: {stream: true, max_concurrency: 4}}
+                   key_env: ANTHROPIC_KEY, options: {stream: true, max_concurrency: 4}}
   # Elevate is a subscription (gpt-image-2.5-fast is 4 credits, 3 at once, 200 an hour): no per call charge.
   image_primary:  {type: elevate, base_url_env: IMAGE_BASE_URL, key_env: IMAGE_API_KEY,
                    options: {cost_per_image: 0.0, max_concurrency: 3, timeout_s: 300, edge_trim: 0.05}}  # sparkle mark bottom right
@@ -90,7 +109,8 @@ providers:
   image_fallback: {type: algrow, base_url_env: IMAGE_FALLBACK_BASE_URL, key_env: IMAGE_FALLBACK_API_KEY,
                    options: {cost_per_image: 0.01085, max_concurrency: 3, timeout_s: 600}}
   video_primary:  {type: fal, base_url_env: VIDEO_BASE_URL, key_env: VIDEO_API_KEY}
-  # Elevate TTS (type added by the laptop lane in vidbush/providers/tts_elevate.py).
+  # Elevate TTS (vidbush/providers/tts_elevate.py, ported from RadioPlay). Subscription: 0 USD per call.
+  # Options: timeout_s (600, the cap), timeout_base_s (400) plus timeout_per_char_s (0.002), poll_s (18).
   elevate_tts:    {type: elevate_tts, base_url_env: ELEVATE_BASE_URL, key_env: ELEVATE_API_KEY,
                    options: {max_concurrency: 3}}
   # Algrow TTS fronts ElevenLabs; subscription credits, recorded as 0 USD with the credit count.

@@ -132,3 +132,59 @@ the laptop checks it with `python -m vidbush.live_probe` (docs/HANDOFF.md sectio
   Vidbush treats those as terminal and maps the envelope to a refusal, a rate limit or a retry.
 - The Algrow short script padding relies on break tags being silent. That held on eleven_multilingual_v2;
   on eleven_v4 a tag could be spoken or ignored. Check `live_probe algrow` with a short line if it matters.
+
+## Seat policy of 2026-11-11 (seats lane), ported, unverified live
+
+Taken from CaseFile's seat notes (seats.yaml and MAIN_NOTES_2026-11-10.md) and RadioPlay; nothing here was sent
+live from Vidbush. Check with `python -m vidbush.live_probe seats` and the probes in docs/HANDOFF.md section 10f.
+
+### openlux (https://api.openlux.ai/v1), director and researcher second, editor and vision roles second
+
+- OpenAI compatible: `POST /chat/completions`, `Authorization: Bearer OPENLUX_API_KEY`, base URL from
+  `OPENLUX_BASE_URL`. Streamed like the other relays (`options.stream: true`); if it rejects `stream_options` the
+  quirk is learned and the stream goes on without the usage request.
+- `GET /models` is free, returns about 328 ids including `claude-sonnet-5-5` and `claude-opus-5-5`, and carries
+  no prices. Sonnet 5.5 costs 0.1765 USD per million prompt tokens and 0.8824 per million completion tokens
+  (CaseFile), recorded as `options.price_per_mtok` on the role entry. One Sonnet request with one image passed.
+- Not known: whether openlux lists Grok 4.7 and Gemini 3.8 Flash and under which ids, and whether its Gemini takes
+  images. Those entries use `model_match` (grok 4.7, gemini 3.8-flash, `prefix: ""`), so an unlisted family leaves
+  the seat unconfigured with one warning and Wellflow serves.
+
+### Grok and Gemini ids
+
+- CloseRouter: `x-ai/grok-4.7`, `google/gemini-3.8-flash`, `anthropic/claude-opus-5.5` (CaseFile). Its Sonnet 5.5
+  id is not verified (likely `anthropic/claude-sonnet-5.5`), so director and researcher resolve it by
+  `model_match`.
+- Wellflow (normal key): `gemini-3.8-flash` verified on 2026-11-04; `grok-4.7` is not verified, so the editor's
+  Wellflow entry resolves it by `model_match`.
+- `model_match` without the claude prefix matches the bare and vendor spellings (`grok-4.7`, `x-ai/grok-4.7`), and
+  never a sibling (`gemini-3.8-flash-lite`, `gemini-3.8-flash-preview`, `grok-4.7-fast`).
+- Wellflow cheap key: serves `claude-opus-5-5` and answers 403 `model_not_in_channel` for `claude-sonnet-5-5`
+  (CaseFile), so it sits only on the writer. Flat 0.30 USD per million tokens.
+
+### Anthropic direct key
+
+- The key name in Adam's `.env.local` is `ANTHROPIC_KEY`. On 2026-11-11 it answered 400 "You have reached your
+  specified API usage limits ... 2026-12-01" (CaseFile). That reply now raises `SeatUnavailable`: the seat is marked
+  down for 10 minutes at the first such reply instead of costing a round trip on every request.
+- The process environment of a Claude Code session sets `ANTHROPIC_BASE_URL`, and process env wins over the env
+  files, so the provider reads `ANTHROPIC_DIRECT_BASE_URL` only.
+
+### Elevate TTS (https://public-api.elevate.uno), ported from RadioPlay, unverified live from Vidbush
+
+- `POST /v2/media` JSON `{type: "tts", prompt, voice_id, model_id}`, `Authorization: Bearer ELEVATE_API_KEY` (the same
+  key as Elevate images) returns `{success, data: {id, status}}`. Poll `GET /v2/media/{id}?type=tts` until
+  `completed` (terminal: completed, failed, cancelled, canceled, error), then download `data.result_url` (no auth).
+  New type `elevate_tts` in `vidbush/providers/tts_elevate.py`.
+- Model ids from Elevate's own catalogue (`GET /v2/media/types`, RadioPlay 25/10/2026): `eleven_v4`, `eleven_v3`.
+  eleven_v4 takes no voice_settings and no audio tags, so none are sent. No word timings come back: Vidbush aligns
+  the audio against the script with faster-whisper.
+- Voice: George `JBFqnCBsd6RMkjVDRZzb` is verified on Elevate (and on Algrow); the professional voice Deep Ray is not
+  available on Elevate. Brian is not verified there, so the default brand maps elevate_tts to George.
+- Timeouts and pacing (RadioPlay's working values): request timeout 400 s plus 0.002 s a character, capped at 600 s;
+  poll every 18 s. A 429 `{"code": "RATE_LIMIT_EXCEEDED", "message": "TTS concurrent limit reached (3/3)", "details":
+  {"used": 3, "limit": 3}}` is the concurrent limit: waited out, not a rate limit. A plain 429 retries 4 times.
+- A task still running at its deadline keeps a lane slot; the retry polls that task instead of submitting again.
+- A task that failed with "Voice not available" is the request's fault (a refusal), not an outage.
+- Probe: `GET /v2/media/health`, `data.tts.status` must be `operational` (RadioPlay saw `degraded` with success_rate
+  60.0 on 05/09/2026).

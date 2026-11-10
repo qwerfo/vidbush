@@ -1,7 +1,8 @@
 """Provider client: one wrapper for every external call.
 
 Handles retries on transport errors, fallback on refusal or 4xx, provider down
-marking with a 10 minute probe cycle, rate limit backoff (429 honours
+marking with a 10 minute probe cycle (after repeated transport errors, or at once for an
+error about the seat itself: SeatUnavailable), rate limit backoff (429 honours
 Retry-After and never marks a provider down), per-provider concurrency
 limits, timing, and cost recording.
 """
@@ -43,6 +44,26 @@ class RateLimitError(TransportError):
 
 class RefusalError(ProviderError):
     """4xx, content refusal, bad request after adjustment. Falls back once, no retry."""
+
+
+class SeatUnavailable(RefusalError):
+    """An error about the seat itself (bad key, no credit, usage limit, model not in this channel), not about
+    one request. The provider:model pair is marked down for the probe interval, so later requests skip it."""
+
+
+# HTTP statuses and reply words that describe the seat, not the request (checked by http_error_to_exc)
+SEAT_STATUSES = {401, 402, 403}
+SEAT_WORDS = ("model_not_in_channel", "usage limit", "insufficient", "quota", "credit balance")
+# words of a content or policy refusal: about this request's content, never the seat
+POLICY_WORDS = ("policy", "moderation", "safety", "content_filter")
+
+
+def is_seat_error(status: int, body: str) -> bool:
+    """True when an HTTP error says the seat cannot serve any request (see SeatUnavailable)."""
+    low = body.lower()
+    if any(w in low for w in POLICY_WORDS):
+        return False
+    return status in SEAT_STATUSES or any(w in low for w in SEAT_WORDS)
 
 
 class NotConfigured(ProviderError):
@@ -236,6 +257,13 @@ class ProviderClient:
                 errors.append(f"{spec.name}: transport {e}")
                 self.log.warn("provider marked down", role=role, provider=spec.name, error=str(e)[:300])
                 return None
+            except SeatUnavailable as e:
+                self._record(role, stage, spec, ok=False, latency=time.time() - t0, note=f"seat unavailable: {e}"[:300])
+                HEALTH.mark_down(key)
+                errors.append(f"{spec.name}: {e}")
+                self.log.warn("seat unavailable, marked down", role=role, provider=spec.name, model=spec.model,
+                              error=str(e)[:300])
+                return None
             except (RefusalError, NotConfigured) as e:
                 self._record(role, stage, spec, ok=False, latency=time.time() - t0, note=f"refusal: {e}"[:300],
                              cost=float(getattr(e, "cost_usd", 0.0) or 0.0))
@@ -279,6 +307,8 @@ def http_error_to_exc(status: int, body: str, retry_after: Optional[str] = None)
         return RateLimitError(f"http 429: {body[:300]}", parse_retry_after(retry_after))
     if status in (408, 425) or status >= 500:
         return TransportError(f"http {status}: {body[:300]}")
+    if is_seat_error(status, body):
+        return SeatUnavailable(f"http {status}: {body[:300]}")
     return RefusalError(f"http {status}: {body[:300]}")
 
 

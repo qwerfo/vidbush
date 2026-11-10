@@ -74,7 +74,7 @@ def build_body(spec: ProviderSpec, text: str, model_id: str, settings: Optional[
 def synthesize(spec: ProviderSpec, text: str, voice_id: str, model: str, out_path: Path,
                settings: Optional[dict[str, Any]] = None, cost_per_1k: float = 0.18, language: str = "",
                previous_text: str = "", next_text: str = "") -> CallResult:
-    """Synthesize text to mp3 with word timings. Returns value=(path, words)."""
+    """Synthesize text to mp3 with word timings. Returns value=(path, words, model_id)."""
     voice_id = voice_id or DEFAULT_VOICE_ID
     model_id = pick_model(spec, model)
     url = f"{_base(spec)}/v1/text-to-speech/{voice_id}/with-timestamps"
@@ -100,7 +100,7 @@ def synthesize(spec: ProviderSpec, text: str, voice_id: str, model: str, out_pat
     out_path.write_bytes(base64.b64decode(audio))
     words = chars_to_words(data.get("alignment") or data.get("normalized_alignment") or {})
     cost = len(text) / 1000.0 * cost_per_1k
-    return CallResult(value=(out_path, words), provider=spec, mock=False, cost_usd=cost,
+    return CallResult(value=(out_path, words, model_id), provider=spec, mock=False, cost_usd=cost,
                       units=len(text), unit_kind="characters")
 
 

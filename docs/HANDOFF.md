@@ -139,13 +139,14 @@ notepad .env
 ```
 
 For a mock test, leave it as is. For real videos fill the keys of the seat
-policy (section 9): `WELLFLOW_CHEAP` and `WELLFLOW_API_KEY` (Wellflow),
-`CLOSEROUTER_API_KEY`, optionally `ANTHROPIC_DIRECT_API_KEY`, the narration
+policy (section 10a): `WELLFLOW_CHEAP` and `WELLFLOW_API_KEY` (Wellflow),
+`CLOSEROUTER_API_KEY`, `OPENLUX_API_KEY`, `ANTHROPIC_KEY`, the narration
 keys `ELEVATE_API_KEY`, `ALGROW_API_KEY` and/or `ELEVENLABS_API_KEY`, the
 image keys `IMAGE_API_KEY` and `IMAGE_FALLBACK_API_KEY` with `IMAGE_MODEL`
 and `IMAGE_FALLBACK_MODEL`, and one of `SEARCH_API_KEY` (Tavily),
 `PEXELS_API_KEY`, `PIXABAY_API_KEY`. Anthropic model ids are found by
-Vidbush itself (section 9). Save and close. Older `.env` files that set
+Vidbush itself (section 10a). Keys may also live in `.env.local`, which wins
+over `.env` (the process environment wins over both). Save and close. Older `.env` files that set
 `LLM_PRIMARY_BASE_URL`, `LLM_PRIMARY_API_KEY`, `VISION_BASE_URL` and so on
 are no longer read: copy those keys to the new names.
 
@@ -401,10 +402,13 @@ pick whatever is best and cheapest this month.
 | cheap_classifier | learn-style shot classification | the cheapest vision model | one call per shot |
 | image | AI fill-in shots and thumbnail backgrounds | one consistent photographic model under $0.05 | never mixes styles within a video unless the primary is down |
 | video | optional image-to-video | fal-style model | off by default |
-| tts | narration | Elevate, then Algrow, then ElevenLabs (section 9) | Elevate and Algrow audio is aligned to the script by faster-whisper; ElevenLabs returns word timestamps |
+| tts | narration | ElevenLabs, then Elevate, then Algrow (section 10a) | Elevate and Algrow audio is aligned to the script by faster-whisper; ElevenLabs returns word timestamps |
 | search | research web search | Tavily, Serper or Brave | any one is enough |
 
 Providers marked down after transport failures are retried every 10 minutes.
+An error about the seat itself (HTTP 401, 402 or 403, model_not_in_channel,
+usage or credit limits) marks that provider and model down at once, until the
+same 10 minute probe; an error about one request only falls back for that request.
 429 rate limits back off using Retry-After and never mark a provider down.
 
 ## 7. Known gaps and the next three improvements
@@ -583,37 +587,51 @@ Everything in this section was built and tested offline against canned
 replies taken from RadioPlay's working clients. Check it live with the probes
 in 10f before the first real run.
 
-### 10a. Seat policy (Adam, 2026-11-05)
+### 10a. Seat policy (Adam, 2026-11-11)
 
-`config/seats.yaml` now holds this policy:
+`config/seats.yaml` holds this policy, in this exact order:
 
 | Role | Primary | Then | Then |
 |---|---|---|---|
-| researcher, director | `wellflow_cheap` Sonnet 5.5 | `anthropic_direct` Sonnet 5.5 | `closerouter` Sonnet 5.5 |
-| writer | `wellflow_cheap` Opus 5.5 | `anthropic_direct` Opus 5.5 | `closerouter` Opus 5.5 |
-| editor, judge, vision, cheap_classifier | `closerouter` (Gemini 3.8 Flash) | `wellflow` (normal key) | |
-| tts | `elevate_tts` | `algrow_tts` | `elevenlabs` |
+| writer (Opus 5.5) | `wellflow_cheap` `claude-opus-5-5` | `closerouter` `anthropic/claude-opus-5.5` | `anthropic_direct` `claude-opus-5-5` |
+| director, researcher (Sonnet 5.5) | `closerouter` (model_match sonnet 5.5) | `openlux` `claude-sonnet-5-5` | `anthropic_direct` `claude-sonnet-5-5` |
+| editor (Grok 4.7, text only) | `closerouter` `x-ai/grok-4.7` | `openlux` (model_match grok 4.7) | `wellflow` (model_match grok 4.7) |
+| judge, vision, cheap_classifier (Gemini 3.8 Flash) | `closerouter` `google/gemini-3.8-flash` | `openlux` (model_match gemini 3.8-flash) | `wellflow` `gemini-3.8-flash` |
+| tts | `elevenlabs` (eleven_v4) | `elevate_tts` (eleven_v4) | `algrow_tts` |
 | image | Elevate | Algrow | |
 
-- `wellflow_cheap` uses the Wellflow key named `WELLFLOW_CHEAP`. It serves
-  Anthropic models only, so it sits only on the three Anthropic roles.
-- Anthropic seats carry `model_match: {family, version}` instead of an id.
-  At the first use Vidbush reads the provider's `GET /models`, picks the id
-  for that family and version (`claude-opus-5-5` on Wellflow,
-  `anthropic/claude-opus-5.5` on CloseRouter), and logs the match once
-  ("model resolved from the provider model list"). No match means that seat
-  is skipped with a warning and the next one serves. To pin an exact id on
-  `wellflow_cheap`, set `LLM_WRITER_MODEL`, `LLM_DIRECTOR_MODEL` or
-  `LLM_RESEARCHER_MODEL`.
-- Primary switch: `VIDBUSH_PREFER_PROVIDER=anthropic_direct` moves that
-  provider to the front of every role it serves, until
-  `VIDBUSH_PREFER_UNTIL` (UTC) passes. `.env.example` is set for Adam's plan:
-  `anthropic_direct` for 48 hours from 2026-11-05, then `wellflow_cheap`
-  again with no edit. Clear both lines to stop early.
-- `elevate_tts` is the type the laptop lane adds in
-  `vidbush/providers/tts_elevate.py`. Until it is registered, the entry is
-  skipped with one warning ("provider type not registered, entry skipped")
-  and Algrow narrates.
+- Keys: `WELLFLOW_CHEAP` (the Wellflow key that serves Anthropic models
+  only; it answers 403 `model_not_in_channel` for Sonnet, so it sits only
+  on the writer), `WELLFLOW_API_KEY`, `CLOSEROUTER_API_KEY`,
+  `OPENLUX_API_KEY` (base `OPENLUX_BASE_URL`, default
+  `https://api.openlux.ai/v1`), `ANTHROPIC_KEY` (Adam's own key, native
+  Messages API). Vidbush reads `.env` and then `.env.local` (`.env.local`
+  wins; the process environment wins over both).
+- The editor is Grok 4.7 and text only: chat revisions, beat rewrites and the
+  AI image prompt safety rewrite, the role that must not refuse or water down
+  a prompt. The image roles stay on the cheap vision model.
+- Exact ids are used where they are verified. Where a relay's spelling is not
+  known the entry names `model_match: {family, version}` (plus `prefix: ""`
+  for non Claude families such as grok and gemini). At the first use Vidbush
+  reads the provider's `GET /models`, picks the id for that family and
+  version, and logs the match once ("model resolved from the provider model
+  list"). No match means that seat is skipped with a warning and the next one
+  serves. `LLM_DIRECTOR_MODEL` and `LLM_RESEARCHER_MODEL` pin CloseRouter's
+  Sonnet id; a pin that names another family or version than the entry's
+  model_match (for example an old `anthropic/claude-sonnet-5`) is ignored with
+  one warning ("model_env pin does not match model_match, ignored"). Exact id
+  entries read no env pin, so old `.env` lines such as `LLM_WRITER_MODEL`
+  change nothing.
+- Prices without a cost in the reply: `options.price_per_mtok` on the role
+  entry (wellflow_cheap Opus flat 0.30 USD per million, openlux Sonnet 0.1765
+  in and 0.8824 out, CloseRouter Opus 0.205866 in and 1.029332 out), else the
+  provider's own price list, else the generic estimate.
+- A seat that cannot serve at all (HTTP 401, 402, 403, `model_not_in_channel`,
+  usage or credit limits) is marked down for 10 minutes at the first such
+  reply, so later requests go straight to the next seat (section 6).
+- Primary switch: `VIDBUSH_PREFER_PROVIDER` moves the named providers to the
+  front of every role they serve (tts and image too) until
+  `VIDBUSH_PREFER_UNTIL` (UTC) passes. `.env.example` leaves both empty.
 
 ### 10b. TTS seats
 
@@ -628,9 +646,22 @@ in 10f before the first real run.
   Algrow is a subscription: each call shows 0 USD in `cost_report.json` and
   the reported credits in the entry's `credits` field. Scripts under 200
   characters are padded with break tags (Algrow's floor).
+- **Elevate** (`elevate_tts`, `vidbush/providers/tts_elevate.py`, ported
+  from RadioPlay): submit to `POST /v2/media` (`{type: tts, prompt, voice_id,
+  model_id}`), poll `/v2/media/<id>?type=tts` every 18 s, download the hosted
+  MP3. The request timeout is 400 s plus 0.002 s a character, capped at
+  `timeout_s` (600). A 429 for the concurrent limit is waited out, and a task
+  still running at its deadline is resumed by the retry instead of paid twice.
+  Subscription: 0 USD per call. `doctor --probe` reads `/v2/media/health`.
+- **The model that spoke** is returned by every TTS adapter and logged once per
+  run ("tts model", provider, model). Each narration chunk gets the previous
+  and next chunk's text (`previous_text`, `next_text`); ElevenLabs sends them
+  for models that take them (eleven_v4), the job APIs ignore them.
 - **Voice ids per provider.** Brand yaml: `voice.voice_id` is the default,
-  `voice.voice_ids` maps a tts provider name to its own id, for example
-  `voice_ids: {algrow_tts: "JBFqnCBsd6RMkjVDRZzb"}`.
+  `voice.voice_ids` maps a tts provider name to its own id. The default brand
+  uses Brian (`nPczCjzI2devNBz1zQrb`) on ElevenLabs and George
+  (`JBFqnCBsd6RMkjVDRZzb`, RadioPlay's narrator, verified on Elevate and
+  Algrow) on `elevate_tts` and `algrow_tts`.
 - **Alignment routing.** Captions need word timings. A TTS reply with
   timings that agree with the audio (ElevenLabs) is used as is. A reply
   without timings (Algrow, Elevate) is aligned against the script with
@@ -694,17 +725,24 @@ python -m vidbush.live_probe anthropic
 python -m vidbush.live_probe stream wellflow_cheap
 python -m vidbush.live_probe stream closerouter
 python -m vidbush.live_probe stream wellflow
+python -m vidbush.live_probe stream openlux
+python -m vidbush.live_probe stream closerouter --role editor
 python -m vidbush.live_probe algrow --credits
 python -m vidbush.live_probe algrow
+python -m vidbush.live_probe elevate --credits
+python -m vidbush.live_probe elevate
 ```
 
-What to look for: `seats` lists `wellflow_cheap:claude-opus-5-5` for the
-writer and `claude-sonnet-5-5` for director and researcher (with
-`anthropic_direct` first while the preference is on); `anthropic` prints
-`{"ok": true}` twice with a cost above 0; each `stream` prints a value in a
-few seconds; `algrow` writes `data/live_probe/algrow.mp3`, says
-`words_returned: false`, shows credits, and `aligned_by: whisper` with
-word times that look right when you play the file.
+What to look for: `seats` lists `wellflow_cheap:claude-opus-5-5` first for
+the writer, CloseRouter's resolved Sonnet 5.5 id first for director and
+researcher (this is how its exact id gets verified), `closerouter:x-ai/grok-4.7`
+for the editor, and the ids openlux and Wellflow resolved for grok and
+gemini (a seat shown "not configured" means its relay lists no such id);
+`anthropic` prints `{"ok": true}` twice with a cost above 0 (it fails while
+`ANTHROPIC_KEY` is over its usage limit); each `stream` prints a value in a
+few seconds; `algrow` and `elevate` write `data/live_probe/<seat>_tts.mp3`, say
+`words_returned: false`, and show `aligned_by: whisper` with word times that
+look right when you play the file.
 
 See also: `docs/ARCHITECTURE.md` (stage graph, contracts, cache rule),
 `docs/DECISIONS.md`, `docs/PROGRESS.md`, `docs/BLOCKERS.md`, `docs/SPEC.md`.
