@@ -6,7 +6,8 @@ from the beat the slot plays over, or the adjacent beat when the slot spans it,
 so a map or card never shows content the narration has not reached. Reuse is
 charged by content signature (maps by view and labels, cards by text), the
 same motion kind within 60 s costs a decaying penalty, and maps are capped at
-about MAP_SHARE of motion slots unless they show a new place. Overlay shots
+about MAP_SHARE of motion slots unless they show a new place, and the same map
+is never shown twice within INSET_REPEAT_S (card or inset). Overlay shots
 draw first on the beat's own map and chart ideas as insets over the picture,
 since reference channels move most of their animation over footage.
 """
@@ -138,6 +139,8 @@ class _Assembler:
         for d, bid in self._beats_near(beat_id, family, at, duration):
             for i in self.by_key.get((bid, family), []):
                 idea = self.ideas[i]
+                if idea.motion is not None and self._repeated_map(idea.motion, at):
+                    continue
                 reuse = max(self.usage.get(i, 0), self.sig_usage.get(signature(idea), 0))
                 score = idea.priority - REUSE_PENALTY * reuse - 0.25 * abs(d)
                 score -= 0.8 if self.bc[bid].scene.id != scene else 0.0
@@ -149,7 +152,7 @@ class _Assembler:
                 if score > best_score:
                     best, best_score = i, score
         if best < 0:
-            best = self._fallback_idea(beat_id, family)
+            best = self._fallback_idea(beat_id, family, at)
         self._count(best, 1)
         if family == "motion" and self.ideas[best].motion is not None:
             self._log_motion(self.ideas[best].motion, at)
@@ -185,10 +188,19 @@ class _Assembler:
                 p += 1.0
         return p
 
-    def _fallback_idea(self, beat_id: str, family: str) -> int:
+    def _repeated_map(self, spec: MotionSpec, at: float) -> bool:
+        """True for a map already on screen (full screen card or inset) within INSET_REPEAT_S."""
+        if spec.kind != MotionKind.map:
+            return False
+        sig = motion_signature(spec)
+        return any(sp.kind == MotionKind.map and abs(at - t) < INSET_REPEAT_S and motion_signature(sp) == sig
+                   for t, sp in self.card_log)
+
+    def _fallback_idea(self, beat_id: str, family: str, at: float = 0.0) -> int:
         bc = self.bc[beat_id]
-        made = I.ideas_for_beat(bc, None, self.profile.palette, random.Random(beat_id))
-        idea = next(x for x in made if x.family == family)
+        made = [x for x in I.ideas_for_beat(bc, None, self.profile.palette, random.Random(beat_id))
+                if x.family == family]
+        idea = next((x for x in made if x.motion is None or not self._repeated_map(x.motion, at)), made[0])
         self.ideas.append(idea)
         self.by_key.setdefault((beat_id, family), []).append(len(self.ideas) - 1)
         return len(self.ideas) - 1

@@ -169,3 +169,32 @@ One line each: the decision and why.
 - "Enough" counts web results only (not the local library), so owned footage never stops a shot from also searching stock sources, matching the earlier behaviour for local libraries.
 - A re-query of one shot (director loop, editor) rejoins the pool with its earlier spend counted and leaves it afterwards, so late re-queries draw on what the run left over.
 - qa_report shows a usage line for every source with a run budget (not only YouTube), with the number of shots that shared it and the searches deferred by fair shares.
+
+## Run 2: Map and route motion graphics
+
+- A route line is drawn only from real geometry between two places the gazetteer resolves; model coordinates (route points, marker lat/lon, arrows) are never rendered. Run 1 drew three invented points labelled with the next beat's distance (Hurricane Turn, shot_031).
+- The director names places, not coordinates: a marker is {place, label} and a route is {from_place, to_place, via, label}. MapRoute gains from_place, to_place and via; points are filled by the code.
+- via is road, rail, river, sea, trail, air or line. When the director gives none it is inferred from the route label, then the map title, then the idea intent, and falls back to line.
+- Bundled Natural Earth 10m railroads and roads and 50m admin_1 states and provinces (public domain), stripped to scalerank (lines) or name, admin, adm0_a3, latitude, longitude (admin_1), simplified (rail 0.002 deg, roads 0.004 deg, admin_1 0.002 deg) and quantized to 3 decimals, lines grouped into one MultiLineString per scalerank. Total 13.3 MB, under the 15 MB limit, so no download script; road ferries are left out.
+- NE 10m railroads does contain the Alaska Railroad between Talkeetna and Hurricane: both snap within 2.2 km and the traced path is about 55 miles. Anchorage to Fairbanks traces 339 miles (real 356), Fairbanks to Prudhoe Bay by road 469 miles; there is no rail to Nome or Coldfoot.
+- Routing is a new module, vidbush/mg/routes.py, with no new dependency: each endpoint snaps to the nearest segment within 10 km, a dangling line end joins another vertex within 1 km (junctions lost to simplification), and a heapq Dijkstra runs over the layer graph inside the endpoints' bbox padded by half its size and at least 1 degree.
+- A rail, road or river route that cannot snap, or whose snaps are not connected, is dropped and the map keeps the endpoint markers. Trails have no bundled data and are never drawn. Sea, air and line routes are a dashed great circle that claims no ground path.
+- A river route is the real river centerline between the endpoints' snaps, over the same graph code as rail and road.
+- The renderer draws a traced route (via set) exactly as its geometry; only legacy point lists without via are still smoothed.
+- Traced paths are thinned to at most 300 points in the payload. Simplified layers measure up to about 5 percent short of published lengths, inside the 25 percent tolerance.
+- A distance label is computed from the drawn geometry. A distance the model wrote (route label, title or marker label, digits or words, miles or km) only confirms it: more than 25 percent off drops that text, and a confirmed route label is rewritten to the measured length.
+- A distance in a title or marker label is checked against the one drawn route, else the separation of exactly two markers, else dropped (run 1 put '70 miles apart' on a 1034 mile line).
+- Markers and labels are gazetteer places. A marker outside the director's own view is sign-checked (a homonym of the same name inside the view, or a view written with a flipped latitude or longitude sign, which refits the view) and otherwise dropped.
+- The view is kept when it holds every marker, route point and shaded region middle inside the safe band at the deepest zoom; otherwise it is refitted with map_view. A shaded region alone is framed whole.
+- A map with no marker, route or real shaded region left is rejected (validate_idea returns None), so the slot falls back to footage. An inset still needs a marker or a route.
+- Shaded regions must exist in admin_0 or admin_1 and are stored under their canonical name; others are removed. The renderer shades admin_1 names too, so states such as Alaska, Texas and Hawaii are now shaded (run 1 drew nothing for them). Island groups such as the Aleutians are in neither layer and are removed.
+- Only major rivers (scalerank 6 or less) are drawn, at every zoom, each with a small name label, so a minor river never reads as an unexplained route.
+- State and province borders are drawn faintly from zoom 3.5, and faint roads and railways from zoom 5 (scalerank 6 or less below zoom 7, all above).
+- A map's source_note is always "Map data: Natural Earth", never model text.
+- One verify_map in shots/seat.py replaces fix_map and is called from both seat paths (motion idea and overlay inset) and from the editor's motion_spec path, so every model-written map gets the same check.
+- The same map (same motion signature) is never picked again within INSET_REPEAT_S (180 s), full screen cards included; the heuristic fallback then takes the beat's next motion idea. Run 1 showed one Alaska map twice 48 s apart.
+- A name the script gives to a person or an animal ("his lead dog, Togo", "a horse named Comanche") is not a place anywhere in that script. It is found once per script in beat_contexts and skipped in beat_entities, because run 1 took the dog Togo for the country and made a 'sea in Togo' shot.
+- Rule-based maps (ideas.map_idea, editor maps, builders.map_spec and route_map_spec) trace routes through the same routes module; map_idea infers via from the beat narration.
+- The Panama mock director fixture now names places (markers by place, routes by endpoints and via sea), since coordinates in it would be dropped.
+- MG_RENDER_VERSION is mg-4 because the base map changed (labelled rivers, state borders, context lines).
+- Not done this round: no gazetteer extension, so small places missing from NE 10m populated places (Hurricane, Coldfoot, Deadhorse, Toksook Bay) are dropped rather than drawn; a GNIS subset would add them.

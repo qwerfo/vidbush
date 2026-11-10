@@ -23,8 +23,8 @@ from ..util import NullLogger
 from . import ideas as I
 from .assembler import FAMILY, _Assembler, ai_prompt, overlap, prompt_subject, signature  # noqa: F401 re-exported
 from .pacing import Anchor, plan_slots
-from .seat import (MAP_TOLERANCE_DEG, OVERLAY_KINDS, SYSTEM, check_chart, director_ideas,  # noqa: F401 re-exported
-                   director_prompt, fix_map, validate_idea)
+from .seat import (OVERLAY_KINDS, SYSTEM, check_chart, director_ideas,  # noqa: F401 re-exported
+                   director_prompt, validate_idea, verify_map)
 
 
 # ---------------------------------------------------------------- entry point

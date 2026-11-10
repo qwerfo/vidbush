@@ -28,7 +28,7 @@ from ..util import ToolError, run, stable_hash, write_json
 
 OVERLAY_SHOT_TYPES = {ShotType.footage_overlay, ShotType.image_overlay, ShotType.ai_image, ShotType.ai_video}
 REMOTION_DIR = "renderer"
-MG_RENDER_VERSION = "mg-3"  # mg-3: map and chart insets, chart value label room
+MG_RENDER_VERSION = "mg-4"  # mg-4: labelled major rivers only, state borders, road and rail context lines
 
 
 def renderer_kind(settings: Any) -> str:

@@ -194,13 +194,17 @@ def test_validate_idea_drops_and_fixes(panama) -> None:
     ok = validate_idea(cited, beats, res)
     assert ok is not None and ok.motion.source_note
     bad_map = {"beat_id": "b001", "family": "motion", "intent": "map", "motion": {
-        "kind": "map", "duration": 8, "payload": {"center": [0, 0], "zoom": 3, "markers": [
-            {"lat": 0.0, "lon": 0.0, "label": "Colon"}, {"lat": 8.97, "lon": -79.53, "label": "Panama City"}],
-            "routes": [{"points": [[0.0, 0.0], [8.97, -79.53]]}]}}}
-    fixed = validate_idea(bad_map, beats, res).motion.typed_payload()
-    assert fixed.markers[0].lat == pytest.approx(9.359, abs=0.05)
-    assert fixed.routes[0].points[0][0] == pytest.approx(9.359, abs=0.05)
-    assert 8 < fixed.center[0] < 10
+        "kind": "map", "duration": 8, "source_note": "Geographic layout", "payload": {
+            "center": [9.1, -79.7], "zoom": 6, "markers": [
+                {"lat": 0.0, "lon": 0.0, "label": "Colon"}, {"lat": 8.97, "lon": -79.53, "label": "Panama City"}],
+            "routes": [{"points": [[0.0, 0.0], [8.97, -79.53]]},
+                       {"from_place": "Colon", "to_place": "Panama City", "via": "sea", "label": "Ship"}]}}}
+    fixed = validate_idea(bad_map, beats, res).motion
+    p = fixed.typed_payload()
+    assert p.markers[0].lat == pytest.approx(9.359, abs=0.05)  # the gazetteer point, never the model's
+    assert len(p.routes) == 1 and p.routes[0].via == "sea" and p.routes[0].dashed  # model points never drawn
+    assert p.routes[0].points[0][0] == pytest.approx(9.359, abs=0.05)
+    assert 8 < p.center[0] < 10 and fixed.source_note == "Map data: Natural Earth"
     overlay_bad = {**good, "overlay": {"kind": "map", "duration": 5, "payload": {"center": [0, 0]}}}
     assert validate_idea(overlay_bad, beats, res).overlay is None
 

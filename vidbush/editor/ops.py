@@ -381,6 +381,11 @@ def _validated_spec(data: Any, duration: float, background: str) -> MotionSpec:
         raise EditError("motion_spec must be an object with kind and payload")
     try:
         spec = MotionSpec.model_validate({**data, "duration": duration})
+        if spec.kind == MotionKind.map:  # a model's map gets the same truth check as the director's
+            from ..shots.seat import verify_map
+            spec = verify_map(spec)
+            if spec is None:
+                raise EditError("motion_spec map has no place, route or region the bundled map data can show")
         spec.typed_payload()
     except (ValidationError, TypeError) as e:
         raise EditError(f"invalid motion_spec: {str(e)[:300]}") from e

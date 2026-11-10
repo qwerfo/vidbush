@@ -72,7 +72,10 @@ def test_map_zoom_from_bbox() -> None:
 
 def test_map_route_and_shading() -> None:
     p = b.map_spec([NY, ("Colon", 9.36, -79.9), SF], route=True, shaded=["Panama"], duration=8).typed_payload()
-    assert len(p.routes) == 1 and len(p.routes[0].points) == 3
+    r = p.routes[0]
+    assert len(p.routes) == 1 and r.via == "line" and r.dashed  # a plain line claims no ground path
+    assert r.points[0] == [40.71, -74.0] and r.points[-1] == [37.77, -122.42]
+    assert any(abs(q[0] - 9.36) < 0.01 and abs(q[1] + 79.9) < 0.01 for q in r.points)  # through Colon
     assert p.shaded_regions == ["Panama"]
     times = [m.appear_at for m in p.markers]
     assert times == sorted(times) and times[-1] <= 8
@@ -108,8 +111,26 @@ def test_recap_grid_carries_numbers() -> None:
     assert b.recap_grid_spec(["A", "B"], numbers=[1]).typed_payload().numbers is None
 
 
-def test_map_with_states_frames_them_without_shading() -> None:
-    spec = b.map_spec([], shaded=["Nevada", "Arizona"], title="Nevada and Arizona")
+def test_map_shades_states_from_admin_1() -> None:
+    spec = b.map_spec([], shaded=["Nevada", "Arizona", "Atlantis"], title="Nevada and Arizona")
     p = spec.typed_payload()
-    assert p.shaded_regions == [] and {lb.text for lb in p.labels} == {"NEVADA", "ARIZONA"}
+    assert p.shaded_regions == ["Nevada", "Arizona"] and {lb.text for lb in p.labels} == {"NEVADA", "ARIZONA"}
     assert 30 < p.center[0] < 42 and -120 < p.center[1] < -108 and p.zoom > 3
+
+
+def test_rail_map_follows_the_track_or_keeps_markers_only() -> None:
+    anchorage, fairbanks = ("Anchorage", 61.2181, -149.9003), ("Fairbanks", 64.8378, -147.7164)
+    p = b.map_spec([anchorage, fairbanks], route=True, via="rail").typed_payload()
+    r = p.routes[0]
+    assert r.via == "rail" and not r.dashed and len(r.points) > 20
+    assert r.points[0] == pytest.approx([61.22, -149.9], abs=0.1)
+    assert r.points[-1] == pytest.approx([64.84, -147.72], abs=0.1)
+    nome = ("Nome", 64.5061, -165.4064)  # no railroad reaches Nome
+    p = b.map_spec([anchorage, nome], route=True, via="rail").typed_payload()
+    assert p.routes == [] and [m.label for m in p.markers] == ["Anchorage", "Nome"]
+
+
+def test_in_view_matches_the_projection() -> None:
+    assert b.in_view([62.5, -150.0], 8.0, (62.32, -150.11))
+    assert not b.in_view([62.5, -150.0], 8.0, (63.6, -150.0))
+    assert b.in_view([0.0, 179.0], 4.0, (0.0, -179.0))  # across the antimeridian

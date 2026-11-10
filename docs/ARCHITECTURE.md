@@ -109,6 +109,7 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | visuals/prepare.py | `prepare_visuals(shotlist, ctx) -> ShotList` | derived crops, optional DepthFlow and ai_video |
 | visuals/ai_images.py | `generate_ai_candidate(shot, ctx, prompt=None) -> Candidate` | image seat, configured provider order |
 | mg/renderer.py | `render_spec(spec, out_path, alpha, settings) -> Path`, `render_all_motion(shotlist, ctx) -> (ShotList, list[Path])` | python or remotion, cached by spec hash |
+| mg/routes.py | `route_points(a, b, via) -> list[[lat, lon]] or None`, `infer_via(*texts) -> str`, `path_miles(points) -> float` | rail, road, river: snap within 10 km and Dijkstra over the bundled line layer; sea, air, line: dashed great circle; trail: none |
 | render/captions.py | `group_words(words, style) -> list[CaptionLine]`, `build_captions(narration, profile, out_root, settings) -> list[Path]`, `write_ass_window(lines, profile, t0, t1, path, w, h) -> Path`, `caption_geometry(profile, w, h) -> dict` | one line, 3 to 5 words, fixed band height |
 | audio/music.py | `build_mix(narration, script, shotlist, brand, profile, settings, work_dir, log, rng) -> Path` | writes work/mix.wav at -14 LUFS, ducked bed |
 | render/assemble.py | `assemble(shotlist, ctx) -> (Path, ShotList)` | per-shot segments with cache, concat, intro/outro, mux |
@@ -139,7 +140,11 @@ fallback renders are stored under a separate `.fallback` name.
 Data-driven graphics (maps, charts) always draw `source_note` in a corner.
 Palettes: `documentary_warm`, `documentary_cold`, `top10_bold`. Font: Inter
 (bundled in `assets/fonts`, OFL). Maps use Natural Earth data bundled in
-`assets/geo` and never a tile server.
+`assets/geo` and never a tile server. Every model-written map (director motion
+card or inset, editor motion_spec) passes `shots/seat.verify_map`: markers are
+gazetteer places, routes are real geometry from `mg/routes.py`, distances are
+measured, shaded regions exist in admin 0 or admin 1, and the source note is
+fixed; a map with nothing true left is rejected and the slot gets footage.
 
 **Renderer swap rule:** the JSON MotionSpec is the stable contract. Any
 renderer that turns a MotionSpec into a clip of exactly `duration` seconds

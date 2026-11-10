@@ -2,7 +2,9 @@
 
 Sources, in preference order: assets/geo/landmarks.json (historically relevant
 sites), country label points from ne_50m_admin_0_countries.geojson, and the
-Natural Earth populated places gazetteer. Everything loads lazily and is cached.
+Natural Earth populated places gazetteer. States and provinces (shading and
+framing only) come from ne_50m_admin_1_states_provinces.geojson. Everything
+loads lazily and is cached.
 """
 from __future__ import annotations
 
@@ -120,6 +122,14 @@ def _best(hits: list[GeoHit], us_bias: bool) -> GeoHit:
     return max(hits, key=key)
 
 
+def candidates(name: str) -> list[GeoHit]:
+    """Every hit for a name under its normalised forms (homonyms in other countries included)."""
+    out: list[GeoHit] = []
+    for variant in _variants(name.strip()) if name.strip() else []:
+        out += [h for h in _index().get(variant, []) if h not in out]
+    return out
+
+
 def lookup(name: str, us_bias: bool = False) -> Optional[GeoHit]:
     """Best hit for a name: exact, then case-insensitive, then alias forms."""
     name = name.strip()
@@ -202,6 +212,32 @@ def country_bbox(name: str) -> Optional[tuple[float, float, float, float]]:
         lats = [pt[1] for pt in ring]
         return min(lats), min(lons), max(lats), max(lons)
     return None
+
+
+@lru_cache(maxsize=1)
+def admin1() -> dict[str, dict]:
+    """State and province features keyed by normalised name."""
+    data = json.loads((GEO_DIR / "ne_50m_admin_1_states_provinces.geojson").read_text(encoding="utf-8"))
+    return {norm(f["properties"]["name"]): f for f in data["features"] if f["properties"].get("name")}
+
+
+def region_name(name: str) -> Optional[str]:
+    """Canonical name of a country or a state or province the bundled layers can shade, else None."""
+    f = admin1().get(norm(name)) if not is_country(name) else None
+    return country_name(name) or (f["properties"]["name"] if f else None)
+
+
+@lru_cache(maxsize=512)
+def region_bbox(name: str) -> Optional[tuple[float, float, float, float]]:
+    """(min_lat, min_lon, max_lat, max_lon) of the largest polygon of a country, state or province."""
+    box = country_bbox(name)
+    f = admin1().get(norm(name)) if box is None else None
+    if f is None:
+        return box
+    geom = f["geometry"]
+    polys = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
+    ring = max((p[0] for p in polys), key=len)
+    return min(pt[1] for pt in ring), min(pt[0] for pt in ring), max(pt[1] for pt in ring), max(pt[0] for pt in ring)
 
 
 def distance_deg(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -322,14 +358,29 @@ def _match_run(words: list[str], prev: str, initial: bool) -> list[tuple[str, Ge
     return out
 
 
-def find_place_hits(text: str) -> list[GeoHit]:
-    """Places mentioned in text as GeoHit records, in order of appearance, deduplicated."""
+# A name the text gives to a person or an animal ("his lead dog, Togo", "a horse named Comanche").
+_CREATURE_RE = re.compile(
+    r"\b(?:named|called|nicknamed|dubbed)\s+([A-Z][\w'’-]+)"
+    r"|\b(?:dog|dogs|horse|horses|mule|pony|cat|husky|puppy|mare|stallion|wolf|bear|son|daughter|wife|husband|"
+    r"brother|sister|friend|partner|boy|girl)\s*,?\s+([A-Z][\w'’-]+)")
+
+
+def creature_names(text: str) -> set[str]:
+    """Normalised names the text gives to people or animals: such a name is never a place in that text."""
+    return {norm(_clean(a or b)) for a, b in _CREATURE_RE.findall(text)}
+
+
+def find_place_hits(text: str, not_places: frozenset[str] | set[str] = frozenset()) -> list[GeoHit]:
+    """Places mentioned in text as GeoHit records, in order of appearance, deduplicated. Names in not_places
+    (normalised, see creature_names) are not places wherever they appear."""
     toks = tokens(text)
     out: list[GeoHit] = []
     seen: set[str] = set()
     for start, words, initial in cap_runs(toks):
         prev = toks[start - 1] if start > 0 else ""
-        for _name, hit in _match_run(words, prev, initial):
+        for name, hit in _match_run(words, prev, initial):
+            if norm(name) in not_places:
+                continue
             key = norm(hit.name)
             if key in seen or any(distance_deg((hit.lat, hit.lon), (o.lat, o.lon)) < 0.02 for o in out):
                 continue
