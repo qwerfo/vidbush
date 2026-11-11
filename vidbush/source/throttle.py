@@ -6,7 +6,8 @@ token from the host's bucket (waiting at most MAX_WAIT_S, else Throttled),
 holds one of the global concurrency slots, and serialises hosts listed in
 SERIAL_HOSTS (YouTube). cool_down(host, seconds) pauses a host after a 429.
 take_budget(run_id, adapter, shot_id) counts searches per run and adapter; usage(run_id)
-reports used, budget and refusals so the run can surface a spent budget.
+reports used, budget and refusals so the run can surface a spent budget. refund_budget gives back
+a counted search that a Throttled error stopped before it was sent, so "used" counts sent searches.
 
 Fair shares: a run budget is shared by every shot that still needs candidates.
 register_shots(run, adapters, shot_ids) puts shots in the pool; each active shot
@@ -50,7 +51,9 @@ DEFAULT_BUDGET: dict[str, int] = {"pexels": 150, "pixabay": 600, "loc": 300, "yo
 
 
 class Throttled(Exception):
-    """A request was not sent: the host is cooling down, over its rate, or the budget is spent."""
+    """A request was not sent: the host is cooling down, over its rate, or the budget is spent.
+    sent counts the requests of the same search that went out before it (a 429 retry, a second pass)."""
+    sent = 0
 
 
 class TokenBucket:
@@ -228,6 +231,18 @@ def take_budget(run_id: str, adapter: str, shot_id: str = "") -> bool:
             STATE.shots.setdefault(key, set()).add(shot_id)
         STATE.spent[key] = STATE.spent.get(key, 0) + 1
         return True
+
+
+def refund_budget(run_id: str, adapter: str, shot_id: str = "") -> None:
+    """Give back one search that take_budget counted but was never sent (the host throttled it first)."""
+    with STATE.lock:
+        key = (run_id, adapter)
+        STATE.spent[key] = max(0, STATE.spent.get(key, 0) - 1)
+        mine = STATE.shot_spent.get((run_id, adapter, shot_id), 0)
+        if shot_id and mine:
+            STATE.shot_spent[(run_id, adapter, shot_id)] = mine - 1
+            if mine == 1:
+                STATE.shots.get(key, set()).discard(shot_id)
 
 
 def release_shot(run_id: str, shot_id: str, adapters: Optional[list[str]] = None) -> None:

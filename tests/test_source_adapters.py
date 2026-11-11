@@ -242,7 +242,8 @@ def test_youtube_fetch_cuts_clips(monkeypatch, online, shot, tmp_path, tiny_mp4:
     assert cands[0].attribution == "Building the Panama Canal (1913) [HD] Archival newsreel footage by British Pathe (YouTube)"
     assert "height<=1080" in seen["format"] and "height>=720" in seen["format"] and "download_ranges" in seen
     low = base.RawResult(source="youtube", url="https://www.youtube.com/watch?v=bbbbbbbbbb2", media="video")
-    assert youtube.YoutubeAdapter().fetch(low, tmp_path, shot, online) == []  # under 720p skipped
+    with pytest.raises(base.Rejected, match="below the 720p floor"):  # under 720p skipped, with its reason
+        youtube.YoutubeAdapter().fetch(low, tmp_path, shot, online)
 
 
 def test_youtube_section_and_licence(settings) -> None:

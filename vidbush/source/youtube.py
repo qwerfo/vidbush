@@ -520,7 +520,11 @@ class YoutubeAdapter(BaseAdapter):
         passes: list[list[RawResult]] = []
         if prefer_cc:
             passes.append(self._cc_pass(query, opts))
-        passes.append(parse_search(ydl_extract(f"ytsearch{SEARCH_N}:{query}", opts)))
+        try:
+            passes.append(parse_search(ydl_extract(f"ytsearch{SEARCH_N}:{query}", opts)))
+        except throttle.Throttled as e:
+            e.sent = len(passes)  # the Creative Commons pass went out
+            raise
         results = merge_passes(passes)[:n]
         if language:
             for r in results:
@@ -532,6 +536,8 @@ class YoutubeAdapter(BaseAdapter):
         """Creative Commons filtered results; [] when that request fails, so the normal pass still runs."""
         try:
             info = ydl_extract(cc_search_url(query), {**opts, "playlist_items": f"1:{SEARCH_N}"})
+        except throttle.Throttled:
+            raise  # nothing was sent, and the normal pass would wait on the same host
         except Exception as e:  # noqa: BLE001 - the CC pass is optional, the normal pass decides
             log.warning("YouTube Creative Commons search failed, normal search only: %s", str(e)[:200])
             return []
@@ -550,9 +556,7 @@ class YoutubeAdapter(BaseAdapter):
         cfg = settings.sources
         info = ydl_extract(raw.url, {"skip_download": True, **cookie_opts(settings)})
         if max_height(info) < cfg.youtube_min_height:
-            logging.getLogger("vidbush.source").info("youtube %s skipped: %sp is below %sp", raw.url,
-                                                     max_height(info), cfg.youtube_min_height)
-            return []
+            raise base.Rejected(f"{max_height(info)}p is below the {cfg.youtube_min_height}p floor")
         info = {**info, "duration": float(info.get("duration") or raw.duration)}
         cues = transcript_cues(info, settings, str(raw.extra.get("lang") or ""))
         windows = choose_windows(info, shot, settings, cues)

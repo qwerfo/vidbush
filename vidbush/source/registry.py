@@ -159,7 +159,8 @@ GENERATED = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
 
 
 def _has_sourced(shot: Shot) -> bool:
-    return any(c.source not in GENERATED for c in shot.candidates)
+    """A shot holding only off-topic fillers is sourced again (with a fresh budget) on the next run."""
+    return any(c.source not in GENERATED and "off_topic" not in c.flags for c in shot.candidates)
 
 
 # ---------------------------------------------------------------- search
@@ -182,8 +183,9 @@ def _variant(hints: dict[str, Any]) -> str:
 
 
 def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
-                ctx: "StageContext") -> list[RawResult]:
-    """One search: disk cache first, then the run budget (one per pass), then the adapter. Never raises."""
+                ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]] = None) -> list[RawResult]:
+    """One search: disk cache first, then the run budget (one per pass), then the adapter. Never raises.
+    A search the budget deferred or the host throttled is added to unsent as (shot, source, query)."""
     with _BLOCKED_LOCK:
         if adapter.name in _BLOCKED[run_id(ctx)]:
             return []
@@ -192,8 +194,10 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
     if cacheable:
         hit = cache_get(adapter.name, query, media, n, ctx.settings, _variant(hints))
         if hit is not None:
-            return hit
+            return _screen(adapter.name, query, hit, shot, ctx)  # the cache holds raw results: same screen
         if not throttle.take_budget(run_id(ctx), adapter.name, shot.id):
+            if unsent is not None:
+                unsent.add((shot.id, adapter.name, query))
             if throttle.STATE.spent.get((run_id(ctx), adapter.name), 0) >= throttle.STATE.budget.get(
                     adapter.name, throttle.STATE.budget.get("*", 0)):
                 _note_once(ctx, f"budget_{adapter.name}", "source query budget spent, skipping searches "
@@ -201,9 +205,14 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
             return []  # otherwise this shot used its fair share; the rest stays for other shots
         if hints.get("prefer_cc") and not throttle.take_budget(run_id(ctx), adapter.name, shot.id):
             hints.pop("prefer_cc")  # the last search of the budget runs the normal pass only
+    charged = (1 + bool(hints.get("prefer_cc"))) if cacheable else 0  # prefer_cc sends two passes
     try:
         results = adapter.search(query, media, n, ctx.settings, shot=shot, **hints)
     except throttle.Throttled as e:
+        for _ in range(charged - min(charged, e.sent)):  # a search is charged only when it was sent
+            throttle.refund_budget(run_id(ctx), adapter.name, shot.id)
+        if unsent is not None:
+            unsent.add((shot.id, adapter.name, query))
         _note_once(ctx, f"throttled_{adapter.name}", "source search throttled, some queries skipped",
                    source=adapter.name, error=str(e)[:200])
         return []
@@ -218,7 +227,12 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
         return []
     if cacheable:
         cache_put(adapter.name, query, media, n, results, ctx.settings, _variant(hints))
-    return [r for r in relevant(adapter.name, query, results, ctx) if not era_mismatch(shot, r)]
+    return _screen(adapter.name, query, results, shot, ctx)
+
+
+def _screen(adapter: str, query: str, results: list[RawResult], shot: Shot, ctx: "StageContext") -> list[RawResult]:
+    """Rank by relevance (off-topic results become fillers) and drop what the shot's era rules out."""
+    return [r for r in relevant(adapter, query, results, ctx) if not era_mismatch(shot, r)]
 
 
 def shot_era(shot: Shot) -> Optional[int]:
@@ -237,17 +251,21 @@ def era_mismatch(shot: Shot, raw: RawResult) -> bool:
     return any(y >= 1990 for y in years)
 
 
-MIN_RELEVANCE = 0.34  # at least about one in three of the query's specific words
+MIN_RELEVANCE = 1 / 3  # at least one in three of the query's specific words (2 of 6 counts)
 
 
 def relevant(adapter: str, query: str, results: list[RawResult], ctx: "StageContext") -> list[RawResult]:
-    """Drop web results whose title and description share too few specific words with the query."""
+    """Rank web results: one whose title, description and tags share fewer than MIN_RELEVANCE of the
+    query's specific words becomes a filler (score 0) after every match. Nothing is removed: a title is
+    weak evidence and the vision judge decides on real frames."""
     if adapter == "local":
         return results
-    keep = [r for r in results if base.relevance(query, r) >= MIN_RELEVANCE]
-    if len(keep) < len(results):
-        ctx.log.info("off-topic results dropped", source=adapter, query=query, dropped=len(results) - len(keep))
-    return keep
+    out = [r if r.score <= 0 or base.relevance(query, r) >= MIN_RELEVANCE - 1e-9
+           else r.model_copy(update={"score": 0.0}) for r in results]
+    demoted = sum(1 for a, b in zip(results, out) if a is not b)
+    if demoted:
+        ctx.log.info("off-topic results demoted to fillers", source=adapter, query=query, demoted=demoted)
+    return sorted(out, key=lambda r: r.score <= 0)
 
 
 _usage_lock = threading.Lock()
@@ -391,6 +409,12 @@ def _fetch_raws(shot: Shot, plan: list[RawResult], adapters: dict[str, SourceAda
             break
         try:
             got = adapters[raw.source].fetch(raw, out_dir, shot, ctx.settings)
+            if not got:
+                raise base.Rejected("no usable file")
+        except base.Rejected as e:  # every dropped result is in the run log, with its reason
+            ctx.log.info("source result dropped", source=raw.source, shot=shot.id, url=raw.page_url or raw.url,
+                         reason=str(e)[:200])
+            continue
         except Exception as e:  # noqa: BLE001 - downloads fail all the time on the open web
             ctx.log.warn("source fetch failed", source=raw.source, shot=shot.id, url=raw.page_url or raw.url,
                          error=str(e)[:200])
@@ -448,18 +472,30 @@ def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Ite
     return out
 
 
+def _web_filler(r: RawResult) -> bool:
+    """An off-topic web result (relevant() set its score to 0); the local library's rotation is not one."""
+    return r.score <= 0 and r.source not in UNCACHED
+
+
 def _source_with_plan(shot: Shot, plan: list[RawResult], adapters: list[SourceAdapter], ctx: "StageContext",
                       media: Media, skip: set[str], taken: Iterable[str]) -> list[Candidate]:
-    """Fetch the plan; still shots fall back to frames from video sources when no still arrived."""
+    """Fetch the plan's matches; still shots fall back to frames from video sources when no matched
+    still arrived. Only when no match gave a file, a few off-topic fillers (cap // 4, at least one)
+    are fetched, flagged off_topic, so the judge sees frames without every slot being downloaded."""
     cap = ctx.settings.sources.max_candidates
     by_name = {a.name: a for a in adapters}
-    cands = _fetch_raws(shot, plan, by_name, ctx, cap, media)
+    fillers = [r for r in plan if _web_filler(r)]
+    cands = _fetch_raws(shot, [r for r in plan if not _web_filler(r)], by_name, ctx, cap, media)
     if media == "image" and not cands:
         video_adapters = [a for a in adapters if "video" in a.media]
         with SearchPools(video_adapters) as pools:
             per = search_shot(shot, video_adapters, "video", shot_queries(shot), ctx, pools)
         vplan = plan_shot(interleave(per, [a.name for a in video_adapters]), _blocklist(ctx), set(), skip, cap)
-        cands = _fetch_raws(shot, vplan, by_name, ctx, cap, "image")
+        fillers += [r for r in vplan if _web_filler(r)]
+        cands = _fetch_raws(shot, [r for r in vplan if not _web_filler(r)], by_name, ctx, cap, "image")
+    if not cands:
+        cands = [c.model_copy(update={"flags": [*c.flags, "off_topic"]})
+                 for c in _fetch_raws(shot, fillers, by_name, ctx, max(1, cap // 4), media)]
     return finalize(shot, cands, ctx, taken)
 
 
@@ -492,7 +528,7 @@ def source_all(shotlist: ShotList, ctx: "StageContext", force: bool = False) -> 
         results = {sid: f.result() for sid, f in futs.items()}
     record_usage(ctx)  # still shots may have searched video sources again while fetching
     for s in targets:
-        keep = [c for c in s.candidates if not force or c.source in GENERATED]
+        keep = [c for c in s.candidates if c.source in GENERATED or not (force or "off_topic" in c.flags)]
         s.candidates = keep + results[s.id]
     ctx.log.info("sourcing done", candidates=sum(len(v) for v in results.values()),
                  empty=[sid for sid, v in results.items() if not v])
@@ -500,8 +536,9 @@ def source_all(shotlist: ShotList, ctx: "StageContext", force: bool = False) -> 
 
 
 def enough_results(per_adapter: dict[str, list[RawResult]], cap: int) -> bool:
-    """A shot has enough when its web sources (budgeted, unlike the local library) gave a full plan."""
-    keys = {raw_key(r) for name, res in per_adapter.items() if name not in UNCACHED for r in res}
+    """A shot has enough when its web sources (budgeted, unlike the local library) gave a full plan of
+    matches; fillers (score 0) never release a shot early."""
+    keys = {raw_key(r) for name, res in per_adapter.items() if name not in UNCACHED for r in res if r.score > 0}
     return len(keys) >= cap + cap // 2
 
 
@@ -512,23 +549,64 @@ def _search_all(targets: list[Shot], adapters: list[SourceAdapter], ctx: "StageC
     Round k sends every still searching shot's k-th query to every adapter, all submitted before any
     result is awaited. After each round a shot whose web results already fill its plan leaves the
     budget pools (throttle.release_shot), so its unused share goes to the shots that still need
-    candidates. Each shot spends at most its fair share of a budget (throttle.take_budget).
+    candidates. Each shot spends at most its fair share of a budget (throttle.take_budget), and only
+    the budgets of sources that can serve its media.
+
+    A second pass spends what the first left over, and only on the searches it deferred or the host
+    throttled (a search that failed is not sent twice): shots still short send those again, round by
+    round in timeline order, and a shot rejoins a pool only when it sends one. Each video source first
+    holds back one search for every still shot without a match, because such a shot searches video
+    sources for frames when it fetches (_source_with_plan).
     """
     cap = ctx.settings.sources.max_candidates
     rid = run_id(ctx)
-    throttle.register_shots(rid, [a.name for a in adapters], [s.id for s in targets])
     merged: dict[str, dict[str, list[RawResult]]] = {s.id: defaultdict(list) for s in targets}
     queries = {s.id: shot_queries(s) for s in targets}
-    pending = list(targets)
+    unsent: set[tuple[str, str, str]] = set()
+    _rounds(targets, adapters, queries, merged, ctx, pools, unsent)
+    usage = throttle.usage(rid)
+    no_match = sum(1 for s in targets if shot_media(s) == "image"
+                   and not any(r.score > 0 for res in merged[s.id].values() for r in res))
+    allowance = {a.name: usage[a.name]["budget"] - usage[a.name]["used"] - (no_match if "video" in a.media else 0)
+                 for a in adapters if a.name not in UNCACHED and a.name in usage}
+    left = [a for a in adapters if allowance.get(a.name, 0) > 0]
+    short = [s for s in targets if not enough_results(merged[s.id], cap) and any(u[0] == s.id for u in unsent)]
+    if left and short:
+        _rounds(short, left, queries, merged, ctx, pools, set(), retry=unsent, allowance=allowance)
+    found = {sid: {name: _merge(res) for name, res in per.items()} for sid, per in merged.items()}
+    ctx.log.info("source searches", sent=throttle.spent(rid))
+    record_usage(ctx)
+    return found
+
+
+def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str, list[str]],
+            merged: dict[str, dict[str, list[RawResult]]], ctx: "StageContext", pools: SearchPools,
+            unsent: set[tuple[str, str, str]], retry: Optional[set[tuple[str, str, str]]] = None,
+            allowance: Optional[dict[str, int]] = None) -> None:
+    """One pass of query rounds over shots (timeline order); results are added to merged and searches
+    not sent to unsent. Without retry every shot joins the pools first. With retry only those
+    (shot, source, query) searches are sent, at most allowance[source] per source, and a shot joins a
+    pool when it takes a search (throttle.take_budget)."""
+    cap = ctx.settings.sources.max_candidates
+    rid = run_id(ctx)
+    for a in adapters if retry is None else ():  # a shot shares only the budgets of the sources that serve its media
+        throttle.register_shots(rid, [a.name], [s.id for s in shots if shot_media(s) in a.media])
+    pending = list(shots)
     for k in range(QUERIES_PER_SHOT):
         jobs: list[tuple[str, str, Future]] = []
         for s in pending:
             if k >= len(queries[s.id]):
                 continue
-            media = shot_media(s)
-            jobs += [(s.id, a.name, pools.submit(a, _search_one, a, queries[s.id][k], media,
-                                                 _per_adapter_n(a, cap), s, ctx))
-                     for a in adapters if media in a.media]
+            media, q = shot_media(s), queries[s.id][k]
+            for a in adapters:
+                if media not in a.media or (retry is not None and (s.id, a.name, q) not in retry):
+                    continue
+                if allowance is not None:
+                    if allowance[a.name] <= 0:
+                        continue
+                    allowance[a.name] -= 1 + bool(search_hints(a, ctx).get("prefer_cc"))
+                jobs.append((s.id, a.name, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap),
+                                                        s, ctx, unsent)))
         for sid, name, fut in jobs:
             merged[sid][name].extend(fut.result())
         still: list[Shot] = []
@@ -540,10 +618,6 @@ def _search_all(targets: list[Shot], adapters: list[SourceAdapter], ctx: "StageC
         pending = still
     for s in pending:
         throttle.release_shot(rid, s.id)
-    found = {sid: {name: _merge(res) for name, res in per.items()} for sid, per in merged.items()}
-    ctx.log.info("source searches", sent=throttle.spent(rid))
-    record_usage(ctx)
-    return found
 
 
 def _plan_all(shotlist: ShotList, found: dict[str, dict[str, list[RawResult]]], order: list[str],

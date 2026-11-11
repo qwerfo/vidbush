@@ -75,6 +75,10 @@ class RawResult(Model):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
+class Rejected(Exception):
+    """fetch() looked at an asset and refused it (too small, no usable file); the message is the reason."""
+
+
 @runtime_checkable
 class SourceAdapter(Protocol):
     name: str
@@ -98,11 +102,32 @@ GENERIC_WORDS = {
 }
 
 
+VOWELS = set("aeiou")
+
+
 def _stem(word: str) -> str:
+    """Singular and plain form, so 'dogs'/'dog', 'planes'/'plane' and 'Alaskan'/'Alaska' match. No rule
+    maps a word onto another common word: an e after one vowel and one consonant ('plane', 'mine',
+    'here') stays, because dropping it gives 'plan', 'min', 'her'."""
     w = word.lower()
-    for suf in ("ing", "ion", "es", "s"):
+    if len(w) > 4 and w.endswith("ies"):
+        w = w[:-3] + "y"
+    elif len(w) > 4 and w.endswith(("xes", "ches", "shes", "sses", "zzes")):
+        w = w[:-2]  # 'boxes', 'churches', 'bushes', 'glasses'
+    elif len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        w = w[:-1]
+    if len(w) > 3 and w.endswith("ie"):
+        w = w[:-2] + "y"  # 'movie' meets 'movies' at 'movy'
+    if len(w) > 3 and w.endswith("e") and not (w[-2] not in VOWELS and w[-3] in VOWELS):
+        w = w[:-1]  # 'dance' meets 'dancing', 'carve' meets 'carving'
+    for suf in ("ing", "ion"):
         if len(w) > 5 and w.endswith(suf):
-            return w[: -len(suf)]
+            w = w[: -len(suf)]
+            if suf == "ing" and len(w) == 3 and w[0] not in VOWELS and w[1] in VOWELS and w[2] not in VOWELS | set("wxy"):
+                w += "e"  # 'mining' to 'mine', 'hiking' to 'hike'
+            return w
+    if len(w) > 4 and w.endswith("an"):
+        w = w[:-1]  # adjective of a place in -a: 'Alaskan', 'African', 'Korean'
     return w
 
 
@@ -151,6 +176,9 @@ def _rate_limited(call: Any, url: str) -> Any:
         try:
             with throttle.slot(host):
                 return call()
+        except throttle.Throttled as e:
+            e.sent = n  # the n attempts before this one reached the host (each answered 429)
+            raise
         except RateLimitError as e:
             wait = e.retry_after if e.retry_after is not None else 5.0 * (2 ** n)
             throttle.cool_down(host, max(wait, 5.0))
