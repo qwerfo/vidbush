@@ -26,8 +26,8 @@ from .assembler import FAMILY, _Assembler, ai_prompt, overlap, prompt_subject, s
 from .assembler import INSET_GAP_S
 from .pacing import Anchor, plan_slots
 from .rules import MG_HOLD_MAX_S
-from .seat import (MAP_TOLERANCE_DEG, OVERLAY_KINDS, SYSTEM, check_chart, director_ideas,  # noqa: F401 re-exported
-                   director_prompt, fix_map, validate_idea)
+from .seat import (OVERLAY_KINDS, SYSTEM, check_chart, director_ideas,  # noqa: F401 re-exported
+                   director_prompt, validate_idea, verify_map)
 
 
 # ---------------------------------------------------------------- entry point

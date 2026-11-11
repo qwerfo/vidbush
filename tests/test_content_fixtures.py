@@ -12,6 +12,7 @@ from vidbush.config import REPO_ROOT
 from vidbush.models import (DirectorPlan, MapPayload, MotionKind, Outline, Research, ScenePurpose, Script,
                             VideoFormat)
 from vidbush.script.parser import parse_script, split_sentences
+from vidbush.shots.seat import verify_map
 from vidbush.util import EM_DASH, read_model
 
 ROOT = Path(REPO_ROOT)
@@ -91,7 +92,8 @@ def test_director_fixture_covers_every_beat():
         assert idea.intent.endswith(".")
         if idea.family == "motion":
             assert idea.motion is not None and idea.motion.background == "solid"
-            idea.motion.typed_payload()
+            # a director map names places; verify_map turns it into a drawable payload
+            (verify_map(idea.motion) if idea.motion.kind == MotionKind.map else idea.motion).typed_payload()
             if idea.motion.kind in (MotionKind.map, MotionKind.bar_chart, MotionKind.line_chart):
                 assert idea.motion.source_note
         else:
@@ -103,16 +105,17 @@ def test_director_fixture_covers_every_beat():
                 idea.overlay.typed_payload()
 
 
-def test_director_maps_use_real_coordinates():
+def test_director_maps_name_places_and_get_real_coordinates():
     plan = read_model(PANAMA / "director.json", DirectorPlan)
-    maps = [i.motion.typed_payload() for i in plan.ideas if i.motion and i.motion.kind == MotionKind.map]
+    specs = [i.motion for i in plan.ideas if i.motion and i.motion.kind == MotionKind.map]
+    assert all("lat" not in m and "lon" not in m for s in specs for m in s.payload.get("markers", []))
+    maps = [verify_map(s).typed_payload() for s in specs]
     assert all(isinstance(m, MapPayload) for m in maps)
     routes = [r for m in maps for r in m.routes]
-    starts_ends = {(tuple(r.points[0]), tuple(r.points[-1])) for r in routes}
-    assert ((40.713, -74.006), (37.775, -122.419)) in starts_ends
-    assert ((9.359, -79.901), (8.983, -79.517)) in starts_ends
-    horn = [r for r in routes if [-55.98, -67.27] in r.points]
-    assert horn and horn[0].dashed
+    starts_ends = {(r.from_place, r.to_place) for r in routes}
+    assert ("New York", "Cape Horn") in starts_ends and ("Colon", "Panama City") in starts_ends
+    horn = [r for r in routes if r.to_place == "Cape Horn"]
+    assert horn and horn[0].dashed and horn[0].via == "sea"
     assert any("Panama" in m.shaded_regions and m.zoom >= 7 for m in maps)
     for m in maps:
         for r in m.routes:

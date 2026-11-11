@@ -287,11 +287,14 @@ class MapMarker(Model):
 
 
 class MapRoute(Model):
-    points: list[list[float]]  # [[lat, lon], ...]
+    points: list[list[float]] = Field(default_factory=list)  # [[lat, lon], ...] drawn geometry, set by code
     reveal_start: float = 0.5
     reveal_end: float = 3.0
     label: str = ""
     dashed: bool = False
+    from_place: str = ""  # endpoints the director names; code resolves them and traces the geometry
+    to_place: str = ""
+    via: str = ""  # road, rail, river, sea, trail, air or line; set once the geometry is traced
 
 
 class MapArrow(Model):
@@ -316,7 +319,7 @@ class MapPayload(Model):
     routes: list[MapRoute] = Field(default_factory=list)
     arrows: list[MapArrow] = Field(default_factory=list)
     labels: list[MapLabel] = Field(default_factory=list)
-    shaded_regions: list[str] = Field(default_factory=list)  # country names or ISO A3
+    shaded_regions: list[str] = Field(default_factory=list)  # country, state or province names, or ISO A3
     title: str = ""
 
 

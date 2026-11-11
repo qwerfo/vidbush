@@ -407,9 +407,15 @@ def extract_numbers(text: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------- anchors and sources
 
 def _add_anchors(research: Research, log: JsonLogger) -> None:
-    """Fill coordinates for place anchors and add date and place anchors when the seat gave none."""
+    """Fill coordinates for place anchors and add date and place anchors when the seat gave none. A name the
+    facts give to a person or animal (geo.creature_names) is never a place anchor."""
+    text = " ".join(f.claim for f in research.facts)
     try:
-        from ..mg.geo import find_places
+        from ..mg.geo import creature_names, norm
+        from ..mg.geo import find_places as _find
+        skip = creature_names(text)
+        find_places = lambda t: _find(t, skip)  # noqa: E731
+        research.anchors = [a for a in research.anchors if not (a.kind == "place" and norm(a.name) in skip)]
     except Exception:  # another module; optional
         find_places = None
     for a in research.anchors:
@@ -420,7 +426,6 @@ def _add_anchors(research: Research, log: JsonLogger) -> None:
     if len(research.anchors) >= MIN_ANCHORS:
         return
     have = {a.name.lower() for a in research.anchors}
-    text = " ".join(f.claim for f in research.facts)
     if find_places:
         for name, lat, lon in _safe_places(find_places, text, log)[:5]:
             if name.lower() not in have:

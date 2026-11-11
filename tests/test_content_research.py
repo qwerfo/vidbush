@@ -106,7 +106,8 @@ def test_seat_answer_validated_and_contradicted_dropped(settings):
 
 def test_place_anchors_from_geo_module(settings, monkeypatch):
     geo = types.ModuleType("vidbush.mg.geo")
-    geo.find_places = lambda text: [("Buffalo", 42.886, -78.878)] if "Buffalo" in text else []
+    geo.find_places = lambda text, not_places=(): [("Buffalo", 42.886, -78.878)] if "Buffalo" in text else []
+    geo.creature_names, geo.norm = (lambda text: set()), str.lower
     monkeypatch.setitem(sys.modules, "vidbush.mg.geo", geo)
     answer = {"facts": [{"claim": "The canal reached Buffalo in 1825."}],
               "anchors": [{"kind": "place", "name": "Buffalo"}]}

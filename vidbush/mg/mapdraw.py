@@ -45,12 +45,17 @@ from .textdraw import (
 )
 
 GEO_DIR = Path(REPO_ROOT) / "assets" / "geo"
+ADMIN1 = "ne_50m_admin_1_states_provinces.geojson"
+RIVERS = "ne_50m_rivers_lake_centerlines.geojson"
+RIVER_RANK = 6  # only major rivers are drawn, at every zoom, so a minor one never reads as a route
+STATE_ZOOM = 3.5  # state and province borders from this zoom
+CONTEXT_ZOOM = 5.0  # faint roads and railways from this (regional) zoom
 Ring = np.ndarray  # (n, 2) lon, lat
 
 
 # ---------------------------------------------------------------- data
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=16)
 def load_layer(name: str) -> list[tuple[dict, list[Ring]]]:
     """(properties, rings) per feature of a bundled GeoJSON layer; rings are lon/lat float arrays."""
     data = json.loads((GEO_DIR / name).read_text(encoding="utf-8"))
@@ -74,7 +79,7 @@ def load_layer(name: str) -> list[tuple[dict, list[Ring]]]:
 
 def _names(props: dict) -> set[str]:
     from .geo import norm
-    keys = ("NAME", "NAME_LONG", "ADMIN", "SOVEREIGNT", "ISO_A3", "ADM0_A3", "BRK_NAME", "FORMAL_EN")
+    keys = ("NAME", "NAME_LONG", "ADMIN", "SOVEREIGNT", "ISO_A3", "ADM0_A3", "BRK_NAME", "FORMAL_EN", "name")
     return {norm(str(props[k])) for k in keys if props.get(k) and props.get(k) != "-99"}
 
 
@@ -180,6 +185,7 @@ class MapBase:
         img = (img.astype(np.float32) * (1 - a) + land * a)
         img = np.clip(img, 0, 255).astype(np.uint8)
         self._water_features(img)
+        self._context_lines(img)
         for r in land_rings:
             polyline(img, r, pal.rgb("land_border"), max(1.0, 1.3 * k))
         grain = texture(self.bw, self.bh, 5, 40.0, 2)[..., None]
@@ -223,18 +229,48 @@ class MapBase:
             for r in lakes:
                 polyline(img, r, mix(water, pal.rgb("text"), 0.25), max(1.0, 1.2 * self.k))
         if z >= 3.5:
-            rank = 6 if z < 5 else 99
-            rivers = self.rings(load_layer("ne_50m_rivers_lake_centerlines.geojson"),
-                                lambda p: (p.get("scalerank") or 9) <= rank)
-            for r in rivers:
+            layer = [f for f in load_layer(RIVERS) if (f[0].get("scalerank") or 9) <= RIVER_RANK]
+            for r in self.rings(layer):
                 polyline(img, r, mix(water, pal.rgb("land"), 0.15), max(1.0, 1.6 * self.k))
+            self._river_labels(img, layer)
+
+    def _river_labels(self, img: np.ndarray, layer: list[tuple[dict, list[Ring]]]) -> None:
+        """Each drawn river gets a small name label on the middle of its longest visible stretch."""
+        pal, m = self.c.pal, 40 * self.k
+        for props, rings in layer:
+            name = props.get("name") or props.get("name_en")
+            inside = [r[(r[:, 0] > m) & (r[:, 0] < self.bw - m) & (r[:, 1] > m) & (r[:, 1] < self.bh - m)]
+                      for r in self.rings([(props, rings)])]
+            best = max(inside, key=len, default=np.zeros((0, 2)))
+            if not name or len(best) < 4:
+                continue
+            spr = halo_text(str(name), max(8, int(round(20 * self.k))), "Medium",
+                            mix(pal.rgb("water"), pal.rgb("text"), 0.55), pal.rgb("land"), 0.04,
+                            max(2, int(round(3 * self.k))))
+            x, y = best[len(best) // 2]
+            blit(img, spr, x - spr.w / 2, y + 6 * self.k)
+
+    def _context_lines(self, img: np.ndarray) -> None:
+        """Faint state and province borders when zoomed in, faint roads and railways at regional zooms."""
+        pal, z, k = self.c.pal, self.z_lo, self.k
+        land = pal.rgb("land")
+        if z >= STATE_ZOOM:
+            for r in self.rings(load_layer(ADMIN1)):
+                polyline(img, r, mix(land, pal.rgb("land_border"), 0.45), max(1.0, 0.9 * k))
+        if z >= CONTEXT_ZOOM:
+            rank = 99 if z >= CONTEXT_ZOOM + 2 else 6
+            for name, f in (("ne_10m_roads.geojson", 0.12), ("ne_10m_railroads.geojson", 0.22)):
+                for r in self.rings(load_layer(name), lambda p: (p.get("scalerank") or 9) <= rank):
+                    polyline(img, r, mix(land, pal.rgb("text"), f), max(1.0, 0.9 * k))
 
     def _shade(self, plain: np.ndarray) -> np.ndarray:
         """Shaded regions: accent tinted fill, accent outline and a soft outer glow."""
-        from .geo import norm
+        from .geo import admin1_key, norm
         pal = self.c.pal
         wanted = {norm(n) for n in self.c.p.shaded_regions if n}
-        rings = self.rings(self.countries, lambda p: bool(_names(p) & wanted))
+        # a state is matched by geo.admin1_key, so 'Georgia' fills the country and never the US state too
+        rings = (self.rings(self.countries, lambda p: bool(_names(p) & wanted))
+                 + self.rings(load_layer(ADMIN1), lambda p: bool(p.get("name")) and norm(admin1_key(p)) in wanted))
         img = plain.copy()
         if not rings:
             return img
@@ -362,8 +398,11 @@ class MapComp(CompBase):
             self.vig[..., 3] = 255
         self._grain = Grain(self.W, self.H, self.C, 4.0)
         self.glow = GlowLayer(self.W, self.H)
-        self.routes = [(r, smooth_path(self.proj.uv(np.asarray(r.points, np.float64)))) for r in p.routes
-                       if len(r.points) >= 2]
+        self.routes = []
+        for r in p.routes:
+            if len(r.points) >= 2:
+                uv = self.proj.uv(np.asarray(r.points, np.float64))
+                self.routes.append((r, uv if r.via else smooth_path(uv)))  # traced geometry is drawn exactly
         self.arrows = [(a, smooth_path(self.proj.uv(np.asarray([a.start[:2], a.end[:2]], np.float64))))
                        for a in p.arrows if len(a.start) >= 2 and len(a.end) >= 2]
         self.markers = [(m, self.proj.uv(np.array([[m.lat, m.lon]], np.float64))) for m in p.markers]

@@ -96,6 +96,7 @@ class BeatContext(BaseModel):
     facts: list[FactCard] = Field(default_factory=list)
     topic: str = ""
     scene_index: int = 0
+    not_places: list[str] = Field(default_factory=list)  # names the script gives to people or animals
 
 
 # ---------------------------------------------------------------- text helpers
@@ -368,7 +369,8 @@ def beat_entities(bc: BeatContext) -> BeatEntities:
     from ..mg import geo
     text = bc.beat.text
     literal = " ".join(x for x in re.split(r"(?<=[.!?])\s+", text) if not COMPARE_RE.search(x))
-    hits = geo.find_place_hits(literal) or (geo.find_place_hits(bc.scene.title) if literal == text else [])
+    skip = set(bc.not_places)
+    hits = geo.find_place_hits(literal, skip) or (geo.find_place_hits(bc.scene.title, skip) if literal == text else [])
     scene_text = " ".join(b.text for b in bc.scene.beats)
     nouns = (visual_nouns(text) or visual_nouns(bc.scene.title) or visual_nouns(scene_text)[:2]
              or content_words(bc.topic, 2))
@@ -715,8 +717,10 @@ def travel_route(text: str) -> Optional[list[tuple[str, float, float]]]:
 
 
 def map_idea(bc: BeatContext, ent: BeatEntities, palette: str) -> Optional[VisualIdea]:
-    """Route map for a real journey between two points, else markers on the named points with areas labelled."""
+    """Route map for a real journey between two points (real geometry for the travel mode the beat names, else
+    markers only), else markers on the named points with areas labelled."""
     from ..mg import builders as b
+    from ..mg.routes import infer_via
     if not ent.places:
         return None
     route = travel_route(bc.beat.text)
@@ -731,7 +735,8 @@ def map_idea(bc: BeatContext, ent: BeatEntities, palette: str) -> Optional[Visua
             intent = f"Map pushing in on {title}" + (f", with {_join(shaded)} shaded." if shaded else ".")
         else:
             intent = f"Map pushing in with {title} shaded."
-    spec = b.map_spec(points[:6], route=bool(route), shaded=shaded, title=title, palette=palette)
+    via = infer_via(bc.beat.text) if route else "line"
+    spec = b.map_spec(points[:6], route=bool(route), shaded=shaded, title=title, palette=palette, via=via)
     return _motion_idea(bc, spec, intent, 0.95)
 
 
@@ -1004,13 +1009,15 @@ def beat_contexts(script_scenes: list[Scene], research: Optional[Research], topi
     facts = {f.id: f for f in (research.facts if research else [])}
     out: list[BeatContext] = []
     era: Optional[int] = None
+    from ..mg import geo
+    not_places = sorted(geo.creature_names(" ".join(b.text for sc in script_scenes for b in sc.beats)))
     for si, scene in enumerate(script_scenes):
         for bi, beat in enumerate(scene.beats):
             bfacts = [facts[f] for f in beat.facts_used if f in facts]
             years = extract_years(beat.text)
             era = years[0] if years else (era_from_facts(bfacts) or era)
             out.append(BeatContext(beat=beat, scene=scene, first_in_scene=bi == 0, era=era, facts=bfacts,
-                                   topic=topic, scene_index=si))
+                                   topic=topic, scene_index=si, not_places=not_places))
     later: Optional[int] = None
     for bc in reversed(out):  # beats before the first dated beat take the next known era
         later = bc.era or later

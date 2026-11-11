@@ -6,7 +6,8 @@ from the beat the slot plays over, or the adjacent beat when the slot spans it,
 so a map or card never shows content the narration has not reached. Reuse is
 charged by content signature (maps by view and labels, cards by text), the
 same motion kind within 60 s costs a decaying penalty, and maps are capped at
-about MAP_SHARE of motion slots unless they show a new place. A motion slot
+about MAP_SHARE of motion slots unless they show a new place, and the same map
+is never shown twice within INSET_REPEAT_S (card or inset). A motion slot
 whose best card was already shown, or whose beat has nothing to draw, takes
 footage instead. Overlay shots draw first on the beat's own map and chart
 ideas as insets over the picture, since reference channels move most of their
@@ -143,6 +144,8 @@ class _Assembler:
         for d, bid in self._beats_near(beat_id, family, at, duration):
             for i in self.by_key.get((bid, family), []):
                 idea = self.ideas[i]
+                if idea.motion is not None and self._repeated_map(idea.motion, at):
+                    continue
                 reuse = max(self.usage.get(i, 0), self.sig_usage.get(signature(idea), 0))
                 score = idea.priority - REUSE_PENALTY * reuse - 0.25 * abs(d)
                 score -= 0.8 if self.bc[bid].scene.id != scene else 0.0
@@ -157,7 +160,7 @@ class _Assembler:
             # no fresh card for this moment (the beat has nothing to draw, or its card is already shown): footage
             return self.pick(beat_id, "footage", at, prev, duration, exclude)
         if best < 0:
-            best = self._fallback_idea(beat_id, family)
+            best = self._fallback_idea(beat_id, family, at)
         self._count(best, 1)
         if family == "motion" and self.ideas[best].motion is not None:
             self._log_motion(self.ideas[best].motion, at)
@@ -193,10 +196,19 @@ class _Assembler:
                 p += 1.0
         return p
 
-    def _fallback_idea(self, beat_id: str, family: str) -> int:
+    def _repeated_map(self, spec: MotionSpec, at: float) -> bool:
+        """True for a map already on screen (full screen card or inset) within INSET_REPEAT_S."""
+        if spec.kind != MotionKind.map:
+            return False
+        sig = motion_signature(spec)
+        return any(sp.kind == MotionKind.map and abs(at - t) < INSET_REPEAT_S and motion_signature(sp) == sig
+                   for t, sp in self.card_log)
+
+    def _fallback_idea(self, beat_id: str, family: str, at: float = 0.0) -> int:
         bc = self.bc[beat_id]
-        made = I.ideas_for_beat(bc, None, self.profile.palette, random.Random(beat_id))
-        idea = next(x for x in made if x.family == family)
+        made = [x for x in I.ideas_for_beat(bc, None, self.profile.palette, random.Random(beat_id))
+                if x.family == family]
+        idea = next((x for x in made if x.motion is None or not self._repeated_map(x.motion, at)), made[0])
         self.ideas.append(idea)
         self.by_key.setdefault((beat_id, family), []).append(len(self.ideas) - 1)
         return len(self.ideas) - 1
@@ -236,7 +248,8 @@ class _Assembler:
         shot.queries = list(idea.queries)
         shot.motion = idea.motion if shot.type == ShotType.motion_graphic else None
         if shot.type in OVERLAY_TYPES:
-            shot.overlay = idea.overlay or shot.overlay
+            fresh = idea.overlay is not None and not self._repeated_map(idea.overlay, shot.start)
+            shot.overlay = idea.overlay if fresh else shot.overlay
         else:
             shot.overlay = None
         shot.ai_prompt = "" if shot.type == ShotType.motion_graphic else ai_prompt(idea, self.bc.get(shot.beat_id))
@@ -245,8 +258,9 @@ class _Assembler:
         """Overlays a shot may carry, best first: map and chart insets of its beat (animation moves over the
         picture), its idea's overlay, the overlays of every idea of its beat and the beats beside it (best
         idea first, so a seat overlay whose own idea became a card still reaches the picture), then lower
-        thirds for what it shows and the beat's generic overlays. A text overlay stays only when the shot
-        holds the moment its anchor is spoken, with time to read it. Empty on call-to-action beats."""
+        thirds for what it shows and the beat's generic overlays. Never a map shown within INSET_REPEAT_S. A
+        text overlay stays only when the shot holds the moment its anchor is spoken, with time to read it.
+        Empty on call-to-action beats."""
         bc = self.bc.get(shot.beat_id)
         if bc is None or I.CTA_RE.search(bc.beat.text):
             return []
@@ -256,8 +270,8 @@ class _Assembler:
         near = set(self.order[max(0, pos - 1):pos + 2])
         beat = [i.overlay for i in sorted((i for i in self.ideas if i.overlay is not None and i.beat_id in near),
                                           key=lambda i: -i.priority)]
-        pool = self.insets(shot.beat_id, shot.start) + own + beat + I.overlay_choices(bc, self.profile.palette,
-                                                                                     shot.must_show)
+        pool = self.insets(shot.beat_id, shot.start) + [o for o in own + beat if not self._repeated_map(o, shot.start)]
+        pool += I.overlay_choices(bc, self.profile.palette, shot.must_show)
         return [o for o in pool if o.kind not in I.TEXT_OVERLAY_KINDS
                 or I.overlay_start(o, self.words, shot.start, shot.end) is not None]
 
