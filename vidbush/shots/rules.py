@@ -9,16 +9,22 @@ preserving swaps inside a family, trim long text cards toward the motion
 graphic min, break runs of full screen cards (more than two in a row or about
 16 s) by turning one into footage, and drop overlay text repeated within 30 s
 (another overlay, or the plain sibling type). Shot times stay contiguous.
+time_overlays() (run by the director once times are final) shows each text
+overlay just after the narrator says its anchor, moves it to the shot that
+holds that moment, or drops it, and drops text that repeats the narration.
 space_cards() (run last by the director) keeps at most one free full screen
 card per profile.pacing.card_spacing_s outside the hook and recap: a card
 that breaks it becomes footage, and a map or chart card moves onto that
 footage as an inset overlay so the information stays on screen.
+demote_repeating_cards() (run after space_cards) turns a callout or text card
+that repeats the narration spoken near it into footage.
 """
 from __future__ import annotations
 
 from typing import Callable, Optional
 
-from ..models import OVERLAY_TYPES, MotionKind, MotionSpec, Shot, ShotType, StyleProfile, VisualIdea
+from ..models import OVERLAY_TYPES, MotionKind, MotionSpec, Shot, ShotType, StyleProfile, VisualIdea, Word
+from . import ideas as I
 from .pacing import MAX_MG_RUN, MAX_MG_RUN_S, bounds, card_too_close
 
 MIN_SHOT = 1.5
@@ -33,6 +39,7 @@ PLAIN = {ShotType.footage_overlay: ShotType.footage, ShotType.image_overlay: Sho
 TEXT_CARD_KINDS = {MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout}
 TEXT_CARD_EXTRA_S = 1.0  # text cards hold at most the motion graphic min plus this
 OVERLAY_REPEAT_S = 30.0
+OVERLAY_MOVE_S = 12.0  # a text overlay may move to a shot this close when its own shot misses its moment
 
 Rebind = Callable[[Shot, VisualIdea, Optional[int]], None]
 OverlayFor = Callable[[Shot], Optional[MotionSpec]]
@@ -316,7 +323,8 @@ def dedupe_overlays(shots: list[Shot], overlay_pool: OverlayPool, locked: frozen
             continue
         if s.id not in locked:
             pool = overlay_pool(s)  # empty on call to action beats: no overlay at all
-            options = ([s.overlay] if s.overlay is not None and pool else []) + pool
+            keep = s.overlay is not None and pool and (s.overlay.kind not in I.TEXT_OVERLAY_KINDS or s.overlay in pool)
+            options = ([s.overlay] if keep else []) + pool  # a text overlay stays only where its words are spoken
             s.overlay = next((o for o in options if not taken(_overlay_key(o), s)), None)
             if s.overlay is None:
                 lost[s.type] = lost.get(s.type, 0) + 1
@@ -333,6 +341,33 @@ def dedupe_overlays(shots: list[Shot], overlay_pool: OverlayPool, locked: frozen
             s.type, s.overlay = typ, spec
             used.append((_overlay_key(spec), s.start, s.end))
             lost[typ] -= 1
+
+
+def time_overlays(shots: list[Shot], words: list[Word], locked: frozenset[str] = frozenset()) -> None:
+    """An overlay belongs to a spoken moment, not to a shot: each text overlay starts ANCHOR_LEAD_S after its
+    anchor is spoken (start_at into its shot) and holds its reading time before the cut. When its shot misses
+    that moment, it moves to a plain shot within OVERLAY_MOVE_S that holds it, else it is dropped; text that
+    repeats the narration spoken around it is dropped too. A shot that loses its overlay becomes its plain
+    sibling. Map and chart insets and locked structural overlays keep start 0."""
+    for k, s in enumerate(shots):
+        spec = s.overlay
+        if s.type not in OVERLAY_TYPES or spec is None or spec.kind not in I.TEXT_OVERLAY_KINDS or s.id in locked:
+            continue
+        s.overlay, s.type = None, PLAIN[s.type]
+        hosts = [k] + sorted((j for j, h in enumerate(shots) if j != k and h.type in PLAIN.values()
+                              and h.id not in locked and h.end > s.start - OVERLAY_MOVE_S
+                              and h.start < s.end + OVERLAY_MOVE_S), key=lambda j: abs(j - k))
+        for j in hosts:
+            h = shots[j]
+            at = I.overlay_start(spec, words, h.start, h.end)
+            if at is None or (j != k and _creates_run(shots, j, TOGGLE[h.type])):
+                continue
+            if I.spec_repeats_narration(spec, I.spoken_near(words, h.start + at)):
+                break
+            h.type = TOGGLE[h.type]
+            h.overlay = spec.model_copy(update={"start_at": at, "anchor": spec.anchor or I.overlay_title(spec),
+                                                "duration": h.duration})
+            break
 
 
 # ---------------------------------------------------------------- card spacing
@@ -362,6 +397,20 @@ def space_cards(shots: list[Shot], profile: StyleProfile, exempt: list[tuple[flo
             demoted += 1
         else:
             kept.append(s.start)
+    return demoted
+
+
+def demote_repeating_cards(shots: list[Shot], words: list[Word], ideas: list[VisualIdea], rebind: Rebind,
+                           footage_for: FootageFor, overlay_for: OverlayFor,
+                           locked: frozenset[str] = frozenset()) -> int:
+    """A free callout or text card that repeats the narration spoken within REPEAT_WINDOW_S of it (the window
+    QA and acceptance use, not only its own beat) becomes footage; returns cards demoted."""
+    demoted = 0
+    for k, s in enumerate(shots):
+        if (s.type == ShotType.motion_graphic and s.id not in locked and s.motion is not None
+                and s.motion.kind in (MotionKind.callout, MotionKind.text_overlay)
+                and I.spec_repeats_narration(s.motion, I.spoken_near(words, s.start))):
+            demoted += demote_card(shots, k, ideas, rebind, footage_for, overlay_for)
     return demoted
 
 

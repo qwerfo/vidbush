@@ -271,6 +271,16 @@ image_overlay: 10, full_screen_cards: 12, animated_overlays: 30}`. That turns
 into these shot targets: footage 20, footage with overlay 42.2, image 7,
 image with overlay 18.8, full screen cards 12 (percent of shots).
 
+The overlay shares are a ceiling, not a quota. On-screen text never repeats
+the narration (the captions already show it): a callout or text overlay adds a
+number, date, place or role label, unit conversion or source, or says the
+point in other words, and it appears 0.2 s after the narrator says its anchor
+words, holding at least 1.5 s (about 0.3 s per word). An overlay slot with
+nothing honest to show stays plain footage, and a card slot whose beat has
+nothing to draw (or whose card was already shown) becomes footage too.
+`qa_report.md` shows the on-screen text line: verbatim share and the median
+gap between each text overlay and its words.
+
 A map or chart over the picture is drawn as a framed inset panel in the
 upper right. `pacing.card_spacing_s: 45` allows at most one free full screen
 card per 45 seconds outside the hook and the recap (0 turns it off). Top 10

@@ -15,6 +15,7 @@ from vidbush.shots import seat
 from vidbush.shots.assembler import ai_prompt, motion_signature, prompt_subject
 from vidbush.shots.director import build_shotlist, structural_anchors
 from vidbush.shots.pacing import MAX_MG_RUN, MAX_MG_RUN_S, Anchor, plan_slots, type_shares
+from vidbush.shots.rules import _overlay_key
 from vidbush.mg import builders as b
 
 
@@ -165,7 +166,7 @@ def test_no_overlay_text_repeats_within_30_seconds() -> None:
         for s in sl.shots:
             if s.overlay is None:
                 continue
-            key = (s.overlay.payload.get("title") or "").lower()
+            key = _overlay_key(s.overlay)  # what the viewer reads (a box or arrow label, an inset by what it draws)
             assert not (key in seen and s.start - seen[key] < 30.0), (seed, s.id, key)
             assert not any(k == key and a - s.end < 30 and s.start - e < 30 for k, a, e in cards), (seed, s.id)
             seen[key] = s.end

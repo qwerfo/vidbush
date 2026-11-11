@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .models import ShotList
+from .models import Narration, ShotList, Word
 from .util import EM_DASH, ffprobe, read_model
 
 REQUIRED_FILES = ["final.mp4", "captions.srt", "captions.ass", "chapters.txt", "description.md",
@@ -65,7 +65,9 @@ def check_project(settings: Settings, project_id: str, min_minutes: float = 3.0)
     checks["chart"] = bool({"bar_chart", "line_chart"} & kinds)
     checks["title_card"] = "title_card" in kinds
     checks["every_shot_selected"] = all(s.selected for s in sl.shots)
-    checks.update(_animation_checks(sl, facts))
+    nar_path = root / "work" / "narration.json"
+    words = read_model(nar_path, Narration).words if nar_path.exists() else []
+    checks.update(_animation_checks(sl, facts, words))
     checks.update(_text_checks(root))
     return {"ok": all(checks.values()), "checks": checks, "facts": facts}
 
@@ -73,14 +75,18 @@ def check_project(settings: Settings, project_id: str, min_minutes: float = 3.0)
 CARD_SHARE_MAX = 25.0  # percent of shots; above this the video reads as a slideshow of cards
 
 
-def _animation_checks(sl: ShotList, facts: dict[str, Any]) -> dict[str, bool]:
-    """Animation moves over the picture: full screen cards stay a minority and some map or chart rides on
-    footage or a still as an inset."""
-    from .judge.qa import animation_share
+def _animation_checks(sl: ShotList, facts: dict[str, Any], words: list[Word]) -> dict[str, bool]:
+    """Animation moves over the picture: full screen cards stay a minority, some map or chart rides on
+    footage or a still as an inset, and the overlays on the picture are honest: no on-screen text repeats
+    the narration, and text overlays appear when their words are spoken (overlay count is a ceiling, not a
+    quota, so a shot with nothing to add stays plain)."""
+    from .judge.qa import OVERLAY_TIMING_MAX_S, animation_share, overlay_text_stats
     anim = animation_share(sl)
-    facts["animation"] = anim
+    text = overlay_text_stats(sl, words)
+    facts["animation"], facts["overlay_text"] = anim, text
     return {"cards_sparing": anim["full_screen_cards"] <= CARD_SHARE_MAX,
-            "overlays_on_picture": anim["overlay_shots"] >= anim["full_screen_cards"],
+            "overlays_on_picture": anim["overlay_shots"] > 0 and text["verbatim_pct"] == 0
+            and text["timing_error_s"] <= OVERLAY_TIMING_MAX_S and text["unanchored"] == 0,
             "inset_map_or_chart": anim["inset_overlays"] > 0}
 
 

@@ -31,7 +31,9 @@ from pydantic import ValidationError
 
 from ..config import Settings
 from ..models import (STAGES, CaptionStyle, Candidate, EditOp, EditOpName, EditResult, MotionKind, MotionSpec,
-                      Narration, Project, Script, Shot, ShotList, ShotType, SourceKind, StyleTokens, TextPayload)
+                      Narration, Project, Script, Shot, ShotList, ShotType, SourceKind, StyleTokens, TextPayload,
+                      Word)
+from ..shots import ideas as I
 from ..util import media_duration, no_em_dash, read_json, write_json
 from . import retime
 from .retime import MIN_SHOT, TAIL, EditError, resolve_shot
@@ -414,7 +416,7 @@ def build_motion_spec(sess: EditSession, shot: Shot, args: dict[str, Any]) -> Mo
         raise EditError(f"no recognisable {'place' if kind == 'map' else 'number'} for a {kind} on {shot.id}; "
                         "name it in the request")
     palette = sess.ctx().profile.palette
-    title = str(_arg(args, "text", default="")) or headline(beat_text(sess, shot.beat_id)) or _subject(shot.intent)
+    title = str(_arg(args, "text", default="")) or _subject(shot.intent)  # never the narration the captions show
     try:
         from ..mg import builders
     except ImportError:
@@ -445,11 +447,27 @@ def op_set_overlay(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Out
     shot = resolve_shot(sl, _need(args, "shot_id", "shot"))
     if shot.type == ShotType.motion_graphic:
         raise EditError(f"{shot.id} is a full-frame motion graphic; change its type before adding an overlay")
-    shot.overlay = _validated_spec(_need(args, "motion_spec", "spec"), shot.duration, "transparent")
-    shot.overlay_path = ""
+    spec = timed_overlay(_validated_spec(_need(args, "motion_spec", "spec"), shot.duration, "transparent"),
+                         sess.narration().words, shot)
+    if spec is None:
+        raise EditError(f"the overlay text is not spoken during {shot.id} with time to read it, or repeats the "
+                        "narration; set motion_spec.anchor to the narration words it belongs to and add a fact "
+                        "or paraphrase")
+    shot.overlay, shot.overlay_path = spec, ""
     shot.type = {ShotType.footage: ShotType.footage_overlay, ShotType.image: ShotType.image_overlay}.get(shot.type,
                                                                                                          shot.type)
     return Outcome(f"{shot.id} has a {shot.overlay.kind.value} overlay", FORCE_MOTION)
+
+
+def timed_overlay(spec: MotionSpec, words: list[Word], shot: Shot) -> Optional[MotionSpec]:
+    """A text overlay timed to its anchor inside the shot (the director's time_overlays rule); None when the
+    shot does not hold its words or the text repeats the narration. Other overlays are returned unchanged."""
+    if spec.kind not in I.TEXT_OVERLAY_KINDS:
+        return spec
+    at = I.overlay_start(spec, words, shot.start, shot.end)
+    if at is None or I.spec_repeats_narration(spec, I.spoken_near(words, shot.start + at)):
+        return None
+    return spec.model_copy(update={"start_at": at, "anchor": spec.anchor or I.overlay_title(spec)})
 
 
 def op_remove_overlay(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Outcome:
@@ -741,8 +759,21 @@ def _renarrate_and_fit(sess: EditSession, sl: ShotList, beat_id: str, new_text: 
     new_nar = renarrate_beat(nar, sess.script(), beat_id, new_text, ctx.brand, ctx.seats, sess.settings, sess.work,
                              ctx.log)
     total = round(new_nar.duration + TAIL, 3)
-    fit_beat_shots(sl, beat_id, span, new_nar.duration - nar.duration)
+    delta = new_nar.duration - nar.duration
+    cover = set(fit_beat_shots(sl, beat_id, span, delta))
+    for s in sl.shots:  # narration after the beat moves by delta, and so do the overlay moments on it
+        if s.start >= span[1] - 1e-3:
+            s.start = round(s.start + delta, 3)
+    rewritten = {s.id: s.overlay for s in sl.shots if s.id in cover and s.overlay is not None}
+    for s in sl.shots:  # the beat's words changed: its overlays are timed again to the new words below
+        if s.id in rewritten:
+            s.overlay = None
     retime.finalize(sl, total)
+    for s in sl.shots:
+        if s.id in rewritten:
+            s.overlay = timed_overlay(retime.retime_motion(rewritten[s.id], s.duration), new_nar.words, s)
+            if s.overlay is None:
+                s.overlay_path, s.type = "", retime.BASE_TYPE.get(s.type, s.type)
     retime.check_timeline(sl, total)
     return new_nar, total
 

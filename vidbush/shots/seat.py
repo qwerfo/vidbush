@@ -51,7 +51,12 @@ DIRECTOR_RULES = [
     "For every beat give exactly 1 footage idea, 1 still idea and at most 1 motion idea.",
     "footage and still ideas: intent (what is on screen, no purpose clauses), must_show, must_avoid, 2 to 4 "
     "search queries, most specific first, era correct. Optional overlay: a MotionSpec of an overlay kind, only "
-    "naming or drawing something the narration of that beat supports.",
+    "naming or drawing something the narration of that beat supports, with anchor set to the exact narration "
+    "words it belongs to: it appears the moment the narrator says them.",
+    "On-screen text never repeats the narration, because the captions already show every spoken word. A "
+    "callout, text overlay or text card adds what the narrator does not say (a number, date, place or role "
+    "label, a unit conversion, the source) or makes the point in different words, in 2 to 6 words. With "
+    "nothing to add, give no overlay: the shot stays plain footage.",
     "Animation moves over the picture: reference channels show most maps, charts, callouts and arrows as "
     "overlays on footage or stills, and use full screen cards sparingly (about one per 45 seconds after the "
     "opening), because a run of cards reads as a slideshow and loses the viewer. Prefer a map or chart as an "
@@ -94,7 +99,8 @@ SYSTEM = (
 # Compact MotionSpec schema shown to the model: exact payload keys per kind, duration optional.
 MOTION_SCHEMA: dict[str, Any] = {
     "spec": {"kind": "<kind>", "payload": {}, "source_note": "required for map and charts",
-             "duration": "optional seconds, omit to fit the shot"},
+             "duration": "optional seconds, omit to fit the shot",
+             "anchor": "overlays: the exact narration words this overlay belongs to"},
     "kinds": {
         "map": {"center": [9.1, -79.7], "zoom": 6, "title": "Colon to Panama City",
                 "markers": [{"lat": 9.36, "lon": -79.9, "label": "Colon"}],
@@ -107,8 +113,11 @@ MOTION_SCHEMA: dict[str, Any] = {
         "number_card": {"number": "5,600", "label": "workers died", "sublabel": "1904 to 1914"},
         "title_card": {"title": "Chapter title", "subtitle": ""},
         "lower_third": {"title": "Name or place", "subtitle": "role or country"},
-        "callout": {"title": "Short key phrase", "subtitle": ""},
-        "text_overlay": {"title": "1914", "subtitle": "", "position": "upper_left"},
+        "callout": {"title": "2 to 6 words the narration does not say: a fact, number, date, place, unit or "
+                             "source, or the point in other words; never the narration's own words",
+                    "subtitle": ""},
+        "text_overlay": {"title": "1914", "subtitle": "", "position": "upper_left",
+                         "_note": "like callout: adds to the narration, never copies it"},
         "highlight_box": {"x": 0.3, "y": 0.3, "w": 0.4, "h": 0.3, "label": "Gatun Locks"},
         "arrow": {"x": 0.2, "y": 0.3, "to_x": 0.5, "to_y": 0.5, "label": ""},
     },
@@ -308,7 +317,8 @@ def _chunk_ideas(chunk: list[tuple[Scene, Any]], script: Script, spans: dict[str
     beat_ids = {bt.id for _sc, bt in chunk}
     lengths = {bid: max(0.5, spans.get(bid, (0.0, 6.0))[1] - spans.get(bid, (0.0, 6.0))[0]) for bid in beat_ids}
     mine = [it for it in items if isinstance(it, dict) and it.get("beat_id") in beat_ids]
-    return [idea for idea in (validate_idea(it, beat_ids, research, lengths) for it in mine) if idea]
+    texts = {bt.id: bt.text for _sc, bt in chunk}
+    return [idea for idea in (validate_idea(it, beat_ids, research, lengths, texts) for it in mine) if idea]
 
 
 def _params(fn: Any) -> set[str]:
@@ -340,7 +350,8 @@ def director_prompt(script: Script, spans: dict[str, tuple[float, float]], resea
         "rules": DIRECTOR_RULES,
         "output": {"ideas": [{"beat_id": "b001", "family": "footage|still|motion", "intent": "...",
                               "must_show": [], "must_avoid": [], "queries": [],
-                              "overlay": {"kind": "lower_third", "payload": {"title": "Colon", "subtitle": "Panama"}},
+                              "overlay": {"kind": "lower_third", "payload": {"title": "Colon", "subtitle": "Panama"},
+                                          "anchor": "reached Colon"},
                               "motion": None, "priority": 1.0, "opening_safe": True}]},
     }
     return json.dumps(brief, ensure_ascii=False)
@@ -371,14 +382,20 @@ def _overlay(raw: Any, research: Optional[Research] = None) -> Optional[MotionSp
         spec = fix_map(spec)
     if spec.kind in (MotionKind.bar_chart, MotionKind.line_chart):
         spec = check_chart(spec, research)
-    return spec.model_copy(update={"background": "transparent"}) if spec is not None else None
+    return spec.model_copy(update={"background": "transparent", "start_at": 0.0}) if spec is not None else None
+
+
+QUOTE_KINDS = {MotionKind.callout, MotionKind.text_overlay}
 
 
 def validate_idea(item: Any, beat_ids: set[str], research: Optional[Research],
-                  lengths: Optional[dict[str, float]] = None) -> Optional[VisualIdea]:
+                  lengths: Optional[dict[str, float]] = None,
+                  texts: Optional[dict[str, str]] = None) -> Optional[VisualIdea]:
     """Pydantic validation plus content checks; None when the idea is unusable.
 
-    A bad overlay only clears the overlay; a missing spec duration takes the beat length.
+    A bad overlay only clears the overlay; a missing spec duration takes the beat length. Text that repeats
+    the beat's narration (texts: beat id to narration) is dropped, never replaced: an overlay is cleared and
+    a quote or callout card is rejected.
     """
     if not isinstance(item, dict):
         return None
@@ -392,11 +409,16 @@ def validate_idea(item: Any, beat_ids: set[str], research: Optional[Research],
     if idea.beat_id not in beat_ids:
         return None
     idea.overlay = _overlay(raw_overlay, research) if raw_overlay else None
+    narration = (texts or {}).get(idea.beat_id, "")
+    if I.spec_repeats_narration(idea.overlay, narration):
+        idea.overlay = None
     idea = _clean_text(idea)
     if idea.family != "motion":
         idea.motion = None
         return idea
     if idea.motion is None or not _payload_ok(idea.motion):
+        return None
+    if idea.motion.kind in QUOTE_KINDS and I.spec_repeats_narration(idea.motion, narration):
         return None
     idea.overlay = None
     if idea.motion.kind == MotionKind.map:

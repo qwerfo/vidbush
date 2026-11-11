@@ -133,7 +133,12 @@ motion stage renders it to `work/mg/<hash>.mp4` and adds a Candidate with
 `shot.overlay`; the motion stage renders it with alpha to
 `work/mg/<hash>.mov` (qtrle, rgba) and sets `shot.overlay_path`. A map or
 chart overlay renders as an inset panel over the picture (`vidbush/mg/inset.py`,
-always the Python renderer). The motion
+always the Python renderer). A text overlay (callout, text_overlay,
+lower_third, highlight_box, arrow) carries `anchor` (the narration words it
+belongs to) and `start_at` (seconds into the shot): the director sets
+`start_at` 0.2 s after the anchor is spoken (`rules.time_overlays`), the
+clip renders for `duration - start_at` and the segment overlays it from
+`start_at`. The motion
 cache key includes the renderer kind and a renderer version; degraded
 fallback renders are stored under a separate `.fallback` name.
 Data-driven graphics (maps, charts) always draw `source_note` in a corner.

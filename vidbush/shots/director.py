@@ -4,10 +4,10 @@ Layer one gathers visual ideas per beat from the director seat (validated:
 pydantic, map coordinates checked against the gazetteer, chart numbers
 checked against fact cards; every call sees the script summary, the previous
 two chunks' ideas, the anchors so far and the next beat, see seat.py) merged
-with heuristic ideas so every beat has footage, still and motion ideas. Layer two is the pacing engine, which plans
+with heuristic ideas so every beat has footage and still ideas. Layer two is the pacing engine, which plans
 typed slots over [0, narration.duration + 1.0]; each slot takes the best
 unused idea of its family from the beat at its midpoint. rules.py then
-polishes the sequence.
+polishes the sequence and times every text overlay to the words it belongs to.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
                    profile: StyleProfile, brand: Brand, seats: Any,
                    rng: random.Random) -> tuple[ShotList, DirectorPlan]:
     """Ideas per beat (seat plus heuristics), pacing slots, rules; returns the ShotList and the merged plan."""
-    from .rules import apply_rules, space_cards
+    from .rules import apply_rules, demote_repeating_cards, space_cards, time_overlays
     log = getattr(seats, "log", None) or NullLogger()
     total = round(narration.duration + 1.0, 3)
     spans = beat_spans(script, narration)
@@ -47,7 +47,7 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
     anchors = structural_anchors(script, spans, profile, top10, total, topic)
     exempt = card_exempt_ranges(script, spans, profile, anchors)
     slots = plan_slots(total, profile, rng, narration.words, scene_starts(script, spans), anchors, exempt)
-    ctx = _Assembler(script, spans, bcs, ideas, profile, rng)
+    ctx = _Assembler(script, spans, bcs, ideas, profile, rng, narration.words)
     shots = ctx.assign(slots)
     shots = apply_rules(shots, ctx.ideas, ctx.idea_of, profile, ctx.rebind, ctx.overlay_for, frozenset(ctx.locked),
                         overlay_pool=ctx.overlay_pool, footage_for=ctx.footage_for)
@@ -57,6 +57,11 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
     if demoted:
         log.info("full screen cards moved onto footage (card spacing)", cards=demoted,
                  spacing_s=profile.pacing.card_spacing_s)
+    repeats = demote_repeating_cards(shots, narration.words, ctx.ideas, ctx.rebind, ctx.footage_for, ctx.overlay_for,
+                                     frozenset(ctx.locked))
+    if repeats:
+        log.info("cards that repeat nearby narration moved onto footage", cards=repeats)
+    time_overlays(shots, narration.words, frozenset(ctx.locked))
     sl = ShotList(project_id=project.id, duration=total, shots=shots)
     _finalize(sl, profile)
     log.info("shot list built", shots=len(sl.shots), ideas=len(ctx.ideas), llm_ideas=len(llm),

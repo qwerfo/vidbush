@@ -6,9 +6,12 @@ from the beat the slot plays over, or the adjacent beat when the slot spans it,
 so a map or card never shows content the narration has not reached. Reuse is
 charged by content signature (maps by view and labels, cards by text), the
 same motion kind within 60 s costs a decaying penalty, and maps are capped at
-about MAP_SHARE of motion slots unless they show a new place. Overlay shots
-draw first on the beat's own map and chart ideas as insets over the picture,
-since reference channels move most of their animation over footage.
+about MAP_SHARE of motion slots unless they show a new place. A motion slot
+whose best card was already shown, or whose beat has nothing to draw, takes
+footage instead. Overlay shots draw first on the beat's own map and chart
+ideas as insets over the picture, since reference channels move most of their
+animation over footage. A text overlay is offered only to a shot that holds
+the moment its anchor is spoken.
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ import re
 from typing import Optional
 
 from ..models import (OVERLAY_TYPES, MapPayload, MotionKind, MotionSpec, Script, Shot, ShotType, StyleProfile,
-                      VisualIdea)
+                      VisualIdea, Word)
 from ..util import no_em_dash
 from . import ideas as I
 from ..mg.inset import INSET_KINDS
@@ -59,8 +62,8 @@ class _Assembler:
     """Turns pacing slots into shots by picking ideas; also serves rules.py callbacks."""
 
     def __init__(self, script: Script, spans: dict[str, tuple[float, float]], bcs: list[I.BeatContext],
-                 ideas: list[VisualIdea], profile: StyleProfile, rng: random.Random) -> None:
-        self.script, self.spans, self.profile, self.rng = script, spans, profile, rng
+                 ideas: list[VisualIdea], profile: StyleProfile, rng: random.Random, words: list[Word]) -> None:
+        self.script, self.spans, self.profile, self.rng, self.words = script, spans, profile, rng, words
         self.ideas = ideas
         self.bc = {bc.beat.id: bc for bc in bcs}
         self.order = [bc.beat.id for bc in bcs]
@@ -134,7 +137,7 @@ class _Assembler:
         hook = at < self.profile.pacing.hook_seconds
         scene = self.bc[beat_id].scene.id if beat_id in self.bc else ""
         scene_start = self.spans.get(self.bc[beat_id].scene.beats[0].id, (0, 0))[0] if beat_id in self.bc else 0.0
-        best, best_score = -1, -1e9
+        best, best_score, best_reuse = -1, -1e9, 0
         for d, bid in self._beats_near(beat_id, family, at, duration):
             for i in self.by_key.get((bid, family), []):
                 idea = self.ideas[i]
@@ -147,7 +150,10 @@ class _Assembler:
                 if idea.motion is not None:
                     score -= self._motion_penalty(idea.motion, at, scene_start, duration)
                 if score > best_score:
-                    best, best_score = i, score
+                    best, best_score, best_reuse = i, score, reuse
+        if family == "motion" and (best < 0 or best_reuse > 0):
+            # no fresh card for this moment (the beat has nothing to draw, or its card is already shown): footage
+            return self.pick(beat_id, "footage", at, prev, duration, exclude)
         if best < 0:
             best = self._fallback_idea(beat_id, family)
         self._count(best, 1)
@@ -195,13 +201,14 @@ class _Assembler:
 
     def _make_shot(self, k: int, slot: Slot, beat_id: str, idx: int) -> Shot:
         bc = self.bc[beat_id]
+        typ = slot.type if FAMILY[slot.type] == self.ideas[idx].family else ShotType.footage  # no honest card
         shot = Shot(id=f"shot_{k + 1:03d}", index=k, beat_id=beat_id, scene_id=bc.scene.id,
                     start=round(slot.start, 3), end=round(slot.end, 3), duration=round(slot.end - slot.start, 3),
-                    type=slot.type, intent="")
+                    type=typ, intent="")
         self.rebind(shot, self.ideas[idx], idx)
-        if slot.type == ShotType.motion_graphic:
+        if shot.type == ShotType.motion_graphic:
             shot.motion = slot.motion or shot.motion
-        if slot.type in OVERLAY_TYPES:
+        if shot.type in OVERLAY_TYPES:
             shot.overlay = slot.overlay or self.overlay_for(shot)
             if shot.overlay is None:
                 shot.type = PLAIN_OF[shot.type]  # nothing honest to overlay (call to action beat)
@@ -234,15 +241,23 @@ class _Assembler:
 
     def overlay_pool(self, shot: Shot) -> list[MotionSpec]:
         """Overlays a shot may carry, best first: map and chart insets of its beat (animation moves over the
-        picture), its idea's overlay, then lower thirds for what it shows and the beat's generic overlays.
-        Empty on call-to-action beats."""
+        picture), its idea's overlay, the overlays of every idea of its beat and the beats beside it (best
+        idea first, so a seat overlay whose own idea became a card still reaches the picture), then lower
+        thirds for what it shows and the beat's generic overlays. A text overlay stays only when the shot
+        holds the moment its anchor is spoken, with time to read it. Empty on call-to-action beats."""
         bc = self.bc.get(shot.beat_id)
         if bc is None or I.CTA_RE.search(bc.beat.text):
             return []
         idx = self.idea_of.get(shot.id)
         own = [self.ideas[idx].overlay] if idx is not None and self.ideas[idx].overlay is not None else []
-        return self.insets(shot.beat_id, shot.start) + own + I.overlay_choices(bc, self.profile.palette,
-                                                                              shot.must_show)
+        pos = self.pos.get(shot.beat_id, 0)
+        near = set(self.order[max(0, pos - 1):pos + 2])
+        beat = [i.overlay for i in sorted((i for i in self.ideas if i.overlay is not None and i.beat_id in near),
+                                          key=lambda i: -i.priority)]
+        pool = self.insets(shot.beat_id, shot.start) + own + beat + I.overlay_choices(bc, self.profile.palette,
+                                                                                     shot.must_show)
+        return [o for o in pool if o.kind not in I.TEXT_OVERLAY_KINDS
+                or I.overlay_start(o, self.words, shot.start, shot.end) is not None]
 
     def insets(self, beat_id: str, at: float) -> list[MotionSpec]:
         """The beat's map and chart ideas as transparent insets.

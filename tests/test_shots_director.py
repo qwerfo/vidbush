@@ -59,18 +59,35 @@ def _check_specs(sl, palette: str) -> None:
             assert s.queries and s.ai_prompt
 
 
+SIBLING = {ShotType.footage: ShotType.footage_overlay, ShotType.image: ShotType.image_overlay}
+
+
+def _check_mix(shots, prof) -> None:
+    """Cards and picture families keep their planned share; overlay types are a ceiling, because a shot
+    carries text only when it adds to the narration (else it stays plain)."""
+    shares = type_shares([s.type for s in shots])
+    target = {t: v * 100 for t, v in mix_targets(prof).items()}
+    for t, v in target.items():
+        got = shares.get(t.value, 0.0)
+        if t in SIBLING.values():
+            assert got <= v + 5.0, t
+        elif t in SIBLING:
+            sib = SIBLING[t]
+            assert abs(got + shares.get(sib.value, 0.0) - v - target.get(sib, 0.0)) <= 5.0, t
+        else:
+            assert abs(got - v) <= 5.0, t
+
+
 def test_heuristic_documentary_shotlist() -> None:
     script = six_minute_script()
     sl, plan, nar = _build(script, res=research())
     _check_timeline(sl, nar)
     _check_specs(sl, "documentary_warm")
-    shares = type_shares([s.type for s in sl.shots])
-    for t, share in mix_targets(profile()).items():
-        assert abs(shares.get(t.value, 0) - share * 100) <= 5.0
+    _check_mix(sl.shots, profile())
     assert sl.shots[0].type in (ShotType.footage, ShotType.footage_overlay)
     families = Counter((i.beat_id, i.family) for i in plan.ideas)
-    for beat in script.beats():
-        for fam in ("footage", "still", "motion"):
+    for beat in script.beats():  # a motion idea only where the beat has something to draw
+        for fam in ("footage", "still"):
             assert families[(beat.id, fam)] >= 1
 
 
