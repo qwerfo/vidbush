@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_dotenv(path: Path) -> dict[str, str]:
-    """Parse a simple KEY=VALUE .env file. Existing process env wins."""
+    """Parse a simple KEY=VALUE env file (.env or .env.local). load_settings lets process env win."""
     out: dict[str, str] = {}
     if not path.exists():
         return out
@@ -143,10 +143,11 @@ def _yaml(path: Path) -> dict[str, Any]:
 
 def load_settings(root: Optional[Path] = None, overrides: Optional[dict[str, Any]] = None,
                   use_dotenv: bool = True) -> Settings:
-    """Load .env, config/vidbush.yaml and config/seats.yaml into one Settings object.
-    use_dotenv=False ignores .env (tests must never see the operator's keys)."""
+    """Load .env, .env.local, config/vidbush.yaml and config/seats.yaml into one Settings object.
+    Precedence: process env, then .env.local, then .env (operators keep keys in either file).
+    use_dotenv=False ignores both files (tests must never see the operator's keys)."""
     root = Path(root or os.environ.get("VIDBUSH_ROOT") or REPO_ROOT)
-    env = load_dotenv(root / ".env") if use_dotenv else {}
+    env = {**load_dotenv(root / ".env"), **load_dotenv(root / ".env.local")} if use_dotenv else {}
     env.update({k: v for k, v in os.environ.items() if k.isupper()})
     app = _yaml(root / "config" / "vidbush.yaml")
     seats = _yaml(root / "config" / "seats.yaml")

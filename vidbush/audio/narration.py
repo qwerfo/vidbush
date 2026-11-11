@@ -19,6 +19,13 @@ Model consistency: the first chunk is synthesized alone before the others run
 in parallel, so a model the provider refuses switches the whole run to the
 fallback model (the adapters keep that switch sticky) before any other chunk
 is made, and one video never mixes models.
+
+Provider consistency: one video has one narrator. A cached chunk counts only
+when the tts seat that serves now (Seats.tts_engine) made it, so a fallback's
+chunk is never reused once the primary is back. When a seat goes down mid run
+and the chunks come from more than one provider, the others are synthesized
+again on the provider that serves now; still mixed raises ProviderError. A
+re-narrated beat from another provider than the narration's raises too.
 """
 from __future__ import annotations
 
@@ -83,8 +90,9 @@ def plan_chunks(script: Script, per_beat: bool, max_chars: int = MAX_CHUNK_CHARS
 
 
 def synthesize_chunk(chunk: Chunk, brand: Brand, seats: Any, nar_dir: Path, log: JsonLogger,
-                     allow_mock_fallback: bool = False) -> Chunk:
+                     allow_mock_fallback: bool = False, previous_text: str = "", next_text: str = "") -> Chunk:
     """TTS for one chunk, cached on disk by text, voice and language (a sidecar json keeps words).
+    previous_text and next_text are the neighbouring chunks' text, for models that keep prosody across them.
 
     With a real TTS seat, a chunk that came back from the mock voice raises ProviderError
     unless allow_mock_fallback: mock audio is never spliced silently into real narration.
@@ -94,11 +102,13 @@ def synthesize_chunk(chunk: Chunk, brand: Brand, seats: Any, nar_dir: Path, log:
     sidecar = nar_dir / f"chunk_{key}.json"
     if sidecar.exists():
         cached = Chunk(**read_json(sidecar))
-        if Path(cached.path).exists() and not (real and cached.is_mock):
+        now = _engine_now(seats) if real else ""
+        if Path(cached.path).exists() and not (real and cached.is_mock) and not (now and cached.engine != now):
             return chunk.model_copy(update={"path": cached.path, "words": cached.words,
                                             "is_mock": cached.is_mock, "engine": cached.engine})
     path, words, is_mock, engine = seats.tts(chunk.text, brand.voice, nar_dir / f"chunk_{key}.wav", "narration",
-                                             language=brand.language)
+                                             language=brand.language, previous_text=previous_text,
+                                             next_text=next_text)
     if real and is_mock:
         if not allow_mock_fallback:
             raise ProviderError(f"tts returned mock audio for scene {chunk.scene_id} with a real tts seat")
@@ -114,18 +124,38 @@ def synthesize_all(chunks: list[Chunk], brand: Brand, seats: Any, settings: Sett
     """First chunk alone (it settles the model for the run), then the rest in parallel."""
     if not chunks:
         return []
-    first = synthesize_chunk(chunks[0], brand, seats, nar_dir, log, settings.allow_mock_fallback)
+    def one(i: int) -> Chunk:
+        return synthesize_chunk(chunks[i], brand, seats, nar_dir, log, settings.allow_mock_fallback,
+                                previous_text=chunks[i - 1].text if i > 0 else "",
+                                next_text=chunks[i + 1].text if i + 1 < len(chunks) else "")
+
+    first = one(0)
     workers = max(1, min(4, settings.render.workers))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        rest = list(pool.map(lambda c: synthesize_chunk(c, brand, seats, nar_dir, log,
-                                                        settings.allow_mock_fallback), chunks[1:]))
+        rest = list(pool.map(one, range(1, len(chunks))))
     done = [first] + rest
     engines = sorted({c.engine for c in done if not c.is_mock})
     if len(engines) > 1:
-        log.warn("narration chunks came from more than one tts provider (a provider failed mid run)",
-                 engines=engines)
+        # a seat went down mid run: the other chunks are made again by the provider that serves now
+        now = _engine_now(seats)
+        log.warn("narration chunks came from more than one tts provider, the others are synthesized again",
+                 engines=engines, provider=now)
+        redo = [i for i, c in enumerate(done) if not c.is_mock and c.engine != now]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for i, c in zip(redo, pool.map(one, redo)):
+                done[i] = c
+        engines = sorted({c.engine for c in done if not c.is_mock})
+        if len(engines) > 1:
+            raise ProviderError(f"narration chunks came from more than one tts provider {engines}; "
+                                "one video keeps one narrator")
     log.info("narration chunks synthesized", chunks=len(done), mock=sum(c.is_mock for c in done))
     return done
+
+
+def _engine_now(seats: Any) -> str:
+    """The tts provider the next request goes to, or "" when the seats cannot tell."""
+    fn = getattr(seats, "tts_engine", None)
+    return fn() if fn else ""
 
 
 def forced_engines(chunks: list[Chunk], seats: Any) -> set[str]:
@@ -338,8 +368,16 @@ def renarrate_beat(narration: Narration, script: Script, beat_id: str, new_text:
         raise KeyError(f"beat {beat_id} has no span in the narration")
     nar_dir = Path(work_dir) / "narration"
     scene = next(sc for sc in script.scenes if any(b.id == beat_id for b in sc.beats))
+    beats = [b for b in script.beats() if b.text.strip() or b.id == beat_id]
+    i = next(k for k, b in enumerate(beats) if b.id == beat_id)
     chunk = synthesize_chunk(Chunk(scene_id=scene.id, beat_ids=[beat_id], texts=[no_em_dash(new_text.strip())]),
-                             brand, seats, nar_dir, log, settings.allow_mock_fallback)
+                             brand, seats, nar_dir, log, settings.allow_mock_fallback,
+                             previous_text=no_em_dash(beats[i - 1].text.strip()) if i > 0 else "",
+                             next_text=no_em_dash(beats[i + 1].text.strip()) if i + 1 < len(beats) else "")
+    voices = [e for e in narration.provider.split("+") if e and e != "voiceover" and not e.startswith("mock")]
+    if voices and not chunk.is_mock and chunk.engine not in voices:
+        raise ProviderError(f"beat {beat_id} came from tts provider {chunk.engine} but the narration is "
+                            f"{narration.provider}; one video keeps one narrator")
     raw = read_audio(chunk.path)[:, 0]
     speech, trimmed = _trim_speech(raw, Path(chunk.path))
     s, e = narration.beat_spans[beat_id]

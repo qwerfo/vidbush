@@ -26,6 +26,7 @@ from . import model_resolve
 from . import search as search_mod
 from . import tts as tts_mod
 from . import tts_algrow
+from . import tts_elevate
 from .base import HEALTH, CallResult, CostTracker, ProviderClient, ProviderError, ProviderSpec, is_placeholder_model
 
 ROLES = ["researcher", "writer", "director", "judge", "editor", "cheap_classifier", "image", "video",
@@ -45,6 +46,7 @@ ROLE_TIMEOUT_S = {"writer": 600.0}
 TTS_TYPES: dict[str, Any] = {
     "elevenlabs": tts_mod,
     "algrow_tts": tts_algrow,
+    "elevate_tts": tts_elevate,
 }
 # LLM and vision provider types to the module whose chat() serves them (same contract as llm.chat);
 # looked up at call time so tests and hot fixes can replace a module's chat
@@ -80,6 +82,7 @@ class Seats:
         self.mock_roles: set[str] = set()
         self.fallback_roles: set[str] = set()
         self.heuristic_notes: list[dict[str, str]] = []
+        self._tts_models: set[tuple[str, str]] = set()  # (provider, model) already logged by tts()
 
     # ------------------------------------------------------------ resolution
 
@@ -99,8 +102,15 @@ class Seats:
                 self._warn_unknown_type(role, pname, ptype)
                 continue
             model = entry.get("model", "")
+            match = entry.get("model_match")
             if entry.get("model_env"):
-                model = self.settings.key(entry["model_env"]) or model
+                pin = self.settings.key(entry["model_env"])
+                if pin and isinstance(match, dict) and not model_resolve.pin_matches(pin, match):
+                    # a pin naming another model than the entry's own match is a stale leftover: never sent
+                    self._log_once("pin_stale", "model_env pin does not match model_match, ignored",
+                                   f"{entry['model_env']}={pin}")
+                    pin = ""
+                model = pin or model
             if is_placeholder_model(model):
                 model = ""
             spec = ProviderSpec(
@@ -109,7 +119,6 @@ class Seats:
                 api_key=self.settings.key(pdef.get("key_env", "")),
                 options={**pdef.get("options", {}), **entry.get("options", {})},
             )
-            match = entry.get("model_match")
             if not spec.model and isinstance(match, dict) and spec.api_key and (
                     spec.base_url or spec.type == "anthropic"):
                 spec.model = model_resolve.resolve(spec, match, self.log)
@@ -356,6 +365,14 @@ class Seats:
                 return p.options.get(key, default)
         return default
 
+    def tts_engine(self) -> str:
+        """Name of the tts seat the next request goes to: the first configured one HEALTH does not hold down
+        ("" when none). Narration keeps every chunk of one video on this provider."""
+        for p in self.providers_for("tts"):
+            if p.configured and not HEALTH.is_held(f"{p.name}:{p.model}"):
+                return p.name
+        return ""
+
     def tts(self, text: str, voice: VoiceConfig, out_path: Path, stage: str, language: str = "",
             previous_text: str = "", next_text: str = "") -> tuple[Path, Optional[list[dict]], bool, str]:
         """Synthesize narration. Returns (audio_path, words or None, is_mock, engine)."""
@@ -373,7 +390,13 @@ class Seats:
         if res.mock:
             path, words, engine = res.value
             return Path(path), words, True, f"mock_{engine}"
-        path, words = res.value[0], res.value[1]  # a third element (model id) is optional
+        path, words = res.value[0], res.value[1]
+        model = res.value[2] if len(res.value) > 2 else res.provider.model  # the model that spoke
+        with self._lock:
+            first = (res.provider.name, model) not in self._tts_models
+            self._tts_models.add((res.provider.name, model))
+        if first:
+            self.log.info("tts model", provider=res.provider.name, model=model)
         return Path(path), words, False, res.provider.name
 
     # ------------------------------------------------------------ search

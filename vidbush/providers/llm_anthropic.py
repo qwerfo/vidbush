@@ -36,7 +36,8 @@ from typing import Any, Optional
 
 import requests
 
-from .base import CallResult, ProviderSpec, RateLimitError, RefusalError, TransportError, http_error_to_exc
+from .base import (POLICY_WORDS, CallResult, ProviderSpec, RateLimitError, RefusalError, TransportError,
+                   http_error_to_exc)
 from .http import USER_AGENT, get_json
 from .llm import CONTINUE_PROMPT, JSON_RETRIES, REFUSAL_RE, BadJSONError, max_tokens_option, parse_json_loose
 
@@ -67,7 +68,6 @@ PRICES_PER_MTOK: dict[str, dict[str, float]] = {
     "claude-haiku-4-5": {"prompt": 1.0, "completion": 5.0, "cache_read": 0.10, "cache_write_5m": 1.25},
 }
 
-_POLICY_WORDS = ("safety", "content policy", "content_policy", "flagged", "moderation", "violat", "prohibited")
 # adjustable request features: the 400 phrases that name each one
 _ADJUSTABLE = {
     "effort": ("effort", "output_config"),
@@ -258,7 +258,7 @@ def post_message_stream(url: str, body: dict[str, Any], hdrs: dict[str, str], ti
 def _learn(spec: ProviderSpec, err: str, have: set[str]) -> bool:
     """Learn one request adjustment from a 400. Content policy errors never teach a quirk."""
     low = err.lower()
-    if any(w in low for w in _POLICY_WORDS):
+    if any(w in low for w in POLICY_WORDS):
         return False
     if "max_tokens" in low and any(w in low for w in ("<=", "maximum", "exceed", "less than", "at most", ">")):
         # the model's limit is the smallest number the error names below what was sent

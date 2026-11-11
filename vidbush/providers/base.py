@@ -1,7 +1,8 @@
 """Provider client: one wrapper for every external call.
 
 Handles retries on transport errors, fallback on refusal or 4xx, provider down
-marking with a 10 minute probe cycle, rate limit backoff (429 honours
+marking with a 10 minute probe cycle (after repeated transport errors, or at once for an
+error about the seat itself: SeatUnavailable), rate limit backoff (429 honours
 Retry-After and never marks a provider down), per-provider concurrency
 limits, timing, and cost recording.
 """
@@ -34,7 +35,7 @@ class TransportError(ProviderError):
 
 
 class RateLimitError(TransportError):
-    """HTTP 429. Retried after Retry-After (or exponential backoff); never marks a provider down."""
+    """HTTP 429 (not a spent balance). Retried after Retry-After or backoff; never marks a provider down."""
 
     def __init__(self, msg: str, retry_after: Optional[float] = None) -> None:
         super().__init__(msg)
@@ -43,6 +44,31 @@ class RateLimitError(TransportError):
 
 class RefusalError(ProviderError):
     """4xx, content refusal, bad request after adjustment. Falls back once, no retry."""
+
+
+class SeatUnavailable(RefusalError):
+    """An error about the seat itself (bad key, no credit, usage limit, model not in this channel), not about
+    one request. The provider:model pair is marked down for the probe interval, so later requests skip it."""
+
+
+# HTTP statuses and reply words that describe the seat, not the request (checked by http_error_to_exc)
+SEAT_STATUSES = {401, 402, 403}
+SEAT_WORDS = ("model_not_in_channel", "usage limit", "insufficient", "quota", "credit balance")
+# words that make a 429 a spent balance, not a rate window (OpenAI insufficient_quota, copied by relays);
+# a bare "quota" stays a rate limit there, because per minute quotas (Gemini RESOURCE_EXHAUSTED) say it too
+SPENT_WORDS = ("insufficient", "usage limit", "credit balance")
+# words of a content or policy refusal: about this request's content, never the seat (one list for every
+# adapter: llm.py, llm_anthropic.py and tts_elevate.py import it)
+POLICY_WORDS = ("safety", "content policy", "content_policy", "flagged", "moderation", "content_filter",
+                "violat", "prohibited", "policy")
+
+
+def is_seat_error(status: int, body: str) -> bool:
+    """True when an HTTP error says the seat cannot serve any request (see SeatUnavailable)."""
+    low = body.lower()
+    if any(w in low for w in POLICY_WORDS):
+        return False
+    return status in SEAT_STATUSES or any(w in low for w in SEAT_WORDS)
 
 
 class NotConfigured(ProviderError):
@@ -132,6 +158,12 @@ class HealthBoard:
                 self._down[key] = time.time()
                 return False
             return True
+
+    def is_held(self, key: str) -> bool:
+        """True while key is marked down and its probe window is not open yet (is_down without the probe)."""
+        with self._lock:
+            t = self._down.get(key)
+            return t is not None and time.time() - t < PROBE_INTERVAL_S
 
     def mark_down(self, key: str) -> None:
         with self._lock:
@@ -236,6 +268,13 @@ class ProviderClient:
                 errors.append(f"{spec.name}: transport {e}")
                 self.log.warn("provider marked down", role=role, provider=spec.name, error=str(e)[:300])
                 return None
+            except SeatUnavailable as e:
+                self._record(role, stage, spec, ok=False, latency=time.time() - t0, note=f"seat unavailable: {e}"[:300])
+                HEALTH.mark_down(key)
+                errors.append(f"{spec.name}: {e}")
+                self.log.warn("seat unavailable, marked down", role=role, provider=spec.name, model=spec.model,
+                              error=str(e)[:300])
+                return None
             except (RefusalError, NotConfigured) as e:
                 self._record(role, stage, spec, ok=False, latency=time.time() - t0, note=f"refusal: {e}"[:300],
                              cost=float(getattr(e, "cost_usd", 0.0) or 0.0))
@@ -274,11 +313,16 @@ class ProviderClient:
 
 
 def http_error_to_exc(status: int, body: str, retry_after: Optional[str] = None) -> ProviderError:
-    """Map an HTTP status to the right exception class (429 to RateLimitError with Retry-After seconds)."""
+    """Map an HTTP status to the right exception class (429 to RateLimitError with Retry-After seconds, or to
+    SeatUnavailable when its body names a spent balance)."""
     if status == 429:
+        if any(w in body.lower() for w in SPENT_WORDS):
+            return SeatUnavailable(f"http 429: {body[:300]}")
         return RateLimitError(f"http 429: {body[:300]}", parse_retry_after(retry_after))
     if status in (408, 425) or status >= 500:
         return TransportError(f"http {status}: {body[:300]}")
+    if is_seat_error(status, body):
+        return SeatUnavailable(f"http {status}: {body[:300]}")
     return RefusalError(f"http {status}: {body[:300]}")
 
 
