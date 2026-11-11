@@ -339,3 +339,9 @@ One line each: the decision and why.
 - Review fix: before the leftover pass every video source holds back one search per still shot without a match, because such a shot searches video sources for frames when it fetches. Principle: every shot gets a first search before any shot gets another, also across passes.
 - Review fix: throttle.Throttled carries sent, the requests of the same search that went out before it: _rate_limited sets it after a 429 retry, YouTube sets it when the Creative Commons pass went out, and the CC pass no longer swallows Throttled. The registry refunds only the charges not sent, both for a prefer_cc search (2 charges) and for a 429 retry (none). Principle: a search is charged exactly when it is sent, never refunded once it reached the host.
 - without_names deletes the editor's removed items case-insensitively, because the editor may list a name in other casing than the prompt uses.
+
+## Run 2: Operations (2026-11-11)
+
+- Run 2 ran detached as alaska_run2 from run 1's script copy, brand default, with stdout and stderr in data\_run2.log as the brief asks; every other log (test suites, probes, serve, review frames) goes to E:\coding projects\Vidbush\logs or review_run2.
+- The sourcing and AI prompt fixes found during run 2 were merged after its sourcing and judge stages had loaded their modules, so run 2 itself ran on the code of commit 29e8f4c; they first act on run 3.
+- The render was reviewed from extracted frames by area (maps, on-screen text, AI stills, real clips) before the report, because QA scores alone missed defects the frames show (a subscribe button under a 'TOWN' box shipped with judge score 0).
