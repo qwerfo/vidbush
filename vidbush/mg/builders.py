@@ -97,17 +97,21 @@ def in_view(center: Sequence[float], zoom: float, pt: Sequence[float], safe: boo
     return x <= _FRAME_W_PX / 2 - (60 if safe else 0) and y <= (_USABLE_H_PX / 2 if safe else 540)
 
 
-def trace_route(places: Sequence[Place], via: str) -> Optional[list[list[float]]]:
-    """Real geometry through the places in order (routes.route_points per leg), thinned for the payload;
-    None when any leg has none."""
+def trace_route(places: Sequence[Place], via: str) -> tuple[Optional[list[list[float]]], str]:
+    """(geometry, mode): real geometry through the places in order (routes.route_points per leg, one of
+    routes.modes(via) for the whole path), thinned for the payload; (None, via) when no mode has every leg."""
     from . import routes as R
-    out: list[list[float]] = []
-    for a, b in zip(places, places[1:]):
-        leg = R.route_points((a[1], a[2]), (b[1], b[2]), via)
-        if leg is None:
-            return None
-        out += leg[1:] if out else leg
-    return R.thin(out) if out else None
+    for mode in R.modes(via):
+        out: list[list[float]] = []
+        for a, b in zip(places, places[1:]):
+            leg = R.route_points((a[1], a[2]), (b[1], b[2]), mode)
+            if leg is None:
+                break
+            out += leg[1:] if out else leg
+        else:
+            if out:
+                return R.thin(out), mode
+    return None, via
 
 
 def map_spec(places: Sequence[Place], duration: float = 8.0, route: bool = False, shaded: Sequence[str] = (),
@@ -120,16 +124,17 @@ def map_spec(places: Sequence[Place], duration: float = 8.0, route: bool = False
     """
     from . import geo
     from . import routes as R
-    line = trace_route(places, via) if route and len(places) >= 2 else None
+    line, via = trace_route(places, via) if route and len(places) >= 2 else (None, via)
     pts: list[tuple[float, float]] = [(p[1], p[2]) for p in places] + [(q[0], q[1]) for q in line or []]
     labels: list[MapLabel] = []
     countries: list[str] = []
     for name in shaded:
-        box = geo.region_bbox(name)
+        region = geo.region_name(name, [(p[1], p[2]) for p in places])
+        box = geo.region_bbox(region) if region else None
         hit = geo.lookup(name)
         if box:
             pts += [(box[0], box[1]), (box[2], box[3])]
-            countries.append(geo.region_name(name) or name)
+            countries.append(region)
         elif hit:
             span = 12.0 if geo.place_kind(name) == "continent" else 4.0
             pts += [(hit.lat - span, hit.lon - span), (hit.lat + span, hit.lon + span)]
@@ -159,7 +164,8 @@ def route_map_spec(paths: Sequence[Sequence[Place]], duration: float = 9.0, titl
     """Several routes revealed one after another (e.g. old route vs new shortcut); later ones dashed. Each is
     real geometry (trace_route with via); a path with none keeps its endpoint markers only."""
     from . import routes as R
-    lines = [trace_route(path, via) for path in paths]
+    traced = [trace_route(path, via) for path in paths]
+    lines = [t[0] for t in traced]
     all_pts = [(p[1], p[2]) for path in paths for p in path] + [(q[0], q[1]) for ln in lines for q in ln or []]
     center, zoom = map_view(all_pts)
     rs, re_ = _reveal_window(duration)
@@ -171,7 +177,8 @@ def route_map_spec(paths: Sequence[Sequence[Place]], duration: float = 9.0, titl
         if lines[i]:
             routes.append(MapRoute(points=lines[i], reveal_start=round(a, 2), reveal_end=round(b, 2),
                                    label=labels[i] if i < len(labels) else "",
-                                   dashed=i >= dashed_from or via in R.ARC_VIAS, via=via, from_place=path[0][0],
+                                   dashed=i >= dashed_from or traced[i][1] in R.ARC_VIAS, via=traced[i][1],
+                                   from_place=path[0][0],
                                    to_place=path[-1][0]))
         for j in (0, len(path) - 1):
             name, lat, lon = path[j]

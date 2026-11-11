@@ -392,16 +392,16 @@ def _validated_spec(data: Any, duration: float, background: str) -> MotionSpec:
     return spec.model_copy(update={"background": background})
 
 
-def _motion_kind(kind: str, text: str, context: str) -> tuple[str, Any]:
+def _motion_kind(kind: str, text: str, context: str, not_places: set[str]) -> tuple[str, Any]:
     """(kind, data): a map with places or a number card with (number, label); the request text decides first."""
     if kind == "map":
-        return "map", _places(context)
+        return "map", _places(context, not_places)
     if kind == "number_card":
         return "number_card", _number(text) or _number(context)
     if kind:
         return kind, None
     for source in (text, context):
-        if places := _places(source):
+        if places := _places(source, not_places):
             return "map", places
         if num := _number(source):
             return "number_card", num
@@ -414,7 +414,7 @@ def build_motion_spec(sess: EditSession, shot: Shot, args: dict[str, Any]) -> Mo
         return _validated_spec(_arg(args, "motion_spec", "spec"), shot.duration, "solid")
     text = str(_arg(args, "intent", default=""))
     context = " ".join([shot.intent, beat_text(sess, shot.beat_id)])
-    kind, data = _motion_kind(str(_arg(args, "kind", default="")).lower(), text, context)
+    kind, data = _motion_kind(str(_arg(args, "kind", default="")).lower(), text, context, _not_places(sess))
     if kind in ("map", "number_card") and not data:
         raise EditError(f"no recognisable {'place' if kind == 'map' else 'number'} for a {kind} on {shot.id}; "
                         "name it in the request")
@@ -424,20 +424,38 @@ def build_motion_spec(sess: EditSession, shot: Shot, args: dict[str, Any]) -> Mo
         from ..mg import builders
     except ImportError:
         return _text_card(shot, title, palette)
-    if kind == "map":
-        return builders.map_spec(data[:4], duration=shot.duration, palette=palette, route=len(data) > 1)
+    if kind == "map":  # a route only for a journey the narration describes, in the mode it names
+        from ..mg.geo import distance_deg
+        from ..mg.routes import infer_via
+        from ..shots.ideas import travel_route
+        route = travel_route(context)
+        if route and all(any(distance_deg(r[1:], d[1:]) < 0.05 for d in data) for r in route):
+            spec = builders.map_spec(route, duration=shot.duration, palette=palette, route=True,
+                                     via=infer_via(context))
+            if spec.payload["routes"]:
+                return spec
+        return builders.map_spec(data[:4], duration=shot.duration, palette=palette)
     if kind == "number_card":
         return builders.number_card_spec(data[0], label=data[1], duration=shot.duration, palette=palette,
                                          count_up=not _YEAR_RE.fullmatch(data[0]))
     return builders.text_overlay_spec(title, duration=shot.duration, palette=palette, background="solid")
 
 
-def _places(text: str) -> list[tuple[str, float, float]]:
+def _places(text: str, not_places: set[str]) -> list[tuple[str, float, float]]:
     try:
         from ..mg.geo import find_places
     except ImportError:
         return []
-    return list(find_places(text))
+    return list(find_places(text, not_places))
+
+
+def _not_places(sess: EditSession) -> set[str]:
+    """Names the script gives to people or animals (geo.creature_names): never places in the edit."""
+    try:
+        from ..mg.geo import creature_names
+        return creature_names(" ".join(b.text for b in sess.script().beats()))
+    except (ImportError, FileNotFoundError):
+        return set()
 
 
 def _text_card(shot: Shot, title: str, palette: str) -> MotionSpec:

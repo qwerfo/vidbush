@@ -68,8 +68,9 @@ DIRECTOR_RULES = [
     "Use a map when the narration moves between places, so the viewer can follow the geography; a beat that "
     "only names one place gets a lower third, not a map.",
     "A map names places, never coordinates: markers by place, routes by from_place, to_place and via. The code "
-    "looks up every place, draws a route only along real rail, road or river lines (sea, air and line as a "
-    "dashed arc) and measures distances itself, and drops anything it cannot find, so name real towns, "
+    "looks up every place, draws a route only along real rail, road or river lines (sea and air as a "
+    "dashed arc, line tries rail then road) and checks distances itself, and drops anything it cannot find, "
+    "so name real towns, "
     "countries, states or provinces, never descriptions like 'Westernmost point'.",
     "Use a chart only when two or more comparable numbers appear in the beat or its facts, and only with "
     "numbers from the facts with a source_note: a single number is a number card or a callout, not a chart.",
@@ -106,7 +107,7 @@ MOTION_SCHEMA: dict[str, Any] = {
                             "label": "Panama Railroad"}],
                 "shaded_regions": ["Panama"],
                 "_note": "place names only, the code adds coordinates; via: road, rail, river, sea, trail, air or "
-                         "line; a distance label is measured from the drawn line; shaded_regions: countries, "
+                         "line; a distance label is checked against the drawn line; shaded_regions: countries, "
                          "states or provinces; zoom 1 world, +1 doubles scale"},
         "bar_chart": {"title": "Distance by sea", "labels": ["Before", "After"],
                       "series": [{"name": "miles", "values": [13000, 5200]}], "units": "miles",
@@ -316,7 +317,8 @@ def _chunk_ideas(chunk: list[tuple[Scene, Any]], script: Script, spans: dict[str
     beat_ids = {bt.id for _sc, bt in chunk}
     lengths = {bid: max(0.5, spans.get(bid, (0.0, 6.0))[1] - spans.get(bid, (0.0, 6.0))[0]) for bid in beat_ids}
     mine = [it for it in items if isinstance(it, dict) and it.get("beat_id") in beat_ids]
-    return [idea for idea in (validate_idea(it, beat_ids, research, lengths) for it in mine) if idea]
+    texts = {bt.id: bt.text for _sc, bt in chunk}
+    return [idea for idea in (validate_idea(it, beat_ids, research, lengths, texts) for it in mine) if idea]
 
 
 def _params(fn: Any) -> set[str]:
@@ -363,7 +365,7 @@ def _with_duration(spec: Any, seconds: float) -> Any:
     return spec
 
 
-def _overlay(raw: Any, research: Optional[Research] = None, context: str = "") -> Optional[MotionSpec]:
+def _overlay(raw: Any, research: Optional[Research] = None, *context: str) -> Optional[MotionSpec]:
     """A valid overlay spec; a map or chart overlay gets the motion checks and a transparent background
     (it renders as an inset over the picture)."""
     try:
@@ -373,7 +375,7 @@ def _overlay(raw: Any, research: Optional[Research] = None, context: str = "") -
     if spec.kind not in OVERLAY_KINDS:
         return None
     if spec.kind == MotionKind.map:
-        spec = verify_map(spec, context)
+        spec = verify_map(spec, *context)
         if spec is None or not (spec.payload["markers"] or spec.payload["routes"]):  # an inset map shows where
             return None
     elif not _payload_ok(spec):
@@ -384,10 +386,12 @@ def _overlay(raw: Any, research: Optional[Research] = None, context: str = "") -
 
 
 def validate_idea(item: Any, beat_ids: set[str], research: Optional[Research],
-                  lengths: Optional[dict[str, float]] = None) -> Optional[VisualIdea]:
+                  lengths: Optional[dict[str, float]] = None,
+                  texts: Optional[dict[str, str]] = None) -> Optional[VisualIdea]:
     """Pydantic validation plus content checks; None when the idea is unusable.
 
-    A bad overlay only clears the overlay; a missing spec duration takes the beat length.
+    A bad overlay only clears the overlay; a missing spec duration takes the beat length. texts (beat id to
+    narration) give a map the travel mode the narration names.
     """
     if not isinstance(item, dict):
         return None
@@ -400,7 +404,8 @@ def validate_idea(item: Any, beat_ids: set[str], research: Optional[Research],
         return None
     if idea.beat_id not in beat_ids:
         return None
-    idea.overlay = _overlay(raw_overlay, research, idea.intent) if raw_overlay else None
+    narration = (texts or {}).get(idea.beat_id, "")
+    idea.overlay = _overlay(raw_overlay, research, idea.intent, narration) if raw_overlay else None
     idea = _clean_text(idea)
     if idea.family != "motion":
         idea.motion = None
@@ -408,7 +413,7 @@ def validate_idea(item: Any, beat_ids: set[str], research: Optional[Research],
     if idea.motion is None:
         return None
     if idea.motion.kind == MotionKind.map:
-        idea.motion = verify_map(idea.motion, idea.intent)
+        idea.motion = verify_map(idea.motion, idea.intent, narration)
         if idea.motion is None:  # nothing true left on the map: the slot falls back to footage
             return None
     elif not _payload_ok(idea.motion):
@@ -460,18 +465,14 @@ def distance_claim(text: str) -> Optional[tuple[float, str]]:
     return (value / KM_PER_MILE if km else value), ("km" if km else "miles")
 
 
-def checked_distance(text: str, measured: Optional[float], relabel: bool = False) -> str:
-    """text when it claims no distance; '' when the drawn geometry (measured miles) does not confirm the claim
-    within DISTANCE_TOLERANCE; with relabel, a confirmed claim becomes the measured length ('47 miles')."""
+def checked_distance(text: str, measured: Optional[float]) -> str:
+    """text when it claims no distance or the drawn geometry (measured miles) confirms the claim within
+    DISTANCE_TOLERANCE, else ''. A confirmed claim keeps its researched number: simplified geometry only
+    confirms it, so the title and labels never show two different numbers."""
     claim = distance_claim(text)
     if claim is None:
         return text
-    if not measured or abs(claim[0] - measured) > DISTANCE_TOLERANCE * measured:
-        return ""
-    if not relabel:
-        return text
-    value = measured * KM_PER_MILE if claim[1] == "km" else measured
-    return f"{b.format_number(max(1, round(value)))} {claim[1]}"
+    return text if measured and abs(claim[0] - measured) <= DISTANCE_TOLERANCE * measured else ""
 
 
 def _dicts(value: Any) -> list[dict]:
@@ -498,17 +499,21 @@ def _director_view(p: dict) -> Optional[tuple[list[float], float, Optional[float
     return center, zoom, zoom_end
 
 
-def verify_map(spec: MotionSpec, context: str = "") -> Optional[MotionSpec]:
+def verify_map(spec: MotionSpec, *context: str) -> Optional[MotionSpec]:
     """The one check every director map passes (full screen card and overlay inset alike). None when nothing
     true is left, so the slot falls back to footage.
 
     Markers and labels are places the gazetteer resolves: the director names them and the code looks up the
     coordinates. A marker outside the director's own view is sign-checked (a homonym inside the view, or a
     view written with a flipped sign) and otherwise dropped. A route is real geometry between two resolved
-    endpoints (routes.route_points; via inferred from the label, title and context when the director gives
-    none); one with no geometry is dropped and its endpoint markers stay. Arrows carry raw coordinates and are
-    dropped. Distances in labels and the title must match the drawn geometry. Shaded regions must exist in the
-    bundled admin 0 or admin 1 layers. source_note is the fixed data source, never model text.
+    endpoints that pass the same view check (routes.route_points; via inferred from the label, title and
+    context texts, the intent and beat narration, when the director gives none); a route with an endpoint out
+    of view is dropped with its endpoint markers, one with no geometry is dropped and its endpoint markers
+    stay. A mode nobody names ('line') tries rail, then road, and is never a straight line over the land; only
+    sea and air are a dashed arc. Arrows carry raw coordinates and are dropped. Distances in labels and the
+    title must match the drawn geometry. Shaded regions must exist in the bundled admin 0 or admin 1 layers;
+    a name a state shares with a country is the one whose box holds a marker or the view center.
+    source_note is the fixed data source, never model text.
     """
     from ..mg import geo
     from ..mg import routes as R
@@ -547,24 +552,27 @@ def verify_map(spec: MotionSpec, context: str = "") -> Optional[MotionSpec]:
     routes: list[MapRoute] = []
     lengths: list[float] = []
     for r in _dicts(p.get("routes")):
-        a, z = resolve(r.get("from_place")), resolve(r.get("to_place"))
+        a, z = (in_own_view(str(r.get(k) or ""), resolve(r.get(k))) for k in ("from_place", "to_place"))
         if a is None or z is None or geo.distance_deg((a.lat, a.lon), (z.lat, z.lon)) < 0.01:
             continue
         label = str(r.get("label") or "")
-        via = r.get("via") if r.get("via") in R.VIAS else R.infer_via(label, title, context)
+        via = r.get("via") if r.get("via") in R.VIAS else R.infer_via(label, title, *context)
         route = _model(MapRoute, reveal_start=r.get("reveal_start", 0.5), reveal_end=r.get("reveal_end", 3.0),
-                       from_place=a.name, to_place=z.name, via=via, dashed=via in R.ARC_VIAS)
+                       from_place=a.name, to_place=z.name)
         if route is None:
             continue
         for hit, at in ((a, route.reveal_start), (z, route.reveal_end)):  # endpoints show even without a line
             if not any(geo.distance_deg((hit.lat, hit.lon), (m.lat, m.lon)) < 0.05 for m in markers):
                 markers.append(MapMarker(lat=hit.lat, lon=hit.lon, label=hit.name, appear_at=at))
                 names.append(hit.name)
-        pts = R.route_points((a.lat, a.lon), (z.lat, z.lon), via)
+        # a mode nobody names is never a straight line over the land: real rail, then road, else no line
+        pts, route.via = next(((q, v) for v in R.modes(via)
+                               if (q := R.route_points((a.lat, a.lon), (z.lat, z.lon), v))), (None, via))
         if pts is None:
             continue
         lengths.append(R.path_miles(pts))
-        route.points, route.label = R.thin(pts), checked_distance(label, lengths[-1], relabel=True)
+        route.points, route.label = R.thin(pts), checked_distance(label, lengths[-1])
+        route.dashed = route.via in R.ARC_VIAS
         routes.append(route)
     labels = []
     for lb in _dicts(p.get("labels")):
@@ -574,7 +582,8 @@ def verify_map(spec: MotionSpec, context: str = "") -> Optional[MotionSpec]:
         if label is not None:
             labels.append(label)
     regions = p.get("shaded_regions") if isinstance(p.get("shaded_regions"), list) else []
-    shaded = list(dict.fromkeys(n for n in (geo.region_name(str(x)) for x in regions) if n))
+    near = [(m.lat, m.lon) for m in markers] + ([(view[0][0], view[0][1])] if view else [])
+    shaded = list(dict.fromkeys(n for n in (geo.region_name(str(x), near) for x in regions) if n))
     if not (markers or routes or shaded):
         return None
     # A distance outside a route label is checked against the one route, else the two markers' separation.

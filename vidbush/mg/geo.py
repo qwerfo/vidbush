@@ -14,7 +14,7 @@ import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 
 from pydantic import BaseModel
 
@@ -218,18 +218,38 @@ def country_bbox(name: str) -> Optional[tuple[float, float, float, float]]:
 def admin1() -> dict[str, dict]:
     """State and province features keyed by normalised name."""
     data = json.loads((GEO_DIR / "ne_50m_admin_1_states_provinces.geojson").read_text(encoding="utf-8"))
-    return {norm(f["properties"]["name"]): f for f in data["features"] if f["properties"].get("name")}
+    out: dict[str, dict] = {}
+    for f in data["features"]:
+        p = f["properties"]
+        if p.get("name"):
+            out[norm(p["name"])] = out[norm(admin1_key(p))] = f
+    return out
 
 
-def region_name(name: str) -> Optional[str]:
-    """Canonical name of a country or a state or province the bundled layers can shade, else None."""
-    f = admin1().get(norm(name)) if not is_country(name) else None
-    return country_name(name) or (f["properties"]["name"] if f else None)
+def admin1_key(props: dict) -> str:
+    """Name a state or province is shaded by: 'Georgia, United States of America' when a country shares its
+    name (the renderer then fills that feature only), else the plain name."""
+    return f"{props['name']}, {props.get('admin', '')}" if is_country(props["name"]) else props["name"]
+
+
+def region_name(name: str, near: Sequence[tuple[float, float]] = ()) -> Optional[str]:
+    """Canonical name of a country or a state or province the bundled layers can shade, else None. When a
+    state and a country share the name, the state wins if its box holds a point of near (the map's markers or
+    view center), else the country."""
+    f = admin1().get(norm(name))
+    if f is None:
+        return country_name(name)
+    key = admin1_key(f["properties"])
+    if not is_country(name) or norm(name) == norm(key):
+        return key
+    box = region_bbox(key)
+    return key if any(box[0] <= la <= box[2] and box[1] <= lo <= box[3] for la, lo in near) else country_name(name)
 
 
 @lru_cache(maxsize=512)
 def region_bbox(name: str) -> Optional[tuple[float, float, float, float]]:
-    """(min_lat, min_lon, max_lat, max_lon) of the largest polygon of a country, state or province."""
+    """(min_lat, min_lon, max_lat, max_lon) of the largest polygon of a country, state or province (a name
+    region_name gives)."""
     box = country_bbox(name)
     f = admin1().get(norm(name)) if box is None else None
     if f is None:
@@ -358,16 +378,17 @@ def _match_run(words: list[str], prev: str, initial: bool) -> list[tuple[str, Ge
     return out
 
 
-# A name the text gives to a person or an animal ("his lead dog, Togo", "a horse named Comanche").
+# A name the text gives to a person or an animal ("his lead dog, Togo", "a horse named Comanche"). The noun
+# must come first: places are named the same way ("a town called Nome"), so 'named X' alone is not enough.
 _CREATURE_RE = re.compile(
-    r"\b(?:named|called|nicknamed|dubbed)\s+([A-Z][\w'’-]+)"
-    r"|\b(?:dog|dogs|horse|horses|mule|pony|cat|husky|puppy|mare|stallion|wolf|bear|son|daughter|wife|husband|"
-    r"brother|sister|friend|partner|boy|girl)\s*,?\s+([A-Z][\w'’-]+)")
+    r"\b(?:dog|dogs|horse|horses|mule|pony|cat|husky|puppy|mare|stallion|wolf|bear|son|daughter|wife|husband|"
+    r"brother|sister|friend|partner|boy|girl|man|woman)\s*,?\s+(?:(?:named|called|nicknamed|dubbed)\s+)?"
+    r"([A-Z][\w'’-]+)")
 
 
 def creature_names(text: str) -> set[str]:
     """Normalised names the text gives to people or animals: such a name is never a place in that text."""
-    return {norm(_clean(a or b)) for a, b in _CREATURE_RE.findall(text)}
+    return {norm(_clean(name)) for name in _CREATURE_RE.findall(text)}
 
 
 def find_place_hits(text: str, not_places: frozenset[str] | set[str] = frozenset()) -> list[GeoHit]:
@@ -389,6 +410,6 @@ def find_place_hits(text: str, not_places: frozenset[str] | set[str] = frozenset
     return out
 
 
-def find_places(text: str) -> list[tuple[str, float, float]]:
+def find_places(text: str, not_places: frozenset[str] | set[str] = frozenset()) -> list[tuple[str, float, float]]:
     """Places mentioned in text, in order of appearance, deduplicated: [(name, lat, lon)]."""
-    return [(h.name, h.lat, h.lon) for h in find_place_hits(text)]
+    return [(h.name, h.lat, h.lon) for h in find_place_hits(text, not_places)]

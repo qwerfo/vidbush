@@ -71,9 +71,12 @@ def test_map_zoom_from_bbox() -> None:
 
 
 def test_map_route_and_shading() -> None:
-    p = b.map_spec([NY, ("Colon", 9.36, -79.9), SF], route=True, shaded=["Panama"], duration=8).typed_payload()
+    p = b.map_spec([NY, ("Colon", 9.36, -79.9), SF], route=True, shaded=["Panama"], duration=8,
+                   via="sea").typed_payload()
     r = p.routes[0]
-    assert len(p.routes) == 1 and r.via == "line" and r.dashed  # a plain line claims no ground path
+    assert len(p.routes) == 1 and r.via == "sea" and r.dashed  # a sea arc claims no ground path
+    unnamed = b.map_spec([NY, ("Colon", 9.36, -79.9), SF], route=True).typed_payload()
+    assert unnamed.routes == []  # no mode named and no rail or road through: never a straight line
     assert r.points[0] == [40.71, -74.0] and r.points[-1] == [37.77, -122.42]
     assert any(abs(q[0] - 9.36) < 0.01 and abs(q[1] + 79.9) < 0.01 for q in r.points)  # through Colon
     assert p.shaded_regions == ["Panama"]

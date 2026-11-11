@@ -239,20 +239,22 @@ class _Assembler:
         shot.queries = list(idea.queries)
         shot.motion = idea.motion if shot.type == ShotType.motion_graphic else None
         if shot.type in OVERLAY_TYPES:
-            shot.overlay = idea.overlay or shot.overlay
+            fresh = idea.overlay is not None and not self._repeated_map(idea.overlay, shot.start)
+            shot.overlay = idea.overlay if fresh else shot.overlay
         else:
             shot.overlay = None
         shot.ai_prompt = "" if shot.type == ShotType.motion_graphic else ai_prompt(idea, self.bc.get(shot.beat_id))
 
     def overlay_pool(self, shot: Shot) -> list[MotionSpec]:
         """Overlays a shot may carry, best first: map and chart insets of its beat (animation moves over the
-        picture), its idea's overlay, then lower thirds for what it shows and the beat's generic overlays.
-        Empty on call-to-action beats."""
+        picture), its idea's overlay (never a map shown within INSET_REPEAT_S), then lower thirds for what it
+        shows and the beat's generic overlays. Empty on call-to-action beats."""
         bc = self.bc.get(shot.beat_id)
         if bc is None or I.CTA_RE.search(bc.beat.text):
             return []
         idx = self.idea_of.get(shot.id)
-        own = [self.ideas[idx].overlay] if idx is not None and self.ideas[idx].overlay is not None else []
+        mine = self.ideas[idx].overlay if idx is not None else None
+        own = [mine] if mine is not None and not self._repeated_map(mine, shot.start) else []
         return self.insets(shot.beat_id, shot.start) + own + I.overlay_choices(bc, self.profile.palette,
                                                                               shot.must_show)
 

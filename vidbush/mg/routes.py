@@ -2,8 +2,10 @@
 
 A ground route (rail, road, river) follows the bundled layer: each endpoint snaps to the nearest line within
 SNAP_KM and a heapq Dijkstra over the layer graph gives the path. A route that cannot snap, or whose two
-snaps are not connected, has no geometry and is never drawn. Sea, air and plain lines are a great circle arc,
-drawn dashed because it claims no ground path. Trails have no bundled data, so they are never drawn.
+snaps are not connected, has no geometry and is never drawn. Sea and air are a great circle arc, drawn
+dashed because it claims no ground path. A mode nobody names ('line') is never a straight line over the land:
+it is the real rail line, then the road, else nothing (modes). Trails have no bundled data, so they are never
+drawn.
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ import numpy as np
 
 LAYERS = {"rail": "ne_10m_railroads.geojson", "road": "ne_10m_roads.geojson",
           "river": "ne_50m_rivers_lake_centerlines.geojson"}
-ARC_VIAS = {"sea", "air", "line"}
+ARC_VIAS = {"sea", "air"}
 VIAS = ("road", "rail", "river", "sea", "trail", "air", "line")
 SNAP_KM = 10.0  # an endpoint farther than this from the line is not on it
 BRIDGE_KM = 1.0  # a dangling line end this close to another line joins it (junctions lost to simplification)
@@ -39,7 +41,7 @@ _VIA_RES = [(via, re.compile(rf"\b(?:{words})\b", re.I)) for via, words in _VIA_
 
 def infer_via(*texts: str) -> str:
     """How a route travels, from the first text that names a mode (label first, then title or intent).
-    'line' when nothing says: a plain dashed line that claims no ground path."""
+    'line' when nothing says: an unknown mode, traced as rail, then road (modes)."""
     for text in texts:
         for via, rx in _VIA_RES:
             if text and rx.search(text):
@@ -208,9 +210,14 @@ def ground_path(a: LatLon, b: LatLon, layer: str) -> Optional[list[list[float]]]
     return g.path(sa, sb)
 
 
+def modes(via: str) -> tuple[str, ...]:
+    """Modes a route tries in order: 'line' (nobody named one) is rail, then road; any other is itself."""
+    return ("rail", "road") if via == "line" else (via,)
+
+
 def route_points(a: LatLon, b: LatLon, via: str) -> Optional[list[list[float]]]:
-    """Drawn geometry from a to b: the real line for rail, road and river, a great circle for sea, air and line,
-    None for a trail or a ground route with no line between the two places."""
+    """Drawn geometry from a to b: the real line for rail, road and river, a great circle for sea and air,
+    None for a trail, 'line' (see modes) or a ground route with no line between the two places."""
     if via in LAYERS:
         return ground_path(a, b, via)
     if via in ARC_VIAS:

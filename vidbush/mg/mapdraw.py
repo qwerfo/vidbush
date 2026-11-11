@@ -265,11 +265,12 @@ class MapBase:
 
     def _shade(self, plain: np.ndarray) -> np.ndarray:
         """Shaded regions: accent tinted fill, accent outline and a soft outer glow."""
-        from .geo import norm
+        from .geo import admin1_key, norm
         pal = self.c.pal
         wanted = {norm(n) for n in self.c.p.shaded_regions if n}
-        rings = [r for layer in (self.countries, load_layer(ADMIN1))
-                 for r in self.rings(layer, lambda p: bool(_names(p) & wanted))]
+        # a state is matched by geo.admin1_key, so 'Georgia' fills the country and never the US state too
+        rings = (self.rings(self.countries, lambda p: bool(_names(p) & wanted))
+                 + self.rings(load_layer(ADMIN1), lambda p: bool(p.get("name")) and norm(admin1_key(p)) in wanted))
         img = plain.copy()
         if not rings:
             return img
