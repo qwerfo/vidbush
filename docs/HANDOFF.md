@@ -768,6 +768,16 @@ to the others. `qa_report.md` shows one line per budgeted source, for example
 `Pexels searches used: 148 of 150 across 52 shots, 9 deferred by fair shares`,
 and a warning when a budget ran out.
 
+Since run 2: a shot shares only the budgets of sources that serve its media
+(still shots hold no YouTube share); a search the host throttled before
+sending is refunded, so "used" counts sent searches; after the rounds, shots
+still short run their queries once more on sources with budget left (answered
+queries come from the cache for free). Results below the relevance threshold
+(one in three of the query's specific words) are kept as fillers after the
+matches instead of being dropped, and every result a fetch refuses (for
+example a YouTube video under the 720p floor) is logged as
+`source result dropped` with the shot and the reason.
+
 ### 10f. Live checks for the laptop
 
 Run these after filling `.env`. Each sends one or two small requests.

@@ -550,9 +550,7 @@ class YoutubeAdapter(BaseAdapter):
         cfg = settings.sources
         info = ydl_extract(raw.url, {"skip_download": True, **cookie_opts(settings)})
         if max_height(info) < cfg.youtube_min_height:
-            logging.getLogger("vidbush.source").info("youtube %s skipped: %sp is below %sp", raw.url,
-                                                     max_height(info), cfg.youtube_min_height)
-            return []
+            raise base.Rejected(f"{max_height(info)}p is below the {cfg.youtube_min_height}p floor")
         info = {**info, "duration": float(info.get("duration") or raw.duration)}
         cues = transcript_cues(info, settings, str(raw.extra.get("lang") or ""))
         windows = choose_windows(info, shot, settings, cues)

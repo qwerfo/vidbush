@@ -75,6 +75,10 @@ class RawResult(Model):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
+class Rejected(Exception):
+    """fetch() looked at an asset and refused it (too small, no usable file); the message is the reason."""
+
+
 @runtime_checkable
 class SourceAdapter(Protocol):
     name: str
@@ -99,10 +103,19 @@ GENERIC_WORDS = {
 
 
 def _stem(word: str) -> str:
+    """Singular and plain form, so 'dogs'/'dog', 'planes'/'plane' and 'Alaskan'/'Alaska' match."""
     w = word.lower()
-    for suf in ("ing", "ion", "es", "s"):
+    if len(w) > 4 and w.endswith("ies"):
+        w = w[:-3] + "y"
+    elif len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        w = w[:-1]
+    if len(w) > 3 and w.endswith("e"):
+        w = w[:-1]  # silent e: 'plane', 'planes' and 'boxes' all lose it
+    for suf in ("ing", "ion"):
         if len(w) > 5 and w.endswith(suf):
             return w[: -len(suf)]
+    if len(w) > 4 and w.endswith("an"):
+        w = w[:-1]  # adjective of a place in -a: 'Alaskan', 'African', 'Korean'
     return w
 
 
