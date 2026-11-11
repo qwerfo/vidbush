@@ -33,7 +33,7 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
                    profile: StyleProfile, brand: Brand, seats: Any,
                    rng: random.Random) -> tuple[ShotList, DirectorPlan]:
     """Ideas per beat (seat plus heuristics), pacing slots, rules; returns the ShotList and the merged plan."""
-    from .rules import apply_rules, space_cards, time_overlays
+    from .rules import apply_rules, demote_repeating_cards, space_cards, time_overlays
     log = getattr(seats, "log", None) or NullLogger()
     total = round(narration.duration + 1.0, 3)
     spans = beat_spans(script, narration)
@@ -57,6 +57,10 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
     if demoted:
         log.info("full screen cards moved onto footage (card spacing)", cards=demoted,
                  spacing_s=profile.pacing.card_spacing_s)
+    repeats = demote_repeating_cards(shots, narration.words, ctx.ideas, ctx.rebind, ctx.footage_for, ctx.overlay_for,
+                                     frozenset(ctx.locked))
+    if repeats:
+        log.info("cards that repeat nearby narration moved onto footage", cards=repeats)
     time_overlays(shots, narration.words, frozenset(ctx.locked))
     sl = ShotList(project_id=project.id, duration=total, shots=shots)
     _finalize(sl, profile)

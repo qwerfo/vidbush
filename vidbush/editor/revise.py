@@ -512,18 +512,12 @@ def rule_add_text(text: str, clause: str, rc: RuleContext) -> list[EditOp]:
     shot = _shot(rc, refs[0])
     q, say = _QUOTED.search(clause), _SAYING.search(clause)
     words = ((q.group(1) or q.group(2)) if q else say.group(1) if say else "").strip()
-    words = words or _beat_headline(rc, shot.beat_id) or shot.intent[:60]
+    words = words or shot.intent[:60]  # never the beat's narration: the captions already show it
     kind = "lower_third" if re.search(r"\b(lower third|name|label)\b", text) else (
         "callout" if re.search(r"\bcallout\b", text) else "text_overlay")
     position = "lower_left" if kind == "lower_third" else "upper_left" if kind == "callout" else "center"
     spec = {"kind": kind, "background": "transparent", "payload": {"title": no_em_dash(words), "position": position}}
     return [_op(EditOpName.set_overlay, clause, shot_id=refs[0], motion_spec=spec)]
-
-
-def _beat_headline(rc: RuleContext, beat_id: str) -> str:
-    from .ops import headline
-    beat = next((b for b in (rc.script.beats() if rc.script else []) if b.id == beat_id), None)
-    return headline(beat.text, 6) if beat else ""
 
 
 _DELTA = re.compile(r"(?:\b(?:showing|depicting|that shows|where|but|make it|with|so that)|:)\s+(.+)$")

@@ -266,7 +266,8 @@ def animation_share(shotlist: ShotList) -> dict[str, float]:
 def overlay_text_stats(shotlist: ShotList, words: list[Word]) -> dict[str, float]:
     """On-screen text against the narration. text_items: text overlays on the picture plus full screen quote
     and callout cards. timing_error_s: median absolute gap between a text overlay's first frame and the
-    narration word where its anchor (else its title) is spoken within REPEAT_WINDOW_S; unanchored: text
+    narration word where its anchor (else its title) is spoken, in its shot before it shows (where the pipeline
+    anchored it) else within REPEAT_WINDOW_S; unanchored: text
     overlays whose anchor is not spoken that close. verbatim_pct: share of text items that repeat the
     narration spoken around them."""
     gaps: list[float] = []
@@ -282,8 +283,11 @@ def overlay_text_stats(shotlist: ShotList, words: list[Word]) -> dict[str, float
         repeats += I.spec_repeats_narration(spec, I.spoken_near(words, shown))
         if card:
             continue
-        t = I.anchor_time(spec.anchor or I.overlay_title(spec), words, shown - I.REPEAT_WINDOW_S,
-                          shown + I.REPEAT_WINDOW_S)
+        anchor = spec.anchor or I.overlay_title(spec)
+        # the moment the pipeline anchored to (overlay_start's window) first, so a word repeated earlier is not it
+        t = I.anchor_time(anchor, words, s.start - I.ANCHOR_LEAD_S, shown)
+        if t is None:
+            t = I.anchor_time(anchor, words, shown - I.REPEAT_WINDOW_S, shown + I.REPEAT_WINDOW_S)
         if t is None:
             unanchored += 1
         else:

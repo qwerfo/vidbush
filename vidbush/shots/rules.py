@@ -16,6 +16,8 @@ space_cards() (run last by the director) keeps at most one free full screen
 card per profile.pacing.card_spacing_s outside the hook and recap: a card
 that breaks it becomes footage, and a map or chart card moves onto that
 footage as an inset overlay so the information stays on screen.
+demote_repeating_cards() (run after space_cards) turns a callout or text card
+that repeats the narration spoken near it into footage.
 """
 from __future__ import annotations
 
@@ -395,6 +397,20 @@ def space_cards(shots: list[Shot], profile: StyleProfile, exempt: list[tuple[flo
             demoted += 1
         else:
             kept.append(s.start)
+    return demoted
+
+
+def demote_repeating_cards(shots: list[Shot], words: list[Word], ideas: list[VisualIdea], rebind: Rebind,
+                           footage_for: FootageFor, overlay_for: OverlayFor,
+                           locked: frozenset[str] = frozenset()) -> int:
+    """A free callout or text card that repeats the narration spoken within REPEAT_WINDOW_S of it (the window
+    QA and acceptance use, not only its own beat) becomes footage; returns cards demoted."""
+    demoted = 0
+    for k, s in enumerate(shots):
+        if (s.type == ShotType.motion_graphic and s.id not in locked and s.motion is not None
+                and s.motion.kind in (MotionKind.callout, MotionKind.text_overlay)
+                and I.spec_repeats_narration(s.motion, I.spoken_near(words, s.start))):
+            demoted += demote_card(shots, k, ideas, rebind, footage_for, overlay_for)
     return demoted
 
 

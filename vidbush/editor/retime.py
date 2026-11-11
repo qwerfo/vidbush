@@ -20,6 +20,7 @@ DERIVED_CROPS: list[list[float]] = [[0.16, 0.14, 0.68, 0.68], [0.06, 0.24, 0.6, 
                                     [0.27, 0.27, 0.46, 0.46]]
 FRAMINGS = ("tight", "detail")
 BASE_TYPE = {ShotType.footage_overlay: ShotType.footage, ShotType.image_overlay: ShotType.image}
+OVERLAY_OF = {v: k for k, v in BASE_TYPE.items()}
 
 ShotRef = Union[str, int, float]
 
@@ -78,9 +79,9 @@ def new_shot_id(shotlist: ShotList, base: str) -> str:
 def finalize(shotlist: ShotList, total: float) -> None:
     """Round durations, absorb rounding drift in the last shot, reindex, retime motion specs.
 
-    A text overlay keeps its moment on the timeline (the narration does not move): its start_at follows the
-    shot's new start, never before the shot and leaving at least READ_MIN_S before the cut."""
-    from ..shots.ideas import READ_MIN_S
+    A text overlay keeps its moment on the timeline (the narration does not move): it stays on the shot whose
+    [start, end - reading time] holds the moment, else moves to the plain shot that does, else is dropped, so
+    it never shows before its words or far from them."""
     moment = {s.id: s.start + s.overlay.start_at for s in shotlist.shots if s.overlay is not None and s.overlay.anchor}
     for s in shotlist.shots:
         s.duration = round(s.duration, 3)
@@ -93,9 +94,24 @@ def finalize(shotlist: ShotList, total: float) -> None:
             s.motion = retime_motion(s.motion, s.duration)
         if s.overlay is not None:
             s.overlay = retime_motion(s.overlay, s.duration)
-            if s.id in moment:
-                at = min(max(0.0, moment[s.id] - s.start), max(0.0, s.duration - READ_MIN_S))
-                s.overlay = s.overlay.model_copy(update={"start_at": round(at, 3)})
+    for s in list(shotlist.shots):
+        if s.id in moment and s.overlay is not None:
+            _keep_on_moment(shotlist, s, moment[s.id])
+
+
+def _keep_on_moment(shotlist: ShotList, shot: Shot, t: float) -> None:
+    """Put shot's anchored overlay on the shot that shows moment t with its reading time left, else drop it."""
+    from ..shots.ideas import read_seconds
+    spec = shot.overlay
+    host = next((h for h in shotlist.shots if (h is shot or (h.overlay is None and h.type in BASE_TYPE.values()))
+                 and h.start - EPS <= t <= h.end - read_seconds(spec) + EPS), None)
+    if host is not shot:
+        shot.overlay, shot.overlay_path, shot.type = None, "", BASE_TYPE.get(shot.type, shot.type)
+    if host is not None:
+        if host is not shot:
+            host.type, host.overlay_path = OVERLAY_OF.get(host.type, host.type), ""
+        host.overlay = retime_motion(spec, host.duration).model_copy(
+            update={"start_at": round(max(0.0, t - host.start), 3)})
 
 
 def retime_motion(spec: MotionSpec, duration: float) -> MotionSpec:

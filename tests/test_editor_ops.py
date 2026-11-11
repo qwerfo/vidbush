@@ -10,7 +10,8 @@ from PIL import Image
 from test_editor_helpers import PID, TOTAL, assert_timeline, build_edit_project, load_shotlist, make_video
 from vidbush.editor import ops as ops_mod
 from vidbush.editor.ops import apply_and_render, apply_ops, heuristic_rewrite
-from vidbush.models import Candidate, EditOp, EditOpName, MotionKind, Narration, Script, ShotType, SourceKind
+from vidbush.models import (Candidate, EditOp, EditOpName, MotionKind, Narration, Script, ShotType, SourceKind,
+                            Word)
 from vidbush.util import read_json, read_model
 
 
@@ -179,7 +180,8 @@ def test_change_type_to_footage_resources_and_judges(settings, work, monkeypatch
 # ---------------------------------------------------------------- overlays
 
 def test_set_and_remove_overlay(settings, work):
-    spec = {"kind": "callout", "payload": {"title": "1914", "position": "upper_left"}}
+    spec = {"kind": "callout", "payload": {"title": "Opened 1914", "position": "upper_left"},
+            "anchor": "canal opened"}
     res = run(settings, op("set_overlay", shot_id="shot_001", motion_spec=spec),
               op("remove_overlay", shot_id="shot_004"))
     assert not res.errors, res.errors
@@ -187,6 +189,8 @@ def test_set_and_remove_overlay(settings, work):
     s1, s4 = sl.by_id("shot_001"), sl.by_id("shot_004")
     assert s1.type == ShotType.footage_overlay and s1.overlay.background == "transparent"
     assert abs(s1.overlay.duration - s1.duration) < 1e-6
+    said = read_model(work / "narration.json", Narration).words[1].start  # "canal"
+    assert abs(s1.overlay.start_at - (said + 0.2)) < 1e-3 and s1.overlay.anchor == "canal opened"
     assert s4.overlay is None and s4.overlay_path == "" and s4.type == ShotType.image
     assert plan(work) == ["motion", "assembly", "packaging"]
 
@@ -197,6 +201,21 @@ def test_overlay_errors(settings, work):
               op("set_overlay", shot_id="shot_001", motion_spec={"kind": "map", "payload": {}}),
               op("remove_overlay", shot_id="shot_001"))
     assert len(res.errors) == 3 and not res.applied
+
+
+def test_set_overlay_rejects_text_not_spoken_on_the_shot_or_copying_the_narration(settings, work):
+    res = run(settings, op("set_overlay", shot_id="shot_001", motion_spec={  # 1914 is said after shot_001 ends
+        "kind": "callout", "payload": {"title": "1914"}}))
+    assert res.errors and "anchor" in res.errors[0]
+    res = run(settings, op("set_overlay", shot_id="shot_001", motion_spec={
+        "kind": "callout", "payload": {"title": "The canal opened in 1914"}, "anchor": "canal opened"}))
+    assert res.errors and "repeats the narration" in res.errors[0]
+
+
+def test_text_card_without_text_never_copies_the_narration(settings, work):
+    assert not run(settings, op("change_type", shot_id="shot_001", type="motion_graphic", kind="text_overlay")).errors
+    title = load_shotlist(work).by_id("shot_001").motion.typed_payload().title
+    assert title == "The Panama Canal, view 1"  # the shot subject, not the beat's first words
 
 
 # ---------------------------------------------------------------- timing
@@ -365,6 +384,24 @@ def test_rewrite_beat_renarrates_and_shifts_shots(settings, work, monkeypatch):
     assert abs(sl.by_id("shot_003").duration + sl.by_id("shot_004").duration - 4.5) < 1e-3
     assert sl.by_id("shot_005").start == 11.5 and sl.by_id("shot_005").duration == 4.0
     assert plan(work) == ["motion", "mix", "assembly", "packaging"]
+
+
+def test_rewrite_beat_times_its_overlays_to_the_new_words(settings, work, monkeypatch):
+    def renarrate(narration, script, beat_id, new_text, *a):  # b002 now says Panama at its start, then other words
+        words = [w for w in narration.words if w.beat_id != beat_id]
+        new = [Word(text=t, start=7.0 + k * 0.4, end=7.3 + k * 0.4, beat_id=beat_id)
+               for k, t in enumerate("Panama took thousands of lives".split())]
+        return narration.model_copy(update={"words": sorted(words + new, key=lambda w: w.start)})
+
+    sl = load_shotlist(work)
+    sl.by_id("shot_004").overlay.payload["title"] = "Colon"  # never said in the new beat
+    (work / "shotlist.json").write_text(sl.model_dump_json(), encoding="utf-8")
+    monkeypatch.setattr("vidbush.audio.narration.renarrate_beat", renarrate)
+    assert not run(settings, op("rewrite_beat", beat_id="b002", instruction="make it punchier")).errors
+    sl = load_shotlist(work)
+    s3, s4 = sl.by_id("shot_003"), sl.by_id("shot_004")
+    assert s3.overlay is not None and abs(s3.start + s3.overlay.start_at - 7.2) < 1e-3
+    assert s4.overlay is None and s4.type == ShotType.image
 
 
 def test_rewrite_shrinking_below_minimum_merges_cover(settings, work, monkeypatch):

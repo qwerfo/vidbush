@@ -206,3 +206,69 @@ def test_qa_reports_timing_error_and_verbatim_share() -> None:
     assert stats["text_items"] == 3 and stats["unanchored"] == 0
     assert stats["timing_error_s"] == pytest.approx((gap_early + gap_timed) / 2, abs=0.01)
     assert stats["verbatim_pct"] == pytest.approx(33.3)
+
+
+# ---------------------------------------------------------------- review fixes
+
+def test_possessive_and_hyphenated_words_still_anchor() -> None:
+    words = _words("The train reached Nenana's rail yard where the dog-sled teams waited near Nome’s harbour")
+    assert I.anchor_time("Nenana", words, 0.0, 10.0) == pytest.approx(words[3].start)
+    assert I.anchor_time("dog sled", words, 0.0, 10.0) == pytest.approx(words[8].start)
+    assert I.anchor_time("Nome", words, 0.0, 10.0) == pytest.approx(words[12].start)
+    assert I.norm_tokens("Seppala's dog-sled") == ["seppala", "dog", "sled"]
+
+
+@pytest.mark.parametrize("text,kind,repeats", [
+    ("Diphtheria hits Nome", MotionKind.callout, True),  # a short clause of the narration is not a name
+    ("diphtheria hits", MotionKind.text_overlay, True),
+    ("Nome, Alaska", MotionKind.callout, False),  # a name
+    ("January 1925", MotionKind.text_overlay, False),  # a date label
+    ("diphtheria hits", MotionKind.lower_third, False),  # a lower third is a name by kind
+])
+def test_short_text_is_exempt_only_when_it_is_a_name(text: str, kind: MotionKind, repeats: bool) -> None:
+    spec = b.callout_spec(text).model_copy(update={"kind": kind})
+    assert I.spec_repeats_narration(spec, "In January diphtheria hits Nome hard") is repeats
+
+
+def test_qa_measures_against_the_word_the_pipeline_anchored_to() -> None:
+    words = [Word(text="Nome", start=2.0, end=2.4), Word(text="and", start=4.0, end=4.2),
+             Word(text="Nome", start=7.0, end=7.4)]
+    spec = b.lower_third_spec("Nome")
+    at = I.overlay_start(spec, words, 6.0, 12.0)
+    sl = ShotList(project_id="p", duration=12.0, shots=[
+        _shot(1, 0.0, 6.0), _shot(2, 6.0, 12.0, ShotType.footage_overlay,
+                                  spec.model_copy(update={"anchor": "Nome", "start_at": at}))])
+    assert qa.overlay_text_stats(sl, words)["timing_error_s"] == pytest.approx(I.ANCHOR_LEAD_S)
+
+
+def test_editor_split_moves_the_overlay_to_the_piece_that_holds_its_moment() -> None:
+    spec = b.lower_third_spec("Nome").model_copy(update={"anchor": "Nome", "start_at": 4.2})
+    sl = ShotList(project_id="p", duration=6.0, shots=[_shot(1, 0.0, 6.0, ShotType.footage_overlay, spec)])
+    retime.split_into(sl, sl.shots[0], [3.0, 3.0])
+    retime.finalize(sl, 6.0)
+    first, second = sl.shots
+    assert first.overlay is None and first.type == ShotType.footage
+    assert second.type == ShotType.footage_overlay and second.start + second.overlay.start_at == pytest.approx(4.2)
+
+
+def test_editor_drops_an_overlay_no_shot_can_show_on_its_moment() -> None:
+    spec = b.lower_third_spec("Nome").model_copy(update={"anchor": "Nome", "start_at": 4.2})
+    card = Shot(id="shot_002", index=1, beat_id="b1", start=6.0, end=10.0, duration=4.0,
+                type=ShotType.motion_graphic, intent="card", motion=b.title_card_spec("Nome"))
+    sl = ShotList(project_id="p", duration=10.0, shots=[_shot(1, 0.0, 6.0, ShotType.footage_overlay, spec), card])
+    sl.shots[0].duration, sl.shots[1].duration = 3.0, 7.0  # the card now covers the moment
+    retime.finalize(sl, 10.0)
+    assert sl.shots[0].overlay is None and sl.shots[0].type == ShotType.footage and sl.shots[1].overlay is None
+
+
+def test_cards_repeating_nearby_narration_of_another_beat_become_footage() -> None:
+    from vidbush.shots.rules import demote_repeating_cards
+    words = _words("the dogs rested at Nulato") + _words("the serum reached Nome six days later", t0=5.0)
+    card = Shot(id="shot_001", index=0, beat_id="b1", start=0.0, end=4.0, duration=4.0,
+                type=ShotType.motion_graphic, intent="card", motion=b.callout_spec("reached Nome six days later"))
+    fresh = card.model_copy(update={"id": "shot_002", "motion": b.callout_spec("674 miles by dog sled")})
+    shots = [card, fresh]
+    rebound = []
+    n = demote_repeating_cards(shots, words, [None], lambda s, i, k: rebound.append(s.id), lambda s: 0, lambda s: None)
+    assert n == 1 and rebound == ["shot_001"] and shots[0].type != ShotType.motion_graphic
+    assert shots[1].type == ShotType.motion_graphic

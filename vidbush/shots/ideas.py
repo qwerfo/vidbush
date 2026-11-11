@@ -587,29 +587,40 @@ NAME_TOKENS = 3  # texts this short (names, places, years, labels) never count a
 
 
 def norm_tokens(text: str) -> list[str]:
-    """Lowercase word and number tokens, spelled numbers as digits, thousands commas dropped."""
-    return [re.sub(r"[,']", "", t) for t in re.findall(r"[a-z0-9]+(?:[,'.][a-z0-9]+)*",
-                                                       spelled_to_digits(text).lower())]
+    """Lowercase word and number tokens, spelled numbers as digits, thousands commas and possessive 's
+    dropped (Nome's is Nome), hyphenated words split (dog-sled is dog sled)."""
+    low = re.sub(r"['\u2019]s\b", "", spelled_to_digits(text).lower())
+    return [re.sub(r"[,']", "", t) for t in re.findall(r"[a-z0-9]+(?:[,'.][a-z0-9]+)*", low)]
 
 
-def repeats_narration(text: str, narration: str) -> bool:
-    """True when on-screen text copies the narration, which the captions already show: 4 or more consecutive
-    tokens of it are spoken, or 60 percent or more of its content words are. Texts of NAME_TOKENS tokens or
-    fewer never count, so names, places and years pass."""
+def reads_as_name(text: str) -> bool:
+    """Every word is capitalised, a number or a stop word (Nome, Gulf of Alaska, 1925): a name or label."""
+    ws = re.findall(r"[^\W_][\w'\u2019.-]*", text)
+    return any(w.lower() not in STOP for w in ws) and all(w[0].isupper() or w[0].isdigit() or w.lower() in STOP
+                                                          for w in ws)
+
+
+def repeats_narration(text: str, narration: str, name: bool = False) -> bool:
+    """True when on-screen text copies the narration, which the captions already show: min(4, its length)
+    consecutive tokens of it are spoken, or (above NAME_TOKENS tokens) 60 percent or more of its content words
+    are. Names of NAME_TOKENS tokens or fewer never count (name: the caller knows it is one, else
+    reads_as_name), so names, places and years pass; a short clause of the narration does not."""
     toks, said = norm_tokens(text), norm_tokens(narration)
-    if len(toks) <= NAME_TOKENS:
+    if len(toks) < 2 or (len(toks) <= NAME_TOKENS and (name or reads_as_name(text))):
         return False
-    grams = {tuple(said[i:i + 4]) for i in range(len(said) - 3)}
-    if any(tuple(toks[i:i + 4]) in grams for i in range(len(toks) - 3)):
+    n = min(4, len(toks))
+    grams = {tuple(said[i:i + n]) for i in range(len(said) - n + 1)}
+    if any(tuple(toks[i:i + n]) in grams for i in range(len(toks) - n + 1)):
         return True
     content = {t for t in toks if t not in STOP}
-    return bool(content) and len(content & set(said)) >= 0.6 * len(content)
+    return len(toks) > NAME_TOKENS and bool(content) and len(content & set(said)) >= 0.6 * len(content)
 
 
 def spec_repeats_narration(spec: Optional[MotionSpec], narration: str) -> bool:
-    """A text overlay or card whose title or subtitle repeats the narration."""
+    """A text overlay or card whose title or subtitle repeats the narration (a lower third is a name)."""
     return spec is not None and spec.kind in TEXT_OVERLAY_KINDS and any(
-        repeats_narration(str(t), narration) for t in (overlay_title(spec), spec.payload.get("subtitle")) if t)
+        repeats_narration(str(t), narration, spec.kind == MotionKind.lower_third)
+        for t in (overlay_title(spec), spec.payload.get("subtitle")) if t)
 
 
 def overlay_title(spec: MotionSpec) -> str:
@@ -626,12 +637,12 @@ def read_seconds(spec: MotionSpec) -> float:
 def anchor_time(anchor: str, words: list[Word], lo: float, hi: float) -> Optional[float]:
     """Start of the narration word where the anchor is spoken, among words starting in [lo, hi]; None when
     it is not. The match holds the most of the anchor's content words (at least half) within its length
-    plus two words; the earliest best match wins."""
+    plus two tokens; the earliest best match wins. A word is matched by its own tokens (Nenana's, dog-sled)."""
     toks = norm_tokens(anchor)
     want = {t for t in toks if t not in STOP} or set(toks)
     if not want:
         return None
-    span = [(w.start, "".join(norm_tokens(w.text))) for w in words if lo <= w.start <= hi]
+    span = [(w.start, t) for w in words if lo <= w.start <= hi for t in norm_tokens(w.text)]
     best: Optional[tuple[int, float]] = None
     for i, (start, tok) in enumerate(span):
         if tok not in want:
