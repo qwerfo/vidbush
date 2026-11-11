@@ -532,7 +532,7 @@ def cue_times(spec: MotionSpec, words: Sequence[Word]) -> list[float]:
     for i, w in enumerate(words):
         for n in range(1, 5):
             said = " ".join(_norm(x.text) for x in words[i:i + n])
-            said = _SAID_NUMBER_RE.fullmatch(I.spelled_to_digits(I.spoken_years_to_digits(said)))
+            said = _SAID_NUMBER_RE.fullmatch(I.spelled_to_digits(said))
             if said and float(said.group(1).replace(",", "")) == key:
                 out.append(w.start)
                 break

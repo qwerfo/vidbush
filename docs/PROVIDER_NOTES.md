@@ -189,3 +189,21 @@ live from Vidbush. Check with `python -m vidbush.live_probe seats` and the probe
 - Probe: `GET /v2/media/usage` with the Bearer key first (health never rejects a bad key, as the image probe
   found), then `GET /v2/media/health`, `data.tts.status` must be `operational` (RadioPlay saw `degraded` with success_rate
   60.0 on 05/09/2026).
+
+## Live probe of 2026-11-11 (live-run-2, `doctor --probe`)
+
+Every seat in the 2026-11-11 policy answered on this laptop, which verifies the ids listed above as unverified:
+
+- writer: wellflow_cheap `claude-opus-5-5`, closerouter `anthropic/claude-opus-5.5`, anthropic_direct
+  `claude-opus-5-5` all ok. The direct key no longer answers "usage limits".
+- director and researcher: closerouter `anthropic/claude-sonnet-5.5`, openlux `claude-sonnet-5-5`, anthropic_direct
+  `claude-sonnet-5-5` all ok.
+- editor: closerouter `x-ai/grok-4.7`, openlux `grok-4.7`, wellflow `grok-4.7` all ok.
+- judge, vision, cheap_classifier: closerouter `google/gemini-3.8-flash` and openlux `gemini-3.8-flash` ok. Wellflow
+  `gemini-3.8-flash` answered ok for vision in about 56 s, but twice in the same probe sent a stream error event
+  `{code: model_unavailable, type: server_error, message: "temporarily unavailable. Please retry in a few
+  seconds"}`. Vidbush raises TransportError for any stream error event, so a run retries it; the probe makes one
+  attempt only. A second probe a few minutes later (`live_probe stream wellflow --role judge`) answered ok in 21.6 s.
+- tts: elevenlabs `eleven_v4` (voice Brian), elevate_tts and algrow_tts (`eleven_v4`, 1125 Algrow credits) ok.
+- image: Elevate `gpt-image-2.5-fast` and Algrow `gpt-image-2.5` ok.
+- video and search have no configured provider (as in live run 1); no stage of the Alaska run calls them.
