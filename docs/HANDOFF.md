@@ -267,9 +267,9 @@ The style profile splits animation into two numbers in `visual_mix`:
   over footage or a still. They are counted on top of the shot they decorate.
 
 Documentary default: `{footage: 20, footage_overlay: 21, image: 7,
-image_overlay: 10, full_screen_cards: 12, animated_overlays: 30}`. That turns
-into these shot targets: footage 20, footage with overlay 42.2, image 7,
-image with overlay 18.8, full screen cards 12 (percent of shots).
+image_overlay: 10, full_screen_cards: 5, animated_overlays: 37}`. That turns
+into these shot targets: footage 20, footage with overlay 47.2, image 7,
+image with overlay 20.8, full screen cards 5 (percent of shots).
 
 The overlay shares are a ceiling, not a quota. On-screen text never repeats
 the narration (the captions already show it): a callout or text overlay adds a
@@ -282,11 +282,32 @@ nothing to draw (or whose card was already shown) becomes footage too.
 gap between each text overlay and its words.
 
 A map or chart over the picture is drawn as a framed inset panel in the
-upper right. `pacing.card_spacing_s: 45` allows at most one free full screen
-card per 45 seconds outside the hook and the recap (0 turns it off). Top 10
-number cards always stay. Old profiles with a `motion_graphic` key still
-load; that number is read as full screen cards. `qa_report.md` has an
-Animation table: cards, shots with an overlay, and map and chart insets.
+upper right. `pacing.card_spacing_s: 75` allows at most one free full screen
+card per 75 seconds outside the recap, the hook included (a top 10 hook
+stays exempt; 0 turns it off). Top 10 number cards always stay. Old profiles
+with a `motion_graphic` key still load; that number is read as full screen
+cards.
+
+Card length and timing (shots/rules.py):
+
+- `pacing.card_hold_max: 4` caps a static card (title, text, quote,
+  callout, number); a full screen map or chart holds at most 7 s. The excess
+  goes to a neighbour, and what is left becomes footage of the same beat.
+- A text or number card must start on its cue: the word that speaks its
+  number or the first word of its title starts at most 0.5 s before the card
+  or 1.5 s into it. Otherwise the card moves to the cue, or becomes an
+  overlay on footage.
+- A card that loses its slot (spacing, cue) keeps its message on the
+  picture: a title as a lower third, a number or text card on a transparent
+  background, a map or chart as an inset.
+- Chapter titles are lower thirds on footage, not full screen cards. Call to
+  action beats get no card at all.
+
+`qa_report.md` has an Animation table: cards, shots with an overlay, map and
+chart insets, full screen card time (percent of runtime) and the longest text
+or number card hold. Acceptance checks `card_time_sparing` (at most 10
+percent of the runtime, skipped for top 10) and `card_hold_short` (at most
+`card_hold_max` plus 0.5 s).
 
 Every director call sees:
 

@@ -103,7 +103,7 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | script/parser.py | `parse_script(text, fmt=None) -> Script` | pasted scripts, any length, infers scene purposes and top10 |
 | audio/transcribe.py | `transcribe_words(audio, settings, log) -> list[Word] or None`, `transcribe_to_text(audio, settings, log, seats) -> str` | faster-whisper when available |
 | audio/narration.py | `narrate(script, brand, seats, settings, work_dir, log) -> Narration`, `narration_from_voiceover(audio, script, settings, work_dir, log) -> Narration`, `renarrate_beat(...)` | per-scene TTS, 40 ms crossfade stitch, alignment check, -16 LUFS |
-| shots/director.py | `build_shotlist(project, script, narration, research, profile, brand, seats, rng) -> (ShotList, DirectorPlan)` | ideas per beat (director seat called once per scene or batch of 8 beats, in sequence, shots/seat.py; every call carries the script summary from work/script_summary.json, the previous two chunks' ideas, the visual anchors so far and the next beat), then the pacing engine and assembler (shots/assembler.py) assign slots; at most 2 full screen cards and 16 s in a row, and at most one free full screen card per `pacing.card_spacing_s` (45 s) outside the hook and recap; visual mix measured by shot count from `StyleProfile.shot_mix()` |
+| shots/director.py | `build_shotlist(project, script, narration, research, profile, brand, seats, rng) -> (ShotList, DirectorPlan)` | ideas per beat (director seat called once per scene or batch of 8 beats, in sequence, shots/seat.py; every call carries the script summary from work/script_summary.json, the previous two chunks' ideas, the visual anchors so far and the next beat), then the pacing engine and assembler (shots/assembler.py) assign slots; at most 2 full screen cards and 16 s in a row, and at most one free full screen card per `pacing.card_spacing_s` (75 s) outside the recap (and a top 10 hook), each held at most `pacing.card_hold_max` (4 s, maps and charts 7 s) and started on the word that speaks it; visual mix measured by shot count from `StyleProfile.shot_mix()` |
 | source/registry.py | `source_all(shotlist, ctx) -> ShotList`, `source_shot(shot, ctx, queries=None) -> list[Candidate]` | parallel adapters, cap 8, sidecars |
 | judge/director_loop.py | `judge_and_select(shotlist, ctx) -> ShotList` | score, select, re-query, convert to ai_image, never empty |
 | visuals/prepare.py | `prepare_visuals(shotlist, ctx) -> ShotList` | derived crops, optional DepthFlow and ai_video |
@@ -171,8 +171,8 @@ image, image_overlay, ai_image, ai_video) plus two animation numbers:
 charts, callouts, arrows and lower thirds over footage or stills). Animated
 overlays are counted on top of the shot they decorate: `shot_mix()` adds
 them to footage_overlay and image_overlay in the footage to still ratio of
-the picture mix. Documentary default: footage 20, footage_overlay 42.2,
-image 7, image_overlay 18.8, motion_graphic 12. The old `motion_graphic` key
+the picture mix. Documentary default: footage 20, footage_overlay 47.2,
+image 7, image_overlay 20.8, motion_graphic 5. The old `motion_graphic` key
 is read as `full_screen_cards`. QA reports the shot type mix against
 `shot_mix()` and an animation table (full screen cards, shots with an
 overlay, map and chart insets).

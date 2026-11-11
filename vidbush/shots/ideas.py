@@ -2,9 +2,10 @@
 
 ideas_for_beat(bc, palette, rng) returns at least one footage and one still
 VisualIdea for a beat, plus the motion ideas its concrete nouns, people,
-places, era and numbers support. Text helpers here are also used by the
-director to validate model output (numbers cited by charts, places on maps)
-and to time on-screen text to the narration and keep it from repeating it.
+places, era and numbers support (a call to action beat gets no motion idea).
+Text helpers here are also used by the director to validate model output
+(numbers cited by charts, places on maps) and to time on-screen text to the
+narration and keep it from repeating it.
 """
 from __future__ import annotations
 
@@ -907,42 +908,55 @@ def number_sublabel(m: NumberMention, text: str) -> str:
     return str(years[0]) if years else ""
 
 
+_UNIT_W = "one|two|three|four|five|six|seven|eight|nine"
+_TEEN_W = "ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen"
+_TENS_W = "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety"
+_SPOKEN_YEAR_RE = re.compile(
+    r"\b(?:two[\s-]+thousand(?:\s+and)?[\s-]+(?P<t>(?:%s)(?:[\s-]+(?:%s))?|%s|%s)"
+    r"|(?P<h>%s|twenty)[\s-]+(?P<r>oh[\s-]+(?:%s)|(?:%s)(?:[\s-]+(?:%s))?|%s))\b"
+    r"(?![\s-]+(?:hundred|thousand|million|billion))" % (_TENS_W, _UNIT_W, _TEEN_W, _UNIT_W, _TEEN_W, _UNIT_W,
+                                                          _TENS_W, _UNIT_W, _TEEN_W), re.I)
+
+
+def spoken_years_to_digits(text: str) -> str:
+    """'two thousand seven' -> '2007', 'nineteen fifty-nine' -> '1959', 'eighteen oh five' -> '1805': a year
+    read aloud is a year, not the count spelled_to_digits would make of it ('2,007', '78'). '<teen> hundred'
+    stays a count ('fifteen hundred soldiers'): that is how a quantity from 1,100 to 1,999 is said."""
+    def value(words: str) -> int:
+        return _words_value([w for w in re.split(r"[\s-]+", words.lower()) if w not in ("oh", "and")]) or 0
+
+    def repl(m: re.Match) -> str:
+        if m.group("t"):
+            return str(2000 + value(m.group("t")))
+        return str(value(m.group("h")) * 100 + value(m.group("r")))
+    return _SPOKEN_YEAR_RE.sub(repl, text)
+
+
 def number_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research], palette: str) -> Optional[VisualIdea]:
-    """Number card for the most striking number (count up) or, failing that, the year."""
+    """Number card for the most striking number (count up) or, failing that, the year. Years read aloud count
+    as years (spoken_years_to_digits), never as a quantity."""
     from ..mg import builders as b
     facts = research.facts if research else []
-    if ent.numbers:
-        cited = [m for m in ent.numbers if not facts or number_is_cited(m.value, facts)]
-        pool = cited or ent.numbers
+    text = spoken_years_to_digits(bc.beat.text)
+    numbers = [n for n in extract_numbers(text) if not n.is_year]
+    years = extract_years(text)
+    if numbers:
+        cited = [m for m in numbers if not facts or number_is_cited(m.value, facts)]
+        pool = cited or numbers
         m = max(pool, key=lambda x: (x.unit not in TIME_UNITS, x.value))
         src = number_is_cited(m.value, facts) if facts else None
-        label = number_label(m, bc.beat.text)[:40]
+        label = number_label(m, text)[:40]
         spec = b.number_card_spec(b.format_number(m.value, m.unit), label=label,
-                                  sublabel=number_sublabel(m, bc.beat.text), count_up=True, palette=palette,
+                                  sublabel=number_sublabel(m, text), count_up=True, palette=palette,
                                   source_note=b.source_note_for(src.source_title) if src else "")
         return _motion_idea(bc, spec, f"Number card: {m.raw} {label}.".replace("  ", " "), 0.85)
-    if ent.years:
+    if years:
         words = ent.phrase.split()[:6]
         while words and words[-1].lower() in STOP:
             words.pop()
-        spec = b.number_card_spec(str(ent.years[0]), label=" ".join(words), count_up=False, palette=palette)
-        return _motion_idea(bc, spec, f"Year card: {ent.years[0]}.", 0.6)
+        spec = b.number_card_spec(str(years[0]), label=" ".join(words), count_up=False, palette=palette)
+        return _motion_idea(bc, spec, f"Year card: {years[0]}.", 0.6)
     return None
-
-
-def text_ideas(bc: BeatContext, palette: str) -> list[VisualIdea]:
-    """Title card at scene starts, and a closing title card on a call to action beat. No quote or callout
-    card of the beat's own words: the captions already show them."""
-    from ..mg import builders as b
-    out: list[VisualIdea] = []
-    if bc.first_in_scene and bc.scene.purpose not in (ScenePurpose.hook,):
-        sub = era_label(bc.era) if bc.era else ""
-        out.append(_motion_idea(bc, b.title_card_spec(bc.scene.title, sub, palette=palette),
-                                f"Chapter title card: {bc.scene.title}.", 0.7))
-    if CTA_RE.search(bc.beat.text) and not out:
-        out.append(_motion_idea(bc, b.title_card_spec(bc.scene.title, palette=palette),
-                                f"Closing title card: {bc.scene.title}.", 0.4))
-    return out
 
 
 # ---------------------------------------------------------------- per beat
@@ -967,17 +981,22 @@ def ideas_for_beat(bc: BeatContext, research: Optional[Research], palette: str,
                    rng: random.Random) -> list[VisualIdea]:
     """All heuristic ideas for one beat; always includes footage and still, motion when the beat supports one.
 
-    Call-to-action beats get plain footage and stills with no overlay, and a closing title card only.
+    Call-to-action beats get plain footage and stills only: no overlay and no card. The first beat of a
+    scene after the hook carries the chapter title as a lower third on its first footage idea, because a
+    full screen chapter card stops the story for a title.
     """
+    from ..mg import builders as b
     ent = beat_entities(bc)
     foot = footage_ideas(bc, ent)
     still = still_ideas(bc, ent)
     if CTA_RE.search(bc.beat.text):
-        return foot + still + text_ideas(bc, palette)
+        return foot + still
     _attach_overlays(bc, ent, foot + still, palette, rng)
+    if bc.first_in_scene and bc.scene.purpose != ScenePurpose.hook and foot:
+        foot[0].overlay = b.lower_third_spec(bc.scene.title, era_label(bc.era) if bc.era else "", palette=palette)
     motion = [x for x in (chart_idea(bc, ent, research, palette), line_idea(bc, ent, research, palette),
                           map_idea(bc, ent, palette), number_idea(bc, ent, research, palette)) if x]
-    return foot + still + motion + text_ideas(bc, palette)
+    return foot + still + motion
 
 
 def beat_contexts(script_scenes: list[Scene], research: Optional[Research], topic: str) -> list[BeatContext]:
