@@ -47,7 +47,7 @@ def fake_vision(scores: dict[str, float], ai_score: float = 85.0, rejects: Optio
                     intent: str = "", details: Optional[list[str]] = None) -> dict[str, Any]:
         name = Path(images[0]).name
         calls.append(name)
-        score = ai_score if "/ai/" in images[0].replace("\\", "/") else scores.get(name, 50.0)
+        score = ai_score if Path(images[0]).parent.name == "ai" else scores.get(name, 50.0)  # work/ai stills
         return {"score": score, "reason": f"scored {name}", "rejects": (rejects or {}).get(name, []), "_mock": False}
 
     vision_json.calls = calls  # type: ignore[attr-defined]

@@ -388,7 +388,7 @@ def ai_prompt(idea: VisualIdea, bc: Optional[I.BeatContext]) -> str:
         style = "Cinematic documentary photograph"
     when = f", {I.era_label(era)}" if era else ""
     subject = prompt_subject(idea.intent, era) or "a documentary scene"
-    shows = f" Clearly showing {', '.join(idea.must_show[:4])}." if idea.must_show else ""
+    shows = f" Clearly showing {', '.join(idea.must_show)}." if idea.must_show else ""
     guard = " Period-accurate clothing, vehicles and architecture." if era and era < 1990 else ""
     return no_em_dash(f"{style} of {subject}{when}.{shows}{guard} Natural light, realistic detail, wide 16:9 "
                       "composition, 35mm lens.")

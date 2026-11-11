@@ -52,7 +52,7 @@ def test_every_director_call_carries_the_summary_and_rules() -> None:
     assert all(p["script_summary"] == "A canal is cut across Panama." for p in prompts)
     rules = " ".join(prompts[0]["rules"]).lower()
     for principle in ("keep a visual subject on screen", "vary framing", "first 60 seconds",
-                      "narration moves between places", "two or more comparable numbers"):
+                      "narration moves between places", "two or more comparable numbers", "counts and relationships"):
         assert principle in rules
     assert prompts[0]["full_screen_card_spacing_s"] == 75
 

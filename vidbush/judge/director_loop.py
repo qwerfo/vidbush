@@ -3,7 +3,9 @@
 judge_and_select(shotlist, ctx) -> ShotList.
   attempt 1  score the sourced candidates, pick the best at or above threshold
   attempt 2  rewrite the queries from the judge reasons and re-source
-  attempt 3+ convert the shot to ai_image (overlay kept) and judge a generated still
+  attempt 3+ convert the shot to ai_image (overlay kept) and judge a generated still; a failed still is
+             regenerated with the judge's reason up to settings.judge.ai_retries times. A subject that is
+             readable text (map, headline, document) is never converted: it is flagged needs_motion_graphic
 After settings.judge.max_attempts the best available candidate is accepted
 with flag no_match_accepted. motion_graphic shots are left to the motion stage.
 """
@@ -14,9 +16,10 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from ..models import Candidate, Script, Shot, ShotList, ShotType, SourceKind
+from ..visuals.ai_images import needs_readable_text
 from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, score_many
 from .prefilter import apply_prefilter
 
@@ -28,7 +31,9 @@ RECENT_S = 60.0
 RECENT_PENALTY = 10.0  # extra when the earlier use is within RECENT_S
 SEGMENT_GAP_S = 3.0  # video ranges that overlap or start closer than this are the same segment
 CROSS_SCENE_SEGMENT_PENALTY = 40.0  # same segment again in another scene (banned within a scene and next shot)
-SHOT_FLAGS = {"mock", "low_res", "nc_nd", "anachronism", "no_match_accepted", "standard_youtube_licence"}
+NEEDS_MOTION_FLAG = "needs_motion_graphic"  # readable text subject that no sourced candidate covered
+SHOT_FLAGS = {"mock", "low_res", "nc_nd", "anachronism", "no_match_accepted", "standard_youtube_licence",
+              NEEDS_MOTION_FLAG}
 MAX_QUERIES = 6
 
 REQUERY_SYSTEM = (
@@ -105,24 +110,35 @@ def _seed_ai(shots: list[Shot], ctx: Any) -> None:
     if not todo:
         return
     with ThreadPoolExecutor(max_workers=RESOLVE_WORKERS) as pool:
-        made = list(pool.map(lambda s: _generate(s, ctx), todo))
-    for shot, cand in zip(todo, made):
+        list(pool.map(lambda s: add_ai(s, ctx), todo))
+
+
+def add_ai(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Candidate:
+    """Generate an AI still, judge it, and regenerate a failed one with what it must show and the judge's
+    reason as direction, up to settings.judge.ai_retries times. Every take is appended; the best is returned.
+    No still is used unjudged. A failed retry keeps the takes made so far; a failed first take raises.
+    A mock judge score is image statistics, not content, so it never buys a retry."""
+    from ..visuals.ai_images import generate_ai_candidate
+    threshold = float(ctx.settings.judge.threshold)
+    retries = int(getattr(ctx.settings.judge, "ai_retries", 2))
+    takes: list[Candidate] = []
+    problem = ""
+    for take in range(1 + max(0, retries)):
+        try:
+            cand = generate_ai_candidate(shot, ctx, prompt=prompt, problem=problem)
+        except Exception as e:  # noqa: BLE001  a later take failing keeps the earlier ones
+            if not takes:
+                raise
+            ctx.log.warn("AI still retry failed", shot=shot.id, take=take + 1, error=str(e)[:300])
+            break
         shot.candidates.append(cand)
-
-
-def _generate(shot: Shot, ctx: Any, take: int = 1) -> Candidate:
-    from ..visuals.ai_images import build_prompt, generate_ai_candidate
-    prompt = None
-    if take > 1:
-        prompt = f"{build_prompt(shot)} Alternative take {take}: a different camera angle and composition."
-    return generate_ai_candidate(shot, ctx, prompt=prompt)
-
-
-def _add_ai(shot: Shot, ctx: Any) -> None:
-    take = 1 + sum(1 for c in shot.candidates if c.source == SourceKind.ai_image)
-    cand = _generate(shot, ctx, take)
-    shot.candidates.append(cand)
-    _prefilter_and_score([(shot, cand)], ctx, workers=1)
+        _prefilter_and_score([(shot, cand)], ctx, workers=1)
+        takes.append(cand)
+        if _ok(cand, threshold) or JUDGE_MOCK_FLAG in cand.flags:
+            break
+        problem = "; ".join(x for x in (cand.reject_reason, cand.judge_reason) if x)[:300] or "judged below threshold"
+        ctx.log.info("AI still below threshold, regenerating", shot=shot.id, take=take + 1, score=cand.score)
+    return max(takes, key=lambda c: (c.reject_reason is None, c.score or 0.0))  # ties keep the earlier take
 
 
 # ---------------------------------------------------------------- attempts 2 and 3+
@@ -137,10 +153,15 @@ def _resolve(shot: Shot, ctx: Any, threshold: float) -> list[str]:
             if shot.attempts == 2 and shot.type in SOURCED_TYPES:
                 notes.append(_requery(shot, ctx))
                 continue
+            if any(c.source == SourceKind.ai_image for c in shot.candidates):
+                break  # add_ai already spent the AI retries on this shot
             if shot.type not in AI_TYPES:
+                if needs_readable_text(shot):
+                    notes.append("subject is readable text, kept the best sourced candidate for a motion graphic")
+                    break
                 shot.type = ShotType.ai_image
                 notes.append(f"converted to AI image at attempt {shot.attempts}")
-            _add_ai(shot, ctx)
+            add_ai(shot, ctx)
     except Exception as e:  # noqa: BLE001  keep what we have, selection still guarantees a pick
         ctx.log.warn("director loop attempt failed", shot=shot.id, error=str(e)[:300])
         notes.append(f"attempt {shot.attempts} failed: {type(e).__name__}")
@@ -407,10 +428,10 @@ def _allowed_usable(shot: Shot, usage: _Usage) -> list[Candidate]:
 
 def _try_ai(shot: Shot, ctx: Any) -> bool:
     """Generate an AI still (never a segment) unless one was already tried. True when one was added."""
-    if any(c.source == SourceKind.ai_image for c in shot.candidates):
+    if any(c.source == SourceKind.ai_image for c in shot.candidates) or needs_readable_text(shot):
         return False
     try:
-        _add_ai(shot, ctx)
+        add_ai(shot, ctx)
     except Exception as e:  # noqa: BLE001  generation failure falls back to the least penalised repeat
         ctx.log.warn("AI still for a repeated segment failed", shot=shot.id, error=str(e)[:300])
         return False
@@ -425,7 +446,7 @@ def _ensure_usable(shot: Shot, ctx: Any) -> None:
     if any(c.source == SourceKind.ai_image for c in shot.candidates):
         return  # an AI still was already tried; best available wins
     ctx.log.info("no usable candidate, generating AI image", shot=shot.id)
-    _add_ai(shot, ctx)
+    add_ai(shot, ctx)
 
 
 def _diverse(pool: list[Candidate], usage: _Usage, shot: Shot, ctx: Any = None) -> Candidate:
@@ -456,6 +477,8 @@ def _apply(shot: Shot, pick: Candidate, accepted: bool, notes: list[str], repeat
     shot.flags += [f for f in ("low_res", "nc_nd", "anachronism", "standard_youtube_licence") if f in pick.flags]
     if accepted:
         shot.flags.append("no_match_accepted")
+    if needs_readable_text(shot) and (accepted or pick.source == SourceKind.ai_image):
+        shot.flags.append(NEEDS_MOTION_FLAG)
     if repeat:
         shot.flags.append(SEGMENT_REPEAT_FLAG)
     tail = (["best available accepted"] if accepted else []) + (["repeats a used segment"] if repeat else [])

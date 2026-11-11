@@ -164,11 +164,12 @@ def stage_assembly(ctx: StageContext) -> list[str]:
 
 
 def stage_packaging(ctx: StageContext) -> list[str]:
-    from ..judge.qa import build_qa
+    from ..judge.qa import build_qa, refresh_mock_used
     from ..render.package import package
     shotlist = ctx.load("shotlist", ShotList)
-    outs = package(shotlist, ctx)
-    outs += build_qa(shotlist, ctx)
+    outs = build_qa(shotlist, ctx)  # before the slow thumbnails, so qa_report always describes this final.mp4
+    outs += package(shotlist, ctx)
+    refresh_mock_used(ctx)  # titles and thumbnails ran after build_qa
     minutes = ctx.load("narration", Narration).duration / 60.0
     ctx.tracker.finalize(minutes)
     return [str(p) for p in outs] + [str(ctx.out_path("cost_report.json"))]

@@ -23,10 +23,10 @@ from ..models import (SHOT_TYPES, STATIC_CARD_KINDS, FallbackNote, MotionKind, N
                       ShotList, ShotType, SourceKind, Word)
 from ..shots import ideas as I
 from ..util import ToolError, media_duration, read_json, run, write_json
-from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, parse_verdict
+from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, narration_by_beat, parse_verdict
 
 QA_FLAGS = ("mock", "nc_nd", "standard_youtube_licence", "anachronism", "low_res", "no_match_accepted",
-            "held_frame", "missing_media", "segment_repeat")
+            "held_frame", "missing_media", "segment_repeat", "needs_motion_graphic")
 SOURCE_NOTES = "source_notes.json"
 SOURCE_LABELS = {"youtube": "YouTube", "pexels": "Pexels", "pixabay": "Pixabay", "wikimedia": "Wikimedia Commons",
                  "archive": "Internet Archive", "loc": "Library of Congress", "nasa": "NASA"}
@@ -42,7 +42,9 @@ QA_SYSTEM = (
     "You check frames of a finished documentary video. Each request shows frames from one shot and the "
     "narration intent it should cover. Ignore the black letterbox bars, the single caption line in the "
     "bottom band and branded graphics such as maps, charts, number cards and lower thirds: they are part of "
-    "the edit. Good enough is the bar: fail only what would break viewer immersion. Check that the place "
+    "the edit. The narration is what the viewer hears over the shot: a picture that contradicts it scores "
+    "below 70 even when it fits the intent. Good enough is the bar: fail only what would break viewer "
+    "immersion. Check that the place "
     "makes sense, then the subject, then the action. Hard problems: foreign burned in subtitles "
     "(burned_in_captions), a big watermark (watermark), a channel logo (channel_logo), a person speaking to "
     "camera (talking_head), a black frame (black_frame), a frozen frame (frozen_frame). " + REJECT_RULES
@@ -139,10 +141,13 @@ def _grab(video: Path, t: float, out: Path) -> Optional[str]:
 def score_post_render(shotlist: ShotList, frames: dict[str, list[str]], ctx: Any) -> dict[str, tuple[float, str]]:
     """Vision seat score per shot from its rendered frames (task qa)."""
     todo = [s for s in shotlist.shots if frames.get(s.id)]
+    beats = narration_by_beat(ctx)
 
     def one(shot: Shot) -> Optional[tuple[float, str]]:
         imgs = _spread(frames[shot.id], FRAMES_PER_SHOT)
-        prompt = (f"Narration intent: {shot.intent}\nShot type: {shot.type.value}\n"
+        heard = beats.get(shot.beat_id, "")
+        prompt = ((f"Narration: {heard}\n" if heard else "") + f"Narration intent: {shot.intent}\n"
+                  f"Shot type: {shot.type.value}\n"
                   f"Must avoid: {', '.join(shot.must_avoid) or 'nothing specific'}\nReturn strict JSON.")
         try:
             raw = ctx.seats.vision_json("vision", "qa", QA_SYSTEM, prompt, imgs, ctx.stage or "packaging",
@@ -334,6 +339,25 @@ def _nc_nd(shotlist: ShotList, flag: str = "nc_nd") -> list[str]:
     return [f"{label[k]} (shots {', '.join(v)})" for k, v in seen.items()]
 
 
+def _mock_roles(ctx: Any) -> set[str]:
+    return set(getattr(ctx.seats, "mock_roles", set())) | {e.role for e in ctx.tracker.report.entries if e.mock}
+
+
+def refresh_mock_used(ctx: Any) -> None:
+    """Add the roles that fell back to mock after build_qa (packaging: titles, thumbnails) to qa_report, so
+    final_status still sees them. Only mock_used and its markdown line change."""
+    path = ctx.root / "qa_report.json"
+    if not path.exists():
+        return
+    report = QAReport.model_validate(read_json(path))
+    mocks = sorted(set(report.mock_used) | _mock_roles(ctx))
+    if mocks == report.mock_used:
+        return
+    report.mock_used = mocks
+    write_json(path, report)
+    (ctx.root / "qa_report.md").write_text(render_markdown(report, intro_offset(ctx)), encoding="utf-8")
+
+
 def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, tuple[float, str]],
                 coverage: float, match: float, notes: list[str], words: Optional[list[Word]] = None) -> QAReport:
     """Assemble the QAReport from the shot list, post-render scores and caption check."""
@@ -352,7 +376,7 @@ def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, 
         c = s.selected_candidate()
         attributed += int(c is not None and c.source not in NO_ATTRIBUTION and bool(c.attribution.strip()))
     mix, pacing = mix_and_pacing(shotlist)
-    mocks = set(getattr(ctx.seats, "mock_roles", set())) | {e.role for e in ctx.tracker.report.entries if e.mock}
+    mocks = _mock_roles(ctx)
     report = QAReport(project_id=shotlist.project_id, threshold=threshold, shots=shots,
                       pct_above_threshold=round(100.0 * above / len(judged), 1) if judged else 100.0,
                       pct_no_match_accepted=round(100.0 * no_match / len(judged), 1) if judged else 0.0,

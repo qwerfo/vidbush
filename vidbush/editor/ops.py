@@ -249,8 +249,9 @@ def op_upload_shot(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Out
 
 
 def _ai_candidate(sess: EditSession, shot: Shot, prompt: Optional[str]) -> Candidate:
-    from ..visuals.ai_images import generate_ai_candidate
-    return generate_ai_candidate(shot, sess.ctx(), prompt=prompt)
+    """Best judged take of the director loop's AI still helper (regenerated with the judge's reason)."""
+    from ..judge.director_loop import add_ai
+    return add_ai(shot, sess.ctx(), prompt=prompt)
 
 
 def op_regenerate_ai(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Outcome:
@@ -261,7 +262,7 @@ def op_regenerate_ai(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> O
         core = shot.ai_prompt.strip() or _subject(shot.intent)
         prompt = f"{core.rstrip('. ')}. {delta.rstrip('.')}."
         shot.ai_prompt = prompt
-    cand = _ai_candidate(sess, shot, prompt)
+    cand = _ai_candidate(sess, shot, prompt)  # an operator reroll takes the new batch; old takes stay pickable
     select(shot, cand, "operator_ai")
     return Outcome(f"{shot.id} has a new AI image {cand.id}", FORCE_MOTION)
 

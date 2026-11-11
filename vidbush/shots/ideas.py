@@ -108,7 +108,8 @@ def topic_of(title: str, research: Optional[Research]) -> str:
 
 
 def extract_years(text: str) -> list[int]:
-    """Four digit years (1000 to 2099) that are not quantities with units."""
+    """Four digit years (1000 to 2099) that are not quantities with units; spoken years count too."""
+    text = spoken_years(text)
     out = []
     for m in _YEAR_RE.finditer(text):
         nxt = _WORD_RE.match(text[m.end():].lstrip())
@@ -154,8 +155,59 @@ def _words_value(words: list[str]) -> Optional[int]:
     return total + cur if words else None
 
 
+_UNIT_W = "one|two|three|four|five|six|seven|eight|nine"
+_TEEN_W = "ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen"
+_TENS_W = "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety"
+_DECADES = {"twenties": 20, "thirties": 30, "forties": 40, "fifties": 50, "sixties": 60, "seventies": 70,
+            "eighties": 80, "nineties": 90}
+_NO_SCALE = rf"(?![\s-]+(?:hundred|thousand|million|billion|{_UNIT_W}|{_TEEN_W}|{_TENS_W})\b)"  # whole numbers only
+# 'nineteen twenty-five', 'eighteen oh five', 'nineteen twelve', 'the nineteen twenties'. The century word
+# starts at thirteen, so clock times ('ten thirty', 'eleven forty') are never read as years.
+_SPOKEN_YEAR_RE = re.compile(
+    rf"\b(thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)[\s-]+(?:oh[\s-]+({_UNIT_W})|"
+    rf"({'|'.join(_DECADES)})|({_TEEN_W})|({_TENS_W})(?:[\s-]+({_UNIT_W}))?)\b{_NO_SCALE}", re.I)
+# 'two thousand seven', 'two thousand and twelve'
+_TWO_THOUSAND_RE = re.compile(
+    rf"\btwo thousand(?:\s+and)?\s+(?:({_TEEN_W})|({_TENS_W})(?:[\s-]+({_UNIT_W}))?|({_UNIT_W}))\b{_NO_SCALE}",
+    re.I)
+
+
+# words after a number that make it a quantity or a range, never a year: 'fifteen twenty minutes', 'twenty thirty
+# miles a day', 'sixteen seventeen year olds' (extract_years skips digits before a unit the same way)
+_QUANTITY_WORDS = set(UNIT_ALIASES) | TIME_UNITS | {u[:-1] for u in TIME_UNITS}
+
+
+def _quantity_follows(m: re.Match) -> bool:
+    nxt = _WORD_RE.match(m.string[m.end():].lstrip())
+    return bool(nxt) and nxt.group(0).lower().split("-")[0] in _QUANTITY_WORDS
+
+
+def spoken_years(text: str) -> str:
+    """Years written the way narration says them become digits: 'nineteen twenty-five' -> '1925',
+    'the nineteen twenties' -> 'the 1920s', 'two thousand seven' -> '2007'. Other number words stay, and so
+    does a pair followed by a unit ('fifteen twenty minutes later' is a range)."""
+    def year(m: re.Match) -> str:
+        if _quantity_follows(m):
+            return m.group(0)
+        cent, oh, decade, teen, tens, unit = (g.lower() if g else "" for g in m.groups())
+        head = _words_value([cent]) * 100
+        if decade:
+            return f"{head + _DECADES[decade]}s"
+        return str(head + (_words_value([w for w in (oh, teen, tens, unit) if w]) or 0))
+
+    def two_k(m: re.Match) -> str:
+        if _quantity_follows(m):
+            return m.group(0)
+        return str(2000 + (_words_value([g.lower() for g in m.groups() if g]) or 0))
+
+    return _TWO_THOUSAND_RE.sub(two_k, _SPOKEN_YEAR_RE.sub(year, text))
+
+
 def spelled_to_digits(text: str) -> str:
-    """'one hundred dollars' -> '$100', 'ninety percent' -> '90 percent'. Single 'one' and 'zero' stay words."""
+    """'one hundred dollars' -> '$100', 'ninety percent' -> '90 percent'. Single 'one' and 'zero' stay words.
+    Spoken years are read as years first ('nineteen twenty-five' is 1925, not 19 + 25)."""
+    text = spoken_years(text)
+
     def repl(m: re.Match) -> str:
         raw = m.group(0)
         words = [w for w in re.split(r"[\s-]+", raw.lower()) if w and w != "and"]

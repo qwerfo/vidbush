@@ -327,9 +327,11 @@ class Seats:
 
     # ------------------------------------------------------------ image
 
-    def image(self, prompt: str, out_path: Path, stage: str, negative_prompt: str = "") -> tuple[Path, bool]:
+    def image(self, prompt: str, out_path: Path, stage: str, negative_prompt: str = "",
+              note: str = "image") -> tuple[Path, bool]:
         """Generate a 1920x1080 PNG. The configured order is kept; only a failed request falls back.
-        negative_prompt goes to the provider's own field, or into the prompt as prose when it has none."""
+        negative_prompt goes to the provider's own field, or into the prompt as prose when it has none.
+        note labels the cost entry ("image retry" for a regenerated still)."""
         cost = self.settings.cost
 
         def fn(spec: ProviderSpec) -> CallResult:
@@ -343,7 +345,7 @@ class Seats:
                 self.log.warn("image cost above ceiling after the call", provider=spec.name, cost=r.cost_usd)
             return r
 
-        res = self._call("image", stage, fn, lambda: mock.mock_image(prompt, out_path), note="image")
+        res = self._call("image", stage, fn, lambda: mock.mock_image(prompt, out_path), note=note)
         return Path(res.value), res.mock
 
     # ------------------------------------------------------------ tts
