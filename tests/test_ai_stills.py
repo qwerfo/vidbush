@@ -2,6 +2,7 @@
 every still is judged against the narration and regenerated with the judge's reason, text subjects are flagged."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -113,6 +114,64 @@ def test_rewrite_keeps_counts_and_may_drop_text_objects():
     # a capitalised first word is content unless the next word is capitalised too
     lost = ai_images.lost_keep_words("Sled dogs resting.", "Huskies resting.", ["Sled dogs resting"])
     assert lost == ["Sled", "dogs"]
+
+
+def test_names_possessives_and_acronyms_are_never_lost_content():
+    old = "Leonhard Seppala's lead dog Togo beside him on the US trail near I-80."
+    new = "An anonymous musher's lead dog beside a man on a trail near a highway."
+    keep = ["Seppala's lead dog", "Togo beside him", "US trail", "I-80"]
+    assert ai_images.lost_keep_words(old, new, keep, narration="Seppala trusted Togo.") == []
+    assert ai_images.lost_keep_words("Kaasen and Balto.", "A musher and a dog.", ["Kaasen", "Balto"],
+                                     narration="Then Kaasen drove Balto on.") == []
+
+
+def test_count_synonyms_pronouns_and_auxiliaries_are_not_lost():
+    assert ai_images.lost_keep_words("A single loaded tanker truck.", "One loaded tanker truck.",
+                                     ["single loaded tanker truck"]) == []
+    assert ai_images.lost_keep_words("Notes being taken by a crowd around him at sun setting.",
+                                     "A crowd taking notes around a man at dusk.",
+                                     ["notes being taken", "crowd around him", "sun setting"]) == ["sun"]
+    assert ai_images.lost_keep_words("A sled flipping, hands digging, waves hitting tiled walls.",
+                                     "A sled flips, hands dig, waves hit tile walls.",
+                                     ["sled flipping", "hands digging", "waves hitting tiled walls"]) == []
+    assert ai_images.lost_keep_words("The musher's hands.", "The musher’s gloved hands.", ["musher's hands"]) == []
+
+
+def test_a_dog_team_rewritten_to_one_dog_is_still_lost():
+    assert ai_images.lost_keep_words("A dog team pulling a sled.", "One dog pulling a sled.",
+                                     ["dog team pulling a sled"]) == ["team"]
+
+
+def test_lost_words_get_one_named_retry(make_ctx, monkeypatch):
+    ctx = make_ctx()
+    answers = ["Musher beside one dog on sea ice.", "Musher with a dog team pulling a sled on sea ice."]
+    asked: list[str] = []
+
+    def fake_llm(role, task, system, user, stage, temperature=0.6, timeout=0):
+        asked.append(user)
+        return {"prompt": answers[len(asked) - 1]}
+
+    monkeypatch.setattr(ctx.seats, "llm_json", fake_llm)
+    assert ai_images.safe_prompt("A dog team pulling a sled on sea ice.", ctx,
+                                 keep=["dog team pulling a sled"]) == answers[1]
+    assert len(asked) == 2 and "Must keep these words the last rewrite lost: team" in asked[1]
+
+
+@pytest.mark.parametrize("answer", ["An anonymous musher running beside one dog on sea ice.", None, "boom"])
+def test_no_fallback_prompt_sends_a_keep_item_name(make_ctx, monkeypatch, answer):
+    ctx = make_ctx()
+    keep = ["Leonhard Seppala", "Togo leading a team of dogs pulling a sled", "Seppala's sled"]
+
+    def fake_llm(*a, **k):
+        if answer == "boom":
+            raise RuntimeError("editor down")
+        return {"prompt": answer} if answer else None
+
+    monkeypatch.setattr(ctx.seats, "llm_json", fake_llm)
+    original = "Leonhard Seppala with Togo leading a team of dogs pulling Seppala's sled across sea ice."
+    out = ai_images.safe_prompt(original, ctx, keep=keep, narration="Seppala ran Togo across the ice.")
+    assert not {"Leonhard", "Seppala", "Togo"} & set(re.findall(r"[A-Za-z]+", out))
+    assert "team of dogs pulling" in out and "sled across sea ice" in out
 
 
 @pytest.mark.parametrize("text, is_text", [

@@ -91,13 +91,21 @@ TEXT_SUBJECT_RE = re.compile(
     r"(?:text|wording|words|pages?) of (?:an? |the )?(?:letter|telegram|document|report|diary|treaty|law|song|book)|"
     r"document pages?|web ?pages?|websites?|sheet music|musical scores?|(?:bar|line|pie|data) (?:charts?|graphs?)|"
     r"(?:charts?|graphs?) (?:of|showing))\b", re.I)
-_KEEP_WORD = re.compile(r"\d+|[A-Za-z][A-Za-z'-]+")
+_KEEP_WORD = re.compile(r"[A-Za-z][A-Za-z'-]*\d+|\d+|[A-Za-z][A-Za-z'-]+")  # 'I-80' is one code
 # Stems of what the rewrite removes on purpose (text bearing objects), so dropping them is not lost content.
 _TEXT_OBJECT_STEMS = {"sign", "poster", "banner", "plaque", "placard", "billboard", "label", "headline", "caption",
                       "ticket", "text", "lettering", "wording", "word", "read", "say", "written"}
 # Counts are content although STOP lists some of them as filler.
 _COUNT_WORDS = {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
                 "twenty", "dozen", "dozens", "pair", "team", "both", "single", "lone", "hundreds", "thousands"}
+# Count words that say the same count: 'single' rewritten 'one' keeps the count.
+_SAME_COUNT = [{"one", "single", "lone", "sole", "1"}, {"two", "pair", "both", "couple", "twin", "2"}]
+# Pronouns, auxiliaries and generic verbs carry no subject, count, action or relationship of their own.
+_FILLER = {"him", "himself", "herself", "themselves", "we", "us", "our", "you", "your", "me", "my", "someone",
+           "something", "am", "being", "do", "does", "did", "doing", "done", "get", "gets", "getting", "got",
+           "make", "makes", "making", "made", "take", "takes", "taking", "taken", "took", "set", "sets", "setting",
+           "live", "lives", "living", "lit", "show", "shows", "showing", "shown", "seen", "appear", "appears"}
+_APOS = str.maketrans("’‘", "''")
 
 
 def needs_readable_text(shot: Shot) -> bool:
@@ -106,32 +114,82 @@ def needs_readable_text(shot: Shot) -> bool:
 
 
 def _stem(word: str) -> str:
-    if len(word) > 5 and word.endswith(("ing", "ed")):
-        return word[:-3] if word.endswith("ing") else word[:-2]
+    """Plain form for a prefix match: possessive, plural, -ing and -ed go, and a doubled last consonant is
+    undoubled ('hitting' meets 'hit', 'flipping' meets 'flips', 'tiled' meets 'tile', "musher's" meets 'musher')."""
+    word = re.sub(r"'s$", "", word.translate(_APOS))
+    if (len(word) > 5 and word.endswith("ing")) or (len(word) > 4 and word.endswith("ed")):
+        word = word[:-3] if word.endswith("ing") else word[:-2]
+        return word[:-1] if len(word) > 2 and word[-1] == word[-2] and word[-1] not in "aeiouslz" else word
     return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
 
 
-def lost_keep_words(old: str, new: str, keep: list[str]) -> list[str]:
-    """Content words and counts of keep items that the old prompt had and the new one lost. Names and text
-    bearing objects are removed on purpose and never count. A capitalised word is a name, except the first word
-    of an item when the next word is lowercase ('Sled dogs' is content, 'Leonhard Seppala' a name)."""
+def _mid_sentence(word: str, text: str) -> bool:
+    """True when text writes word capitalised after another word of the same sentence."""
+    for m in re.finditer(rf"\b{re.escape(word)}\b", text):
+        before = text[:m.start()].rstrip()
+        if before and before[-1] not in ".!?:;\"":
+            return True
+    return False
+
+
+def _keep_words(keep: list[str], texts: list[str]) -> tuple[list[str], set[str]]:
+    """(content words, names) of the keep items. A capitalised word is a name when it is a possessive, follows
+    another word of its item, is followed by a capitalised word, or the texts (prompt, narration, keep items)
+    capitalise it mid-sentence and never write it lowercase ('Sled dogs' is content; 'Leonhard Seppala',
+    'Seppala's team' and 'Togo' are names). Acronyms and abbreviations ('US', 'I-' of 'I-80') are neither."""
     from ..shots.ideas import STOP
+    texts = [t.translate(_APOS) for t in texts]
     words: list[str] = []
+    names: set[str] = set()
     for item in keep:
-        found = _KEEP_WORD.findall(item)
+        found = _KEEP_WORD.findall(item.translate(_APOS))
         for i, w in enumerate(found):
-            low = w.lower()
-            if w[0].isupper() and (i > 0 or (len(found) > 1 and found[1][0].isupper())):
+            base = re.sub(r"'s$", "", w)
+            low = base.lower()
+            if any(c.isupper() for c in base[1:]) or w.endswith("-") or (re.search(r"\d", w) and not w.isdigit()):
+                continue  # acronym or code ('US', 'TV', 'I-80')
+            if base[0].isupper() and (base != w or i > 0 or (len(found) > 1 and found[1][0].isupper())
+                                      or (any(_mid_sentence(base, t) for t in texts)
+                                          and not any(re.search(rf"\b{re.escape(low)}\b", t) for t in texts))):
+                names.add(base)
                 continue
-            if (low in STOP and low not in _COUNT_WORDS) or _stem(low) in _TEXT_OBJECT_STEMS:
+            if (low in STOP and low not in _COUNT_WORDS) or low in _FILLER or _stem(low) in _TEXT_OBJECT_STEMS:
                 continue
             words.append(w)
+    return words, names
+
+
+def lost_keep_words(old: str, new: str, keep: list[str], narration: str = "") -> list[str]:
+    """Content words and counts of keep items that the old prompt had and the new one lost. Names, acronyms,
+    pronouns, auxiliaries, generic verbs and text bearing objects never count; a count matches its synonyms."""
+    words, _ = _keep_words(keep, [old, narration, *keep])
+    old, new = old.translate(_APOS), new.translate(_APOS)
 
     def has(text: str, w: str) -> bool:
-        stem = _stem(w.lower())
-        return re.search(rf"\b{re.escape(stem)}" + (r"\b" if stem.isdigit() else ""), text, re.I) is not None
+        low = w.lower()
+        forms = next((g for g in _SAME_COUNT if low in g), {low})
+        return any(re.search(rf"\b{re.escape(_stem(f))}" + (r"\b" if f.isdigit() else ""), text, re.I)
+                   for f in forms)
 
     return list(dict.fromkeys(w for w in words if has(old, w) and not has(new, w)))
+
+
+def without_names(text: str, names: set[str]) -> str:
+    """text with every run of capitalised words that holds one of names dropped ('Leonhard Seppala's team'
+    becomes 'team'), so a prompt kept as it was never sends a name to the image model.
+    shortcut: drops only names found in the keep items; a name only the prompt has stays, add the shot's
+    people list if one is ever modelled."""
+    if not names:
+        return text
+
+    def drop(m: re.Match) -> str:
+        return "" if any(re.sub(r"['’]s$", "", t) in names for t in m.group(0).split()) else m.group(0)
+
+    out = re.sub(r"\b[A-Z][\w'’]*(?:\s+[A-Z][\w'’]*)*", drop, text)
+    out = re.sub(r"\s+([,.;:])", r"\1", out)
+    out = re.sub(r"([,;:])(?:\s*[,;:])+", r"\1", out)
+    out = " ".join(re.sub(r"^[\s,;:.]+", "", out).split())
+    return out[:1].upper() + out[1:]
 
 
 def safe_prompt(text: str, ctx: Any, keep: Optional[list[str]] = None, narration: str = "",
@@ -139,26 +197,34 @@ def safe_prompt(text: str, ctx: Any, keep: Optional[list[str]] = None, narration
     """The prompt with named people, brands and readable text rewritten out by the editor seat. Image models
     render names as fake likenesses and text as invented, often wrong, facts. Unchanged when no model answers
     or when the rewrite dropped content of a keep item (a rewrite may change wording, never content).
+    A rewrite that lost keep words is asked once more with them named; the original prompt kept in any
+    fallback goes out without the keep items' names, because sending names is what the rewrite exists to stop.
     problem (the judge's reason on a retry) is context only: it describes the wrong picture, so its words never
     go to the image model as prompt text."""
     keep = keep or []
+    original = without_names(text, _keep_words(keep, [text, narration, *keep])[1])
     user = "\n".join([f"Prompt: {text}"] + ([f"Must keep: {'; '.join(keep)}"] if keep else [])
                      + ([f"Narration: {narration}"] if narration else [])
                      + ([f"Problem: {problem}"] if problem else []))
-    try:
-        raw = ctx.seats.llm_json("editor", "ai_prompt_safety", SAFE_SYSTEM, user, ctx.stage or "judge", temperature=0.2)
-    except Exception as e:  # noqa: BLE001 - the original prompt still goes out; the negatives still apply
-        ctx.log.warn("ai prompt rewrite failed, original prompt kept", error=str(e)[:200])
-        return text
-    new = raw.get("prompt") if isinstance(raw, dict) else None
-    if not (isinstance(new, str) and len(new) > 20):
-        return text
-    new = no_em_dash(" ".join(new.split()))
-    lost = lost_keep_words(text, new, keep)
-    if lost:
-        ctx.log.warn("ai prompt rewrite dropped content, original prompt kept", lost=lost, rewrite=new[:300])
-        return text
-    return new
+    lost: list[str] = []
+    for _ in range(2):
+        ask = user + (f"\nMust keep these words the last rewrite lost: {', '.join(lost)}" if lost else "")
+        try:
+            raw = ctx.seats.llm_json("editor", "ai_prompt_safety", SAFE_SYSTEM, ask, ctx.stage or "judge",
+                                     temperature=0.2)
+        except Exception as e:  # noqa: BLE001 - the original prompt still goes out; the negatives still apply
+            ctx.log.warn("ai prompt rewrite failed, original prompt kept without names", error=str(e)[:200])
+            return original
+        new = raw.get("prompt") if isinstance(raw, dict) else None
+        if not (isinstance(new, str) and len(new) > 20):
+            return original
+        new = no_em_dash(" ".join(new.split()))
+        lost = lost_keep_words(text, new, keep, narration)
+        if not lost:
+            return new
+    ctx.log.warn("ai prompt rewrite dropped content, original prompt kept without names", lost=lost,
+                 rewrite=new[:300])
+    return original
 
 
 def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None, problem: str = "") -> Candidate:
