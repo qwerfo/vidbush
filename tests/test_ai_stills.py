@@ -2,6 +2,7 @@
 every still is judged against the narration and regenerated with the judge's reason, text subjects are flagged."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -93,7 +94,7 @@ def test_rewrite_that_drops_a_keep_item_returns_the_original(make_ctx, monkeypat
     original = "Leonhard Seppala with a team of dogs pulling a sled across sea ice."
     ctx, seen = _ctx_with_rewrite(make_ctx, monkeypatch, "An anonymous musher running beside one dog on sea ice.")
     out = ai_images.safe_prompt(original, ctx, keep=["dog team pulling a sled"], narration=SERUM)
-    assert out == original
+    assert out == "A team of dogs pulling a sled across sea ice."  # the original without the guessed name
     assert "Must keep: dog team pulling a sled" in seen["user"] and f"Narration: {SERUM}" in seen["user"]
 
 
@@ -109,10 +110,129 @@ def test_rewrite_keeps_counts_and_may_drop_text_objects():
     assert lost == ["20"]
     assert ai_images.lost_keep_words("One husky beside a sled.", "A husky beside a sled.", ["one husky"]) == ["one"]
     assert ai_images.lost_keep_words("A man holding a sign reading HELP.", "A man holding a blank board.",
-                                     ["a man holding a sign reading HELP"]) == []
-    # a capitalised first word is content unless the next word is capitalised too
+                                     ["a man holding a sign reading HELP"], names=["HELP"]) == []  # editor named it
+    # a capitalised word is content: only what the editor names is a name
     lost = ai_images.lost_keep_words("Sled dogs resting.", "Huskies resting.", ["Sled dogs resting"])
     assert lost == ["Sled", "dogs"]
+
+
+def test_editor_removed_names_possessives_and_codes_are_never_lost_content():
+    old = "Leonhard Seppala's lead dog Togo beside him on the US trail near I-80."
+    new = "An anonymous musher's lead dog beside a man on a trail near a highway."
+    keep = ["Seppala's lead dog", "Togo beside him", "US trail", "I-80"]
+    assert ai_images.lost_keep_words(old, new, keep, names=["Leonhard Seppala", "Togo"]) == []
+    assert ai_images.lost_keep_words("José Martí beside a Müller sled.", "A man beside a sled.",
+                                     ["José Martí beside a Müller sled"], names=["José Martí", "Müller"]) == []
+
+
+def test_a_capitalised_content_word_is_still_content():
+    assert ai_images.lost_keep_words("A musher with Sled dogs on ice.", "A musher with dogs on ice.",
+                                     ["Sled dogs"], names=[]) == ["Sled"]
+
+
+def test_count_synonyms_forms_pronouns_and_auxiliaries_are_not_lost():
+    assert ai_images.lost_keep_words("A single loaded tanker truck.", "One loaded tanker truck.",
+                                     ["single loaded tanker truck"]) == []
+    assert ai_images.lost_keep_words("Three huskies.", "3 huskies.", ["three huskies"]) == []
+    assert ai_images.lost_keep_words("4 huskies.", "Four huskies.", ["4 huskies"]) == []
+    assert ai_images.lost_keep_words("Notes being taken by a crowd around him at sun setting.",
+                                     "A crowd taking notes around a man at dusk.",
+                                     ["notes being taken", "crowd around him", "sun setting"]) == ["sun"]
+    assert ai_images.lost_keep_words("A sled flipping, hands digging, waves hitting tiled walls.",
+                                     "A sled flips, hands dig, waves hit tile walls.",
+                                     ["sled flipping", "hands digging", "waves hitting tiled walls"]) == []
+    assert ai_images.lost_keep_words("The musher's hands.", "The musher’s gloved hands.", ["musher's hands"]) == []
+    assert ai_images.lost_keep_words("The sleds' runners on sea-ice.", "Sled runners on sea ice.",
+                                     ["sleds' runners", "sea-ice"]) == []
+    assert ai_images.lost_keep_words("A hut lit by candles.", "A dark hut.", ["hut lit by candles"]) == ["lit", "candles"]
+
+
+def test_a_dog_team_rewritten_to_one_dog_is_still_lost():
+    assert ai_images.lost_keep_words("A dog team pulling a sled.", "One dog pulling a sled.",
+                                     ["dog team pulling a sled"]) == ["team"]
+
+
+def _ctx_answers(make_ctx, monkeypatch, answers: list[Any]):
+    ctx = make_ctx()
+    asked: list[str] = []
+
+    def fake_llm(role, task, system, user, stage, temperature=0.6, timeout=0):
+        asked.append(user)
+        a = answers[min(len(asked), len(answers)) - 1]
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    monkeypatch.setattr(ctx.seats, "llm_json", fake_llm)
+    return ctx, asked
+
+
+def test_lost_words_get_one_retry_that_never_asks_for_a_name(make_ctx, monkeypatch):
+    answers = [{"prompt": "An anonymous musher beside one dog on sea ice.", "removed": ["Seppala"]},
+               {"prompt": "An anonymous musher with a dog team pulling a sled on sea ice.", "removed": ["Seppala"]}]
+    ctx, asked = _ctx_answers(make_ctx, monkeypatch, answers)
+    out = ai_images.safe_prompt("Seppala with a dog team pulling a sled on sea ice.", ctx,
+                                keep=["Seppala", "dog team pulling a sled"])
+    assert out == answers[1]["prompt"]
+    hint = asked[1].splitlines()[-1]
+    assert len(asked) == 2 and hint.startswith("Must keep these words the last rewrite lost:")
+    assert "team" in hint and "Seppala" not in hint
+
+
+def test_a_rewrite_that_keeps_a_removed_name_is_rejected(make_ctx, monkeypatch):
+    answer = {"prompt": "Togo leading a team of dogs pulling a sled across sea ice.", "removed": ["Togo"]}
+    ctx, asked = _ctx_answers(make_ctx, monkeypatch, [answer])
+    out = ai_images.safe_prompt("Togo leading a team of dogs pulling a sled across sea ice.", ctx,
+                                keep=["Togo leading a team of dogs"])
+    assert len(asked) == 2 and "Remove what the last rewrite still named: Togo" in asked[1]
+    assert "Togo" not in out and "team of dogs pulling a sled across sea ice" in out
+
+
+def test_a_fallback_left_too_short_uses_the_rewrite(make_ctx, monkeypatch):
+    answer = {"prompt": "An anonymous musher and his lead dog on frozen sea at dusk.", "removed": ["Seppala", "Togo"]}
+    ctx, _ = _ctx_answers(make_ctx, monkeypatch, [answer])
+    assert ai_images.safe_prompt("Seppala and Togo on the ice.", ctx,
+                                 keep=["Seppala and Togo on the ice"]) == answer["prompt"]
+
+
+def test_the_old_answer_shape_is_still_accepted(make_ctx, monkeypatch):
+    original = "Leonhard Seppala with a team of dogs pulling a sled across sea ice."
+    rewrite = "An anonymous musher with a team of dogs pulling a sled across sea ice."
+    keep = ["Leonhard Seppala", "team of dogs pulling a sled"]
+    for answer in (rewrite, {"prompt": rewrite}):
+        ctx, _ = _ctx_answers(make_ctx, monkeypatch, [answer])
+        assert ai_images.safe_prompt(original, ctx, keep=keep) == rewrite
+    # the heuristic still scans an old shape answer for names
+    ctx, _ = _ctx_answers(make_ctx, monkeypatch, [{"prompt": original}])
+    assert "Seppala" not in ai_images.safe_prompt(original, ctx, keep=keep)
+
+
+LEAKS = [  # original, keep, what the editor removed, name pieces that must not reach the image model
+    ("McDonald drives the team across the ice at dusk.", ["McDonald driving the team"], ["McDonald"], {"McDonald"}),
+    ("O'Brien rides a sled across the ice at dusk.", ["O'Brien riding a sled"], ["O'Brien"], {"Brien"}),
+    ("JOHN SMITH rides a sled across the ice at dusk.", ["a sled"], ["JOHN SMITH"], {"JOHN", "SMITH"}),
+    ("Jean-Luc Picard steers a sled across the ice at dusk.", ["a sled"], ["Jean-Luc Picard"],
+     {"Jean", "Luc", "Picard"}),
+    ("Seppala runs a sled team across the ice at dusk.", ["Seppala"], ["Seppala"], {"Seppala"}),
+    ("José Martí rides beside a Müller sled across the ice.", ["a sled"], ["José Martí", "Müller"],
+     {"José", "Martí", "Müller"}),
+    ("Leonhard Seppala with Togo leading a team of dogs pulling Seppala's sled across sea ice.",
+     ["Leonhard Seppala", "Togo leading a team of dogs pulling a sled", "Seppala's sled"],
+     ["Leonhard Seppala", "Togo"], {"Leonhard", "Seppala", "Togo"}),
+]
+
+
+@pytest.mark.parametrize("answer", ["json", None, "boom"])
+@pytest.mark.parametrize("original, keep, removed, names", LEAKS)
+def test_no_prompt_sent_to_the_image_model_carries_a_name(make_ctx, monkeypatch, original, keep, removed, names,
+                                                         answer):
+    replies = {"json": [{"prompt": "An anonymous person on a frozen plain at dusk, wide view.", "removed": removed}],
+               None: [None], "boom": [RuntimeError("editor down")]}[answer]
+    ctx, _ = _ctx_answers(make_ctx, monkeypatch, replies)
+    out = ai_images.safe_prompt(original, ctx, keep=keep)
+    assert not names & set(re.findall(r"[^\W\d_]+", out)), out
+    assert len(out.split()) >= 4 and not out.startswith(("And ", "With ", ",", "'")), out
+    assert chr(0x2014) not in out
 
 
 @pytest.mark.parametrize("text, is_text", [
