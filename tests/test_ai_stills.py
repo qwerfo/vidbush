@@ -396,3 +396,9 @@ def test_mock_roles_from_packaging_reach_the_qa_report(make_ctx):
     used = read_json(ctx.root / "qa_report.json")["mock_used"]
     assert "image" in used and used == sorted(used)
     assert "Mock seats: " in (ctx.root / "qa_report.md").read_text(encoding="utf-8")
+
+
+def test_without_names_ignores_the_casing_the_editor_used():
+    from vidbush.visuals.ai_images import without_names
+    out = without_names("Seppala drives the dog team across sea ice at dusk.", ["SEPPALA"])
+    assert "seppala" not in out.lower() and "dog team" in out

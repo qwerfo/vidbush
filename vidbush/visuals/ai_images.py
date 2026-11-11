@@ -240,7 +240,7 @@ def without_names(text: str, names: Any) -> str:
         return text
     out = text.translate(_APOS)
     for n in sorted(names, key=len, reverse=True):
-        out = re.sub(rf"(?<!\w){re.escape(n.translate(_APOS))}(?:'s|')?(?!\w)", " ", out)
+        out = re.sub(rf"(?<!\w){re.escape(n.translate(_APOS))}(?:'s|')?(?!\w)", " ", out, flags=re.I)  # the editor may list a name in other casing
     for _ in range(3):
         out = re.sub(r"\s+([,.;:!?])", r"\1", out)
         out = re.sub(r"([,;:])(?:\s*[,;:])+", r"\1", out)
