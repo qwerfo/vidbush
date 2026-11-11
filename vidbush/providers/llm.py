@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 from PIL import Image
 
-from .base import CallResult, ProviderSpec, RefusalError
+from .base import POLICY_WORDS, CallResult, ProviderSpec, RefusalError
 from .http import get_json, post_json, post_stream
 
 _LOG = logging.getLogger(__name__)
@@ -58,8 +58,6 @@ VISION_MAX_SIDE = 640
 _TRUNCATED = {"length", "max_tokens"}
 CONTINUE_PROMPT = ("Your previous reply was cut off. Continue exactly where it stopped, without repeating "
                    "anything and without any preamble, so that appending your text completes the reply.")
-_POLICY_WORDS = ("safety", "content policy", "content_policy", "flagged", "moderation", "content_filter",
-                 "violat", "prohibited")
 _PARAM_RE = re.compile(r'"param"\s*:\s*"([^"]+)"')
 
 _CONTENT_RE = re.compile(r"<content>\s*(.*?)\s*(?:</content>|$)", re.S)
@@ -210,7 +208,7 @@ def _truncated(data: dict[str, Any]) -> bool:
 def _learn(key: tuple[str, str], err: str, have: set[str]) -> bool:
     """Learn one request adjustment from a 400. Content policy errors never teach a quirk."""
     low = err.lower()
-    if any(w in low for w in _POLICY_WORDS):
+    if any(w in low for w in POLICY_WORDS):
         return False
     m = _PARAM_RE.search(err)
     if m and _PARAM_QUIRK.get(m.group(1)) and _PARAM_QUIRK[m.group(1)] not in have:

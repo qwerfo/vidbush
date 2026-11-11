@@ -8,7 +8,7 @@ import pytest
 
 from vidbush.providers import model_resolve, seats as seats_mod
 from vidbush.providers.base import (HEALTH, CallResult, CostTracker, ProviderClient, ProviderError, ProviderSpec,
-                                    RefusalError, SeatUnavailable, http_error_to_exc)
+                                    RateLimitError, RefusalError, SeatUnavailable, http_error_to_exc)
 
 WELLFLOW_IDS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-opus-5", "gemini-3.8-flash",
                 "grok-4.7"]
@@ -208,12 +208,41 @@ def test_seat_errors_are_told_from_request_errors() -> None:
     for status, body in [(401, "invalid api key"), (402, "payment required"), (403, "forbidden"),
                          (403, '{"error": {"code": "model_not_in_channel"}}'),
                          (400, "You have reached your specified API usage limits until 2026-12-01"),
-                         (400, "Your credit balance is too low")]:
+                         (400, "Your credit balance is too low"),
+                         (429, '{"error": {"code": "insufficient_quota", "message": "You exceeded your current quota"}}'),
+                         (429, "You have reached your specified API usage limits")]:
         assert isinstance(http_error_to_exc(status, body), SeatUnavailable), (status, body)
     for status, body in [(400, "request violates the content policy"), (403, "blocked by moderation"),
+                         (403, "request violates our usage guidelines"), (403, "Input flagged: prohibited content"),
                          (400, "bad request: messages missing"), (404, "not found")]:
         e = http_error_to_exc(status, body)
         assert isinstance(e, RefusalError) and not isinstance(e, SeatUnavailable), (status, body)
+    # a rate window, including a per minute quota, is waited out and never marks the seat down
+    for body in ["Rate limit reached for requests", "RESOURCE_EXHAUSTED: Quota exceeded for metric per minute"]:
+        assert type(http_error_to_exc(429, body)) is RateLimitError, body
+
+
+def test_every_adapter_shares_one_policy_word_list() -> None:
+    from vidbush.providers import base, llm, llm_anthropic, tts_elevate
+    assert llm.POLICY_WORDS is llm_anthropic.POLICY_WORDS is tts_elevate.POLICY_WORDS is base.POLICY_WORDS
+
+
+def test_tts_engine_is_the_first_seat_not_held_down(settings, monkeypatch) -> None:
+    settings.offline = False
+    settings.seats = {"roles": {"tts": [{"provider": "elevenlabs", "model": "eleven_v4"},
+                                        {"provider": "elevate_tts", "model": "eleven_v4"}]},
+                      "providers": {"elevenlabs": {"type": "elevenlabs", "key_env": "ELEVENLABS_API_KEY"},
+                                    "elevate_tts": {"type": "elevate_tts", "key_env": "ELEVATE_API_KEY"}}}
+    settings.env = {"ELEVENLABS_API_KEY": "k", "ELEVATE_API_KEY": "k"}
+    seats = seats_mod.Seats(settings, CostTracker("p"), Log())
+    try:
+        assert seats.tts_engine() == "elevenlabs"
+        HEALTH.mark_down("elevenlabs:eleven_v4")
+        assert seats.tts_engine() == "elevate_tts" and seats.tts_engine() == "elevate_tts"  # no probe used
+        monkeypatch.setattr("vidbush.providers.base.time.time", lambda: 1e12)  # the probe window opens
+        assert seats.tts_engine() == "elevenlabs"
+    finally:
+        HEALTH.mark_up("elevenlabs:eleven_v4")
 
 
 def test_seat_error_marks_the_seat_down_and_a_request_error_does_not() -> None:

@@ -7,6 +7,7 @@ Elevate fronts ElevenLabs behind its media task API (billed against the Elevate 
          -> {success, data: {id, status}}
     GET  {base}/v2/media/{id}?type=tts -> {success, data: {id, status, result_url}}; poll until terminal
     GET  result_url                  -> the MP3 bytes (hosted link, no auth)
+    GET  {base}/v2/media/usage       -> {success, data} with the Bearer key (the probe checks the key)
     GET  {base}/v2/media/health      -> data.tts.status (the probe; "operational" when the lane works)
 
 Errors arrive two ways: a real HTTP status, or HTTP 200 {success: false, error: {code, message}}.
@@ -227,21 +228,23 @@ def synthesize(spec: ProviderSpec, text: str, voice_id: str, model: str, out_pat
 
 
 def probe(spec: ProviderSpec, timeout: float = 120.0) -> str:
-    """GET /v2/media/health and require data.tts.status operational (no audio is made).
+    """GET /v2/media/usage with the key (health alone never rejects a bad key), then GET /v2/media/health and
+    require data.tts.status operational (no audio is made).
 
     A degraded lane fails the probe (RadioPlay saw "degraded", success_rate 60.0, on 05/09/2026). A reply
     without a tts entry is judged on the HTTP status alone.
     """
-    data = unwrap(get_json(f"{_base(spec)}/v2/media/health", headers={"Authorization": f"Bearer {spec.api_key}"},
-                           timeout=timeout), "media health")
+    auth = {"Authorization": f"Bearer {spec.api_key}"}
+    unwrap(get_json(f"{_base(spec)}/v2/media/usage", headers=auth, timeout=timeout), "media usage")
+    data = unwrap(get_json(f"{_base(spec)}/v2/media/health", headers=auth, timeout=timeout), "media health")
     tts = data.get("tts") if isinstance(data, dict) else None
     if not isinstance(tts, dict):
-        return f"health ok (no tts entry); model {resolve_model(spec, 'auto')}"
+        return f"auth ok; health ok (no tts entry); model {resolve_model(spec, 'auto')}"
     status = str(tts.get("status", "")).lower()
     if status != "operational":
         raise TransportError(f"Elevate tts {status or 'unknown'}: success_rate {tts.get('success_rate')}, "
                              f"queue {tts.get('queue')}")
-    return f"tts lane {status}; model {resolve_model(spec, 'auto')}"
+    return f"auth ok; tts lane {status}; model {resolve_model(spec, 'auto')}"
 
 
 def reset() -> None:

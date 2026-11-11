@@ -152,15 +152,22 @@ def test_task_running_at_the_deadline_is_resumed_not_paid_twice(tmp_path: Path, 
     assert r.value[0].read_bytes() == MP3
 
 
-def test_probe_needs_the_tts_lane_operational(monkeypatch) -> None:
-    replies = [{"success": True, "data": {"tts": {"status": "operational"}}},
-               {"success": True, "data": {"tts": {"status": "degraded", "success_rate": 60.0}}}]
-    seen: list[str] = []
-    monkeypatch.setattr(tts_elevate, "get_json", lambda url, headers=None, timeout=0: seen.append(url) or replies.pop(0))
-    assert "operational" in probe_mod.probe_spec("tts", _spec())
+def test_probe_checks_the_key_then_needs_the_tts_lane_operational(monkeypatch) -> None:
+    usage = {"success": True, "data": {"used": 1}}
+    replies = [usage, {"success": True, "data": {"tts": {"status": "operational"}}},
+               usage, {"success": True, "data": {"tts": {"status": "degraded", "success_rate": 60.0}}},
+               {"success": False, "error": {"code": "UNAUTHORIZED", "message": "invalid api key"}}]
+    seen: list[tuple[str, Any]] = []
+    monkeypatch.setattr(tts_elevate, "get_json",
+                        lambda url, headers=None, timeout=0: seen.append((url, headers)) or replies.pop(0))
+    assert "auth ok; tts lane operational" in probe_mod.probe_spec("tts", _spec())
     with pytest.raises(TransportError, match="degraded"):
         tts_elevate.probe(_spec())
-    assert seen == [f"{BASE}/v2/media/health"] * 2
+    with pytest.raises(SeatUnavailable):  # a bad key fails the probe even while the lane is healthy
+        tts_elevate.probe(_spec())
+    assert [u for u, _ in seen] == [f"{BASE}/v2/media/usage", f"{BASE}/v2/media/health"] * 2 + [
+        f"{BASE}/v2/media/usage"]
+    assert all(h["Authorization"].startswith("Bearer ") for _, h in seen)
 
 
 def test_registered_and_seats_log_the_model_once(settings, tmp_path: Path, monkeypatch) -> None:

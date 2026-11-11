@@ -365,6 +365,14 @@ class Seats:
                 return p.options.get(key, default)
         return default
 
+    def tts_engine(self) -> str:
+        """Name of the tts seat the next request goes to: the first configured one HEALTH does not hold down
+        ("" when none). Narration keeps every chunk of one video on this provider."""
+        for p in self.providers_for("tts"):
+            if p.configured and not HEALTH.is_held(f"{p.name}:{p.model}"):
+                return p.name
+        return ""
+
     def tts(self, text: str, voice: VoiceConfig, out_path: Path, stage: str, language: str = "",
             previous_text: str = "", next_text: str = "") -> tuple[Path, Optional[list[dict]], bool, str]:
         """Synthesize narration. Returns (audio_path, words or None, is_mock, engine)."""

@@ -652,11 +652,19 @@ in 10f before the first real run.
   MP3. The request timeout is 400 s plus 0.002 s a character, capped at
   `timeout_s` (600). A 429 for the concurrent limit is waited out, and a task
   still running at its deadline is resumed by the retry instead of paid twice.
-  Subscription: 0 USD per call. `doctor --probe` reads `/v2/media/health`.
+  Subscription: 0 USD per call. `doctor --probe` reads `/v2/media/usage`
+  with the key, then `/v2/media/health`.
 - **The model that spoke** is returned by every TTS adapter and logged once per
   run ("tts model", provider, model). Each narration chunk gets the previous
   and next chunk's text (`previous_text`, `next_text`); ElevenLabs sends them
   for models that take them (eleven_v4), the job APIs ignore them.
+- **One narrator per video.** A cached chunk counts only when the tts seat that
+  serves now (`Seats.tts_engine`) made it. When a seat goes down mid run, the
+  chunks from the other provider are made again on the serving seat; still
+  mixed raises ProviderError. A re-narrated beat (ops rewrite_beat) from another
+  provider than the narration's raises, and it gets its neighbours' text too.
+- **Spent balance on 429.** A 429 naming insufficient, usage limit or credit
+  balance is SeatUnavailable (marked down), not a rate limit to wait out.
 - **Voice ids per provider.** Brand yaml: `voice.voice_id` is the default,
   `voice.voice_ids` maps a tts provider name to its own id. The default brand
   uses Brian (`nPczCjzI2devNBz1zQrb`) on ElevenLabs and George

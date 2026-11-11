@@ -186,5 +186,6 @@ live from Vidbush. Check with `python -m vidbush.live_probe seats` and the probe
   {"used": 3, "limit": 3}}` is the concurrent limit: waited out, not a rate limit. A plain 429 retries 4 times.
 - A task still running at its deadline keeps a lane slot; the retry polls that task instead of submitting again.
 - A task that failed with "Voice not available" is the request's fault (a refusal), not an outage.
-- Probe: `GET /v2/media/health`, `data.tts.status` must be `operational` (RadioPlay saw `degraded` with success_rate
+- Probe: `GET /v2/media/usage` with the Bearer key first (health never rejects a bad key, as the image probe
+  found), then `GET /v2/media/health`, `data.tts.status` must be `operational` (RadioPlay saw `degraded` with success_rate
   60.0 on 05/09/2026).
