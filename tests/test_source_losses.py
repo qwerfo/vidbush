@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from vidbush.models import Shot, ShotList, ShotType
-from vidbush.source import base, registry, throttle
+from vidbush.models import Candidate, Shot, ShotList, ShotType, SourceKind
+from vidbush.source import base, registry, throttle, youtube
 from vidbush.source.base import RawResult
 
 
@@ -119,13 +119,26 @@ def test_era_mismatch_stays_a_hard_drop_also_for_cached_results(make_ctx) -> Non
 
 @pytest.mark.parametrize("a,b", [("dogs", "dog"), ("planes", "plane"), ("Alaskan", "Alaska"), ("Alaskans", "alaska"),
                                  ("cities", "city"), ("boxes", "box"), ("churches", "church"), ("mining", "mine"),
-                                 ("constructions", "construction"), ("ships", "ship")])
+                                 ("constructions", "construction"), ("ships", "ship"), ("movies", "movie"),
+                                 ("prairies", "prairie"), ("bushes", "bush"), ("dancing", "dance")])
 def test_plural_and_plain_forms_share_a_stem(a: str, b: str) -> None:
     assert base._stem(a) == base._stem(b)
 
 
 def test_words_ending_in_s_that_are_not_plurals_keep_it() -> None:
     assert base._stem("glass") == "glass" and base._stem("bus") == "bus" and base._stem("virus") == "virus"
+
+
+@pytest.mark.parametrize("a,b", [("plane", "plan"), ("planes", "plan"), ("mine", "min"), ("notes", "not"),
+                                 ("cane", "can"), ("here", "her")])
+def test_a_stem_never_turns_a_word_into_another_common_word(a: str, b: str) -> None:
+    assert base._stem(a) != base._stem(b)
+
+
+def test_short_title_words_are_no_match_for_long_e_query_words() -> None:
+    assert base.relevance("bush plane landing", raw("Alaska Travel Plan 2024")) == 0.0
+    assert base.relevance("gold mine Alaska", raw("Gold price update in 5 min")) == pytest.approx(1 / 3)
+    assert base.relevance("prairies Kansas", raw("prairie dog")) == 0.5
 
 
 # C. a shot shares only the budgets of the sources it can search
@@ -197,3 +210,154 @@ def test_fetch_drops_are_logged_with_shot_and_reason(make_ctx) -> None:
     assert [(m, kw["shot"], kw["reason"]) for m, kw in log.lines] == [
         ("source result dropped", "s000", "480p is below the 720p floor"),
         ("source result dropped", "s000", "no usable file")]
+
+
+# G. a search is charged only when it was sent: every pass, every 429 retry
+
+def test_throttled_prefer_cc_search_refunds_both_passes(make_ctx) -> None:
+    ctx = make_ctx(mode="script")
+    ctx.brand.licence_policy.prefer_creative_commons = True
+
+    class Cooling(Fake):
+        search_hints = ("prefer_cc",)
+
+        def search(self, query, media, n, settings, shot=None, **kw):
+            assert kw.get("prefer_cc")
+            raise throttle.Throttled("youtube cooling down after a rate limit (300s left)")
+
+    registry._search_one(Cooling("youtube", frozenset({"video"})), "canal", "video", 5, _shot(0), ctx)
+    assert throttle.usage(registry.run_id(ctx))["youtube"]["used"] == 0
+
+
+def test_youtube_counts_the_creative_commons_pass_it_sent(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def extract(target, opts):
+        calls.append(target)
+        if len(calls) == 2:
+            raise throttle.Throttled("youtube: rate limit: next slot in 200s")
+        return {"entries": []}
+
+    def cooling(target, opts):
+        raise throttle.Throttled("youtube cooling down")
+
+    monkeypatch.setattr(youtube, "cookie_opts", lambda s: {})
+    monkeypatch.setattr(youtube, "ydl_extract", extract)
+    with pytest.raises(throttle.Throttled) as e:
+        youtube.YoutubeAdapter().search("canal", "video", 5, None, prefer_cc=True)
+    assert e.value.sent == 1  # the CC pass went out, the normal pass did not
+    monkeypatch.setattr(youtube, "ydl_extract", cooling)
+    with pytest.raises(throttle.Throttled) as e:  # the CC pass no longer swallows a throttle
+        youtube.YoutubeAdapter().search("canal", "video", 5, None, prefer_cc=True)
+    assert e.value.sent == 0
+
+
+def test_throttled_retry_after_a_429_is_not_refunded(make_ctx) -> None:
+    from vidbush.providers.base import RateLimitError
+
+    def call():
+        raise RateLimitError("429 Too Many Requests", retry_after=30)
+
+    with pytest.raises(throttle.Throttled) as e:
+        base._rate_limited(call, "https://api.example.test/search")
+    assert e.value.sent == 1  # the first attempt reached the host; the 30 s cooldown stopped the retry
+
+    ctx = make_ctx(mode="script")
+
+    class Sent429(Fake):
+        def search(self, query, media, n, settings, shot=None, **kw):
+            err = throttle.Throttled("cooling")
+            err.sent = 1
+            raise err
+
+    registry._search_one(Sent429(), "canal", "video", 5, _shot(0), ctx)
+    assert throttle.usage(registry.run_id(ctx))["pexels"]["used"] == 1
+
+
+# H. the leftover pass resends only what was not sent, and keeps the still shots' fallback search
+
+class Down(Fake):
+    def search(self, query, media, n, settings, shot=None, **kw):
+        self.calls.append((shot.id, query))
+        raise RuntimeError("HTTPSConnectionPool(host='archive.org'): Read timed out. (read timeout=30)")
+
+
+def test_a_failed_search_is_not_sent_again_in_the_leftover_pass(make_ctx, monkeypatch) -> None:
+    ctx = make_ctx(mode="script")
+    down = Down("archive")
+    monkeypatch.setattr(registry, "active_adapters", lambda c: [down])
+    registry.source_all(_shotlist([_shot(i) for i in range(3)]), ctx)
+    assert len(down.calls) == 9
+
+
+class OffTopicStills(Fake):
+    def search(self, query, media, n, settings, shot=None, **kw):
+        return [RawResult(source=self.name, url=f"https://w/{shot.id}/{query.replace(' ', '_')}.jpg",
+                          title="State of the Union Address 2010", media="image", score=0.8)]
+
+    def fetch(self, raw, out_dir, shot, settings):
+        self.calls.append((shot.id, raw.title))
+        return [Candidate(id="x", source=SourceKind.wikimedia, url=raw.url, media="image", title=raw.title)]
+
+
+class Frames(Fake):
+    def fetch(self, raw, out_dir, shot, settings):
+        return [Candidate(id="y", source=SourceKind.youtube, url=raw.url, media="video", title=raw.title)]
+
+
+def _no_files(monkeypatch) -> None:
+    monkeypatch.setattr(registry, "finalize", lambda shot, cands, ctx, taken=(): cands)
+    monkeypatch.setattr(registry, "_still_from_video", lambda c, d: c.model_copy(update={"media": "image"}))
+
+
+def test_leftover_pass_keeps_one_search_per_unmatched_still_shot(make_ctx, monkeypatch) -> None:
+    ctx = make_ctx(mode="script")
+    _no_files(monkeypatch)
+    stills, yt = OffTopicStills("wikimedia", frozenset({"image"})), Frames("youtube", frozenset({"video"}))
+    monkeypatch.setattr(registry, "active_adapters", lambda c: [stills, yt])
+    throttle.STATE.budget["youtube"] = 3
+    shots = [_shot(0), _shot(1), _shot(2, ShotType.image)]
+    n = registry._per_adapter_n(yt, ctx.settings.sources.max_candidates)
+    for i, q in enumerate(shots[0].queries):  # s000 is served from the cache: s001 gets 1 search, defers 2
+        registry.cache_put("youtube", q, "video", n, [raw(q, i)], ctx.settings)
+    registry.source_all(_shotlist(shots), ctx)
+    assert [q for sid, q in yt.calls if sid == "s001"] == shots[1].queries[:2]  # one deferred query held back
+    assert [sid for sid, _q in yt.calls].count("s002") == 1  # the still shot's frame search got it
+    assert {c.source for c in shots[2].candidates} == {SourceKind.youtube}
+
+
+# I. off-topic results never block a match and never fill a shot
+
+def test_off_topic_stills_do_not_block_on_topic_video_frames(make_ctx, monkeypatch) -> None:
+    ctx = make_ctx(mode="script")
+    _no_files(monkeypatch)
+    stills, yt = OffTopicStills("wikimedia", frozenset({"image"})), Frames("youtube", frozenset({"video"}))
+    monkeypatch.setattr(registry, "active_adapters", lambda c: [stills, yt])
+    shot = _shot(0, ShotType.image)
+    registry.source_all(_shotlist([shot]), ctx)
+    assert shot.candidates and all(c.source == SourceKind.youtube for c in shot.candidates)
+    assert not stills.calls  # the off-topic still was never downloaded
+
+
+class OffTopicVideos(Frames):
+    def search(self, query, media, n, settings, shot=None, **kw):
+        return [RawResult(source=self.name, url=f"https://y/{query.replace(' ', '_')}/{i}", title=t,
+                          media="video", score=0.6)
+                for i, t in enumerate(["SpanishPod Archive", "Lofi beats to study", "Minecraft gameplay"])]
+
+    def fetch(self, raw, out_dir, shot, settings):
+        self.calls.append((shot.id, raw.title))
+        return super().fetch(raw, out_dir, shot, settings)
+
+
+def test_a_shot_with_only_off_topic_results_gets_a_few_flagged_fillers(make_ctx, monkeypatch) -> None:
+    ctx = make_ctx(mode="script")
+    _no_files(monkeypatch)
+    yt = OffTopicVideos("youtube", frozenset({"video"}))
+    monkeypatch.setattr(registry, "active_adapters", lambda c: [yt])
+    shot = _shot(0)
+    registry.source_all(_shotlist([shot]), ctx)
+    few = max(1, ctx.settings.sources.max_candidates // 4)
+    assert len(yt.calls) == few and len(shot.candidates) == few
+    assert all("off_topic" in c.flags for c in shot.candidates)
+    assert not registry._has_sourced(shot)  # the next run sources it again with a fresh budget

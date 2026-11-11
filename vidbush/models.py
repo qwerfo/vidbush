@@ -423,7 +423,7 @@ class Candidate(Model):
     score: Optional[float] = None
     judge_reason: str = ""
     reject_reason: Optional[str] = None
-    flags: list[str] = Field(default_factory=list)  # nc_nd, mock, judge_mock, low_res, anachronism, depthflow, fixture_rotation, frame_grab
+    flags: list[str] = Field(default_factory=list)  # nc_nd, mock, judge_mock, low_res, anachronism, depthflow, fixture_rotation, frame_grab, off_topic
     crop: Optional[list[float]] = None  # derived framing [x, y, w, h] in 0..1
 
 

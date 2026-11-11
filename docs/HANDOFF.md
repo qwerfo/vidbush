@@ -771,10 +771,13 @@ and a warning when a budget ran out.
 Since run 2: a shot shares only the budgets of sources that serve its media
 (still shots hold no YouTube share); a search the host throttled before
 sending is refunded, so "used" counts sent searches; after the rounds, shots
-still short run their queries once more on sources with budget left (answered
-queries come from the cache for free). Results below the relevance threshold
+still short send again the searches that were deferred or throttled, on
+sources with budget left after one search per unmatched still shot is held
+back for its video frame fallback. Results below the relevance threshold
 (one in three of the query's specific words) are kept as fillers after the
-matches instead of being dropped, and every result a fetch refuses (for
+matches instead of being dropped; a shot with no match fetches at most
+max(1, cap // 4) of them, flagged `off_topic`, and is sourced again on the
+next run. Every result a fetch refuses (for
 example a YouTube video under the 720p floor) is logged as
 `source result dropped` with the shot and the reason.
 

@@ -51,7 +51,9 @@ DEFAULT_BUDGET: dict[str, int] = {"pexels": 150, "pixabay": 600, "loc": 300, "yo
 
 
 class Throttled(Exception):
-    """A request was not sent: the host is cooling down, over its rate, or the budget is spent."""
+    """A request was not sent: the host is cooling down, over its rate, or the budget is spent.
+    sent counts the requests of the same search that went out before it (a 429 retry, a second pass)."""
+    sent = 0
 
 
 class TokenBucket:
