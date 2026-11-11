@@ -827,16 +827,17 @@ _TEEN_W = "ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eightee
 _TENS_W = "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety"
 _SPOKEN_YEAR_RE = re.compile(
     r"\b(?:two[\s-]+thousand(?:\s+and)?[\s-]+(?P<t>(?:%s)(?:[\s-]+(?:%s))?|%s|%s)"
-    r"|(?P<h>%s|twenty)[\s-]+(?P<r>hundred|oh[\s-]+(?:%s)|(?:%s)(?:[\s-]+(?:%s))?|%s))\b"
+    r"|(?P<h>%s|twenty)[\s-]+(?P<r>oh[\s-]+(?:%s)|(?:%s)(?:[\s-]+(?:%s))?|%s))\b"
     r"(?![\s-]+(?:hundred|thousand|million|billion))" % (_TENS_W, _UNIT_W, _TEEN_W, _UNIT_W, _TEEN_W, _UNIT_W,
                                                           _TENS_W, _UNIT_W, _TEEN_W), re.I)
 
 
-def _spoken_years_to_digits(text: str) -> str:
+def spoken_years_to_digits(text: str) -> str:
     """'two thousand seven' -> '2007', 'nineteen fifty-nine' -> '1959', 'eighteen oh five' -> '1805': a year
-    read aloud is a year, not the count spelled_to_digits would make of it ('2,007', '78')."""
+    read aloud is a year, not the count spelled_to_digits would make of it ('2,007', '78'). '<teen> hundred'
+    stays a count ('fifteen hundred soldiers'): that is how a quantity from 1,100 to 1,999 is said."""
     def value(words: str) -> int:
-        return _words_value([w for w in re.split(r"[\s-]+", words.lower()) if w not in ("oh", "and", "hundred")]) or 0
+        return _words_value([w for w in re.split(r"[\s-]+", words.lower()) if w not in ("oh", "and")]) or 0
 
     def repl(m: re.Match) -> str:
         if m.group("t"):
@@ -847,10 +848,10 @@ def _spoken_years_to_digits(text: str) -> str:
 
 def number_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research], palette: str) -> Optional[VisualIdea]:
     """Number card for the most striking number (count up) or, failing that, the year. Years read aloud count
-    as years (_spoken_years_to_digits), never as a quantity."""
+    as years (spoken_years_to_digits), never as a quantity."""
     from ..mg import builders as b
     facts = research.facts if research else []
-    text = _spoken_years_to_digits(bc.beat.text)
+    text = spoken_years_to_digits(bc.beat.text)
     numbers = [n for n in extract_numbers(text) if not n.is_year]
     years = extract_years(text)
     if numbers:

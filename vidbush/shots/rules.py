@@ -451,8 +451,8 @@ def _norm(word: str) -> str:
 
 
 def cue_times(spec: MotionSpec, words: Sequence[Word]) -> list[float]:
-    """Start times of the words that speak a card's key text: a number card's number (digits or spelled out,
-    up to four words), else the first content word of the card's title."""
+    """Start times of the words that speak a card's key text: a number card's number (digits, a year read
+    aloud or a spelled out count, up to four words), else the first content word of the card's title."""
     p = spec.payload
     if spec.kind != MotionKind.number_card:
         key = next((t for t in map(_norm, str(p.get("title", "")).split()) if len(t) > 2 and t not in I.STOP), "")
@@ -464,7 +464,8 @@ def cue_times(spec: MotionSpec, words: Sequence[Word]) -> list[float]:
     out: list[float] = []
     for i, w in enumerate(words):
         for n in range(1, 5):
-            said = _SAID_NUMBER_RE.fullmatch(I.spelled_to_digits(" ".join(_norm(x.text) for x in words[i:i + n])))
+            said = " ".join(_norm(x.text) for x in words[i:i + n])
+            said = _SAID_NUMBER_RE.fullmatch(I.spelled_to_digits(I.spoken_years_to_digits(said)))
             if said and float(said.group(1).replace(",", "")) == key:
                 out.append(w.start)
                 break

@@ -21,7 +21,9 @@ from ..models import (OVERLAY_TYPES, Brand, DirectorPlan, MotionKind, Narration,
                       ScenePurpose, Script, Shot, ShotList, ShotType, StyleProfile, VideoFormat, VisualIdea)
 from ..util import NullLogger
 from . import ideas as I
+from ..mg.inset import INSET_KINDS
 from .assembler import FAMILY, _Assembler, ai_prompt, overlap, prompt_subject, signature  # noqa: F401 re-exported
+from .assembler import INSET_GAP_S
 from .pacing import Anchor, plan_slots
 from .rules import MG_HOLD_MAX_S
 from .seat import (MAP_TOLERANCE_DEG, OVERLAY_KINDS, SYSTEM, check_chart, director_ideas,  # noqa: F401 re-exported
@@ -70,13 +72,17 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
 
 
 CHART_KINDS = (MotionKind.bar_chart, MotionKind.line_chart)
+INSET_HOST = {ShotType.footage: ShotType.footage_overlay, ShotType.footage_overlay: ShotType.footage_overlay,
+              ShotType.image: ShotType.image_overlay, ShotType.image_overlay: ShotType.image_overlay}
 
 
 def ensure_chart(shots: list[Shot], ctx: _Assembler, spans: dict[str, tuple[float, float]], log: Any) -> None:
     """Guarantee one data chart (full screen or inset) when any beat has chartable numbers, shown while that
     beat is narrated.
 
-    Rebinds a free motion shot over the chart's beat, else turns a long enough free shot over it into one.
+    Rebinds a free motion shot over the chart's beat, else turns a long enough free shot over it into one,
+    else puts the chart as a transparent inset on the free footage or still shot that overlaps the beat most
+    (replacing its overlay), unless another map or chart inset is within INSET_GAP_S of that shot.
     """
     if any(sp is not None and sp.kind in CHART_KINDS for s in shots for sp in (s.motion, s.overlay)):
         return
@@ -96,6 +102,16 @@ def ensure_chart(shots: list[Shot], ctx: _Assembler, spans: dict[str, tuple[floa
             if best is None or rank > best[0]:
                 best = (rank, sh, idea)
     if best is None:
+        hosts = [(overlap(spans.get(i.beat_id, (0.0, 0.0)), (sh.start, sh.end)), sh, i) for i in charts for sh in shots
+                 if sh.id not in ctx.locked and sh.type in INSET_HOST
+                 and not any(o is not sh and o.overlay is not None and o.overlay.kind in INSET_KINDS
+                             and abs(o.start - sh.start) < INSET_GAP_S for o in shots)]
+        hosts = [x for x in hosts if x[0] >= min(2.0, 0.3 * x[1].duration)]
+        if hosts:
+            _, shot, idea = max(hosts, key=lambda x: x[0])
+            shot.type = INSET_HOST[shot.type]
+            shot.overlay = idea.motion.model_copy(update={"background": "transparent"})
+            log.info("chart guaranteed as an inset", shot=shot.id, beat=idea.beat_id)
         return
     _, shot, idea = best
     if shot.type != ShotType.motion_graphic:

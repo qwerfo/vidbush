@@ -3,6 +3,7 @@ spoken years, chapter titles as lower thirds, and the QA and acceptance measures
 from __future__ import annotations
 
 import random
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,7 +15,8 @@ from vidbush.models import (STATIC_CARD_KINDS, Beat, MotionKind, Scene, ScenePur
                             VisualIdea, Word)
 from vidbush.shots import ideas as I
 from vidbush.shots import rules
-from vidbush.shots.director import beat_spans, build_shotlist, card_exempt_ranges, structural_anchors
+from vidbush.shots.director import beat_spans, build_shotlist, card_exempt_ranges, ensure_chart, structural_anchors
+from vidbush.util import NullLogger
 
 IDEAS = [VisualIdea(beat_id="b1", family="footage", intent="Ships in the locks", queries=["ships locks"])]
 
@@ -127,6 +129,31 @@ def test_card_never_spoken_becomes_an_overlay_with_its_text() -> None:
     assert shots[1].overlay.payload["title"] == "From TV story to turf"
 
 
+def test_year_card_read_aloud_stays_on_its_cue() -> None:
+    assert rules.cue_times(b.number_card_spec("1959"), _words("in nineteen fifty-nine the", 10.0)) == [10.4]
+    assert rules.cue_times(b.number_card_spec("1805"), _words("in eighteen oh five", 10.0)) == [10.4]
+    shots = _shots([(ShotType.footage, 4.0, None), (ShotType.motion_graphic, 4.0, b.number_card_spec("1959")),
+                    (ShotType.footage, 6.0, None)])
+    words = _words("In nineteen fifty-nine the territory became a state.", 103.6)  # 'nineteen' at 104.0
+    n = rules.cards_on_cue(shots, words, {"b1": (100.0, 114.0)}, profile(), IDEAS, _rebind, lambda s: 0,
+                           lambda s: None)
+    assert n == 0 and shots[1].type == ShotType.motion_graphic and shots[1].start == 104.0
+
+
+def test_chart_with_no_motion_slot_rides_on_footage_as_an_inset() -> None:
+    chart = b.bar_chart_spec(["1990", "2020"], [550, 733], title="Population")
+    ideas = [VisualIdea(beat_id="b1", family="motion", intent="Population chart", motion=chart)]
+    shots = _shots([(ShotType.footage, 5.4, None), (ShotType.image, 5.6, None)])
+    ctx = SimpleNamespace(ideas=ideas, profile=profile(), locked=set(), rebind=_rebind)
+    ensure_chart(shots, ctx, {"b1": (100.0, 111.0)}, NullLogger())
+    assert shots[1].type == ShotType.image_overlay and shots[0].type == ShotType.footage
+    assert shots[1].overlay.kind == MotionKind.bar_chart and shots[1].overlay.background == "transparent"
+    near = _shots([(ShotType.footage, 5.4, None), (ShotType.footage_overlay, 5.6, None)])
+    near[0].overlay = b.route_map_spec([[("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)]])
+    ensure_chart(near, ctx, {"b1": (105.4, 111.0)}, NullLogger())  # a map inset 5.4 s away needs its room
+    assert near[1].overlay is None and near[0].overlay.kind == MotionKind.map
+
+
 # ---------------------------------------------------------------- built videos
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
@@ -182,10 +209,15 @@ def test_spoken_year_is_a_year_card_not_a_count(text: str, year: str) -> None:
     assert idea.motion.payload["count_up"] is False
 
 
-def test_spelled_counts_still_make_number_cards() -> None:
-    text = "The team carried the serum six hundred seventy-four miles."
+@pytest.mark.parametrize("text,number", [
+    ("The team carried the serum six hundred seventy-four miles.", "674"),
+    ("Fifteen hundred soldiers crossed the river.", "1,500"),
+    ("It has eighteen hundred named islands.", "1,800"),
+])
+def test_spelled_counts_still_make_number_cards(text: str, number: str) -> None:
     idea = I.number_idea(_bc(text), I.beat_entities(_bc(text)), None, "documentary_warm")
-    assert idea is not None and idea.motion.payload["number"].startswith("674")
+    assert idea is not None and idea.motion.payload["number"].startswith(number)
+    assert idea.motion.payload["count_up"] is True
 
 
 def test_chapter_title_is_a_lower_third_on_footage_not_a_card() -> None:
