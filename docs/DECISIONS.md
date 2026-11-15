@@ -374,3 +374,4 @@ One line each: the decision and why.
 - The global concurrency cap is at least youtube_download_workers + 2: each yt-dlp download holds a global slot for its whole length
 - Budgets: YouTube 500, Pexels 300, NARA 300 searches per run, paced by host rates, never refused because of them
 - youtube_download_workers 6 and fetch workers 8: run 2 fetching was limited by download slots, and each stream averaged about 0.6 MB/s, far below the line speed
+- Each source runs its own search rounds, so a paced host (Pexels, one search per 22.5 s) never holds back the others: a shared round barrier made YouTube and the fast hosts wait about 47 minutes per round for Pexels's tail, and the paced host now only searches shots still short when its turn comes.
