@@ -101,6 +101,16 @@ GENERIC_WORDS = {
     "color", "colour", "early", "rare", "real", "original", "the", "and", "with", "from", "for", "into",
     "close", "closeup", "wide", "recreation", "reenactment", "stock", "clip", "clips", "cinematic",
 }
+# English function words of 3+ letters: queries taken from narration carry them ("when they were building
+# the pipeline"), and an engine that needs every word finds nothing for them, nor does a title share them
+# by meaning.
+FUNCTION_WORDS = set("""
+about above after again all also any are been before being both but can could did does doing down during each
+few had has have having her here hers him his how its itself just more most nor not now off once only other
+our ours out over own same she should some such than that their theirs them then there these they this those
+through too under until upon very was were what when where which while who whom why with would you your
+yours""".split())
+SKIP_WORDS = GENERIC_WORDS | FUNCTION_WORDS
 
 
 VOWELS = set("aeiou")
@@ -133,19 +143,19 @@ def _stem(word: str) -> str:
 
 
 def content_tokens(text: str) -> set[str]:
-    """Stemmed words of 3+ letters that are not generic footage words."""
-    return {_stem(w) for w in re.findall(r"[A-Za-z]{3,}", text or "") if w.lower() not in GENERIC_WORDS}
+    """Stemmed words of 3+ letters that are neither generic footage words nor function words."""
+    return {_stem(w) for w in re.findall(r"[A-Za-z]{3,}", text or "") if w.lower() not in SKIP_WORDS}
 
 
 def keyword_query(query: str, words: int) -> str:
-    """The first `words` specific words of a query, in their own spelling (generic footage words, years
+    """The first `words` specific words of a query, in their own spelling (generic footage and function words, years
     and short words left out), for a search engine that requires every word to match. Such archives
     answer long descriptive queries with nothing: in run 2, Commons and Internet Archive found results
     for 75 and 90 percent of 2 word queries and 9 and 14 percent of 6 word ones. The relevance screen
     still ranks the results against the whole query. The query is kept when it has no specific word."""
     seen: list[str] = []
     for w in re.findall(r"[A-Za-z][A-Za-z'\-]*[A-Za-z]|[A-Za-z]", query or ""):
-        if len(w) >= 3 and w.lower() not in GENERIC_WORDS and w.lower() not in (s.lower() for s in seen):
+        if len(w) >= 3 and w.lower() not in SKIP_WORDS and w.lower() not in (s.lower() for s in seen):
             seen.append(w)
         if len(seen) == words:
             break
@@ -337,23 +347,32 @@ def repair_still(path: Path) -> None:
     """Re-encode a still that decodes only leniently (archival scans often end in padding instead of the
     JPEG end marker), so every later reader opens it; a file that does not decode at all is left as is."""
     from PIL import Image, ImageFile
-    try:
-        with Image.open(path) as im:
-            im.load()
-        return
-    except OSError:
-        pass
-    ImageFile.LOAD_TRUNCATED_IMAGES = True  # shortcut: process wide during one repair, use a per-file option if PIL adds one
-    try:
-        with Image.open(path) as im:
-            im.load()
-            fmt = im.format or "JPEG"
-            clean = im.convert("RGB") if fmt == "JPEG" and im.mode not in ("RGB", "L") else im.copy()
-        clean.save(path, fmt, **({"quality": 95} if fmt == "JPEG" else {}))
-    except OSError:
-        pass
-    finally:
-        ImageFile.LOAD_TRUNCATED_IMAGES = False
+    # The lenient switch is process wide: one lock around the strict check and the repair, so no other
+    # repair's check passes leniently and no repair has the switch turned off under it.
+    with _repair_lock:
+        try:
+            with Image.open(path) as im:
+                im.load()
+            return
+        except Image.DecompressionBombError:
+            return  # too many pixels to check here; kept as downloaded, as before this check existed
+        except OSError:
+            pass
+        before = ImageFile.LOAD_TRUNCATED_IMAGES
+        ImageFile.LOAD_TRUNCATED_IMAGES = True  # shortcut: process wide, use a per-file option if PIL adds one
+        try:
+            with Image.open(path) as im:
+                im.load()
+                fmt = im.format or "JPEG"
+                clean = im.convert("RGB") if fmt == "JPEG" and im.mode not in ("RGB", "L") else im.copy()
+            clean.save(path, fmt, **({"quality": 95} if fmt == "JPEG" else {}))
+        except OSError:
+            pass
+        finally:
+            ImageFile.LOAD_TRUNCATED_IMAGES = before
+
+
+_repair_lock = threading.Lock()
 
 
 def cached_section(url: str, start: float, length: float, settings: Settings, ext: str = ".mp4") -> Path:

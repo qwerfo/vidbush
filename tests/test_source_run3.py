@@ -31,6 +31,12 @@ def test_keyword_query_keeps_the_first_specific_words_in_their_spelling() -> Non
     assert keyword_query("dog Dog dogs sled", 2) == "dog dogs"  # repeated spelling counted once
 
 
+def test_keyword_query_skips_function_words_of_narration() -> None:
+    assert keyword_query("When they were building the pipeline through Fairbanks", 3) == "building pipeline Fairbanks"
+    assert keyword_query("Alaska is about as wide as Interstate Ten is long footage", 3) == "Alaska Interstate Ten"
+    assert base.content_tokens("what this town has become") == {"town", "become"}
+
+
 def test_every_word_engines_send_short_queries(monkeypatch, settings) -> None:
     from vidbush.source.archive import ArchiveAdapter
     from vidbush.source.loc import LocAdapter
@@ -49,17 +55,46 @@ def test_every_word_engines_send_short_queries(monkeypatch, settings) -> None:
     assert sent[2] == sent[3] == "red sled dog"
 
 
-def test_cache_form_changes_with_the_keyword_form(settings) -> None:
-    class Long:
-        name = "wikimedia"
+class _ShortAdapter:
+    """An every-word engine: sends keyword_query(query, 3) and counts what it sent."""
+    name, media, keyword_words = "wikimedia", {"image"}, 3
 
-    class Short(Long):
-        keyword_words = 3
+    def __init__(self) -> None:
+        self.sent: list[str] = []
 
-    assert registry.cache_variant(Long(), {}) == ""
-    assert registry.cache_variant(Short(), {"language": "en"}) == "kw=3,language=en"
-    registry.cache_put("wikimedia", "q", "image", 4, [], settings, registry.cache_variant(Long(), {}))
-    assert registry.cache_get("wikimedia", "q", "image", 4, settings, registry.cache_variant(Short(), {})) is None
+    def available(self, settings: Any) -> bool:
+        return True
+
+    def search(self, query: str, media: str, n: int, settings: Any, shot: Any = None, **kw: Any) -> list[RawResult]:
+        self.sent.append(keyword_query(query, self.keyword_words))
+        return [RawResult(source=self.name, url=f"https://c.example/{len(self.sent)}", media=media,
+                          title="National Atlas United States map")]
+
+    def fetch(self, *a: Any, **kw: Any) -> list:
+        return []
+
+
+def test_queries_that_shorten_alike_share_one_search(make_ctx) -> None:
+    """The cache is keyed on the request sent: two long queries with one keyword form cost one search."""
+    ctx = make_ctx(mode="script")
+    a = _ShortAdapter()
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.image, intent="atlas")
+    first = registry._search_one(a, "National Atlas of the United States map Alaska", "image", 4, shot, ctx)
+    second = registry._search_one(a, "National Atlas United States 1970 page", "image", 4, shot, ctx)
+    assert a.sent == ["National Atlas United"] and [r.url for r in first] == [r.url for r in second]
+    assert throttle.spent(registry.run_id(ctx))["wikimedia"] == 1
+
+
+def test_a_shot_never_sends_one_request_twice(make_ctx, monkeypatch) -> None:
+    ctx = make_ctx(mode="script")
+    a = _ShortAdapter()
+    monkeypatch.setattr(registry, "cache_get", lambda *x, **k: None)  # only the in-shot check can stop the repeat
+    monkeypatch.setattr(registry, "cache_put", lambda *x, **k: None)
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.image, intent="atlas",
+                queries=["National Atlas of the United States map", "National Atlas United page", "Juneau harbor"])
+    with registry.SearchPools([a]) as pools:
+        registry._search_all([shot], [a], ctx, pools)
+    assert a.sent == ["National Atlas United", "Juneau harbor"]
 
 
 def test_pixabay_tags_count_for_relevance(settings) -> None:
@@ -101,6 +136,15 @@ def test_padded_scan_is_repaired_on_download(monkeypatch, settings) -> None:
     with Image.open(path) as im:
         im.load()  # strict decode works now
         assert im.size == (64, 48)
+
+
+def test_still_too_large_to_check_is_kept_as_downloaded(monkeypatch, tmp_path) -> None:
+    path = tmp_path / "huge.jpg"
+    Image.new("RGB", (64, 48)).save(path, "JPEG")
+    data = path.read_bytes()
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 10)  # 64 x 48 counts as a decompression bomb now
+    base.repair_still(path)  # no DecompressionBombError out of the download
+    assert path.read_bytes() == data
 
 
 # ---------------------------------------------------------------- offline replay

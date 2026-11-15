@@ -99,10 +99,10 @@ def cached_media(shot: Any, adapters: list[Any], ctx: Any) -> Optional[str]:
     cap = ctx.settings.sources.max_candidates
     for media in ("image", "video"):
         for a in adapters:
-            variant = registry.cache_variant(a, registry.search_hints(a, ctx))
+            variant = registry._variant(registry.search_hints(a, ctx))
             n = registry._per_adapter_n(a, cap)
-            if media in a.media and any(registry.cache_get(a.name, q, media, n, ctx.settings, variant) is not None
-                                        for q in registry.shot_queries(shot)):
+            if media in a.media and any(registry.cache_get(a.name, registry.sent_query(a, q), media, n, ctx.settings,
+                                                           variant) is not None for q in registry.shot_queries(shot)):
                 return media
     return None
 
