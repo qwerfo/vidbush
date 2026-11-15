@@ -25,9 +25,10 @@ def _words(text: str, t0: float = 0.0, step: float = 0.4) -> list[Word]:
             for k, w in enumerate(text.split())]
 
 
-def _shot(i: int, start: float, end: float, typ: ShotType = ShotType.footage, overlay=None) -> Shot:
+def _shot(i: int, start: float, end: float, typ: ShotType = ShotType.footage, overlay=None,
+          must_show: tuple[str, ...] = ()) -> Shot:
     return Shot(id=f"shot_{i:03d}", index=i, beat_id="b1", start=start, end=end, duration=end - start, type=typ,
-                intent="x", overlay=overlay)
+                intent="x", overlay=overlay, must_show=list(must_show))
 
 
 # ---------------------------------------------------------------- repeats_narration
@@ -68,7 +69,9 @@ def test_overlay_starts_just_after_its_anchor_with_time_to_read() -> None:
     at = I.overlay_start(spec, words, 1.0, 6.0)
     assert at == pytest.approx(words[7].start + I.ANCHOR_LEAD_S - 1.0)
     assert I.overlay_start(spec, words, 1.0, 3.5) is None  # the shot ends before the words are spoken and read
-    assert I.overlay_start(spec, words, 3.5, 8.0) is None  # the shot starts after the words
+    # a word said at most TEXT_LATE_S before the cut shows at the next shot's start; said earlier, it does not
+    assert I.overlay_start(spec, words, 3.5, 8.0) == 0.0
+    assert I.overlay_start(spec, words, words[8].start + I.TEXT_LATE_S + 0.1, 9.0) is None  # Nome itself said too early
 
 
 # ---------------------------------------------------------------- time_overlays
@@ -76,7 +79,8 @@ def test_overlay_starts_just_after_its_anchor_with_time_to_read() -> None:
 def test_overlay_moves_to_the_shot_that_holds_its_moment_or_is_dropped() -> None:
     words = _words("the serum left Nenana by train and reached Nome six days later")
     late = b.lower_third_spec("Nome", "Alaska")
-    shots = [_shot(1, 0.0, 2.0, ShotType.footage_overlay, late), _shot(2, 2.0, 6.0), _shot(3, 6.0, 9.0)]
+    shots = [_shot(1, 0.0, 2.0, ShotType.footage_overlay, late), _shot(2, 2.0, 6.0, must_show=("Nome street",)),
+             _shot(3, 6.0, 9.0)]
     time_overlays(shots, words)
     assert shots[0].type == ShotType.footage and shots[0].overlay is None
     assert shots[1].type == ShotType.footage_overlay and shots[1].overlay.payload["title"] == "Nome"
@@ -95,14 +99,19 @@ def test_time_overlays_drops_text_that_repeats_the_narration() -> None:
     assert shots[0].overlay is None and shots[0].type == ShotType.footage
 
 
-def test_insets_and_locked_overlays_keep_their_start() -> None:
-    words = _words("ships crossed from Colon to Panama City")
+def test_insets_are_timed_like_text_and_locked_overlays_keep_their_start() -> None:
+    words = _words("ships crossed from Colon to Panama City")  # Colon at 1.2 s, Panama at 2.0 s
     inset = b.route_map_spec([[("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)]]).model_copy(
         update={"background": "transparent"})
     label = b.lower_third_spec("The Hoover Dam", "Number 3")
-    shots = [_shot(1, 0.0, 3.0, ShotType.footage_overlay, inset), _shot(2, 3.0, 6.0, ShotType.footage_overlay, label)]
-    time_overlays(shots, words, frozenset({"shot_002"}))
-    assert shots[0].overlay.start_at == 0 and shots[1].overlay is label
+    shots = [_shot(1, 0.0, 2.0, ShotType.footage_overlay, inset), _shot(2, 2.0, 8.0),
+             _shot(3, 8.0, 11.0, ShotType.footage_overlay, label)]
+    time_overlays(shots, words, frozenset({"shot_003"}))
+    assert shots[0].overlay is None  # 2 s cannot hold an inset for INSET_HOLD_S
+    assert shots[1].overlay.kind == MotionKind.map  # moved to the shot that holds its first spoken place
+    # Colon is said 0.8 s before shot 2 starts (within TEXT_LATE_S), so the inset opens shot 2
+    assert shots[1].start + shots[1].overlay.start_at == pytest.approx(2.0)
+    assert shots[2].overlay is label and label.start_at == 0
 
 
 def test_built_shotlist_text_overlays_follow_their_words() -> None:
@@ -131,7 +140,7 @@ def _bc(text: str) -> I.BeatContext:
 
 def test_heuristic_ideas_never_quote_the_beat() -> None:
     bc = _bc("In 1925 the mushers carried the serum through fifty below toward Nome.")
-    made = I.ideas_for_beat(bc, None, "documentary_warm", random.Random(1))
+    made = I.ideas_for_beat(bc, None, "documentary_warm")
     phrase = I.key_phrase(bc.beat.text)
     for spec in [i.overlay for i in made] + [i.motion for i in made]:
         if spec is not None and spec.kind in I.TEXT_OVERLAY_KINDS:
@@ -242,13 +251,13 @@ def test_qa_measures_against_the_word_the_pipeline_anchored_to() -> None:
 
 
 def test_editor_split_moves_the_overlay_to_the_piece_that_holds_its_moment() -> None:
-    spec = b.lower_third_spec("Nome").model_copy(update={"anchor": "Nome", "start_at": 4.2})
+    spec = b.lower_third_spec("Nome").model_copy(update={"anchor": "Nome", "start_at": 3.2})  # READ_MIN_S fits
     sl = ShotList(project_id="p", duration=6.0, shots=[_shot(1, 0.0, 6.0, ShotType.footage_overlay, spec)])
     retime.split_into(sl, sl.shots[0], [3.0, 3.0])
     retime.finalize(sl, 6.0)
     first, second = sl.shots
     assert first.overlay is None and first.type == ShotType.footage
-    assert second.type == ShotType.footage_overlay and second.start + second.overlay.start_at == pytest.approx(4.2)
+    assert second.type == ShotType.footage_overlay and second.start + second.overlay.start_at == pytest.approx(3.2)
 
 
 def test_editor_drops_an_overlay_no_shot_can_show_on_its_moment() -> None:

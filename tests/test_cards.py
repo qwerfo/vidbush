@@ -69,7 +69,7 @@ def test_card_excess_without_room_becomes_footage_of_its_beat() -> None:
 
 
 def test_full_screen_map_holds_at_most_seven_seconds() -> None:
-    spec = b.route_map_spec([[("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)]], title="Across")
+    spec = b.route_map_spec([[("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)]])
     shots = _shots([(ShotType.motion_graphic, 12.0, spec), (ShotType.motion_graphic, 5.0, b.number_card_spec("1"))])
     rules.cap_card_holds(shots, profile(), IDEAS, _rebind, lambda s: 0, lambda s: None)
     assert shots[0].duration == pytest.approx(rules.MG_HOLD_MAX_S)
@@ -88,6 +88,7 @@ def test_demoted_title_and_number_cards_ride_on_footage() -> None:
     shots = _shots([(ShotType.motion_graphic, 4.0, b.title_card_spec("Gunnar Kaasen", "Musher")),
                     (ShotType.footage, 4.0, None),
                     (ShotType.motion_graphic, 4.0, b.number_card_spec("$77 million", "cost", count_up=True))])
+    shots[0].must_show = ["Gunnar Kaasen with his dogs"]  # a name rides only on a picture that shows it
     assert rules.demote_card(shots, 0, IDEAS, _rebind, lambda s: 0, lambda s: None)
     assert rules.demote_card(shots, 2, IDEAS, _rebind, lambda s: 0, lambda s: None)
     title, number = shots[0].overlay, shots[2].overlay
@@ -101,10 +102,10 @@ def test_demoted_title_and_number_cards_ride_on_footage() -> None:
 
 def test_cue_times_read_digits_and_spelled_numbers() -> None:
     words = _words("In two thousand seven, about seventy-seven million dollars and 1,000 pounds.", 10.0)
-    assert rules.cue_times(b.number_card_spec("2007"), words) == [10.4]
-    assert rules.cue_times(b.number_card_spec("$77 million"), words) == [12.0]
-    assert rules.cue_times(b.number_card_spec("1,000", "pounds"), words) == [13.6]
-    assert rules.cue_times(b.title_card_spec("GUNNAR KAASEN"), _words("Then Gunnar's team ran.", 5.0)) == [5.4]
+    assert I.spoken_times(b.number_card_spec("2007"), words) == [10.4]
+    assert I.spoken_times(b.number_card_spec("$77 million"), words) == [12.0]
+    assert I.spoken_times(b.number_card_spec("1,000", "pounds"), words) == [13.6]
+    assert I.spoken_times(b.title_card_spec("GUNNAR KAASEN"), _words("Then Gunnar's team ran.", 5.0)) == [5.4]
 
 
 def test_early_card_moves_onto_its_spoken_number() -> None:
@@ -130,8 +131,8 @@ def test_card_never_spoken_becomes_an_overlay_with_its_text() -> None:
 
 
 def test_year_card_read_aloud_stays_on_its_cue() -> None:
-    assert rules.cue_times(b.number_card_spec("1959"), _words("in nineteen fifty-nine the", 10.0)) == [10.4]
-    assert rules.cue_times(b.number_card_spec("1805"), _words("in eighteen oh five", 10.0)) == [10.4]
+    assert I.spoken_times(b.number_card_spec("1959"), _words("in nineteen fifty-nine the", 10.0)) == [10.4]
+    assert I.spoken_times(b.number_card_spec("1805"), _words("in eighteen oh five", 10.0)) == [10.4]
     shots = _shots([(ShotType.footage, 4.0, None), (ShotType.motion_graphic, 4.0, b.number_card_spec("1959")),
                     (ShotType.footage, 6.0, None)])
     words = _words("In nineteen fifty-nine the territory became a state.", 103.6)  # 'nineteen' at 104.0
@@ -144,14 +145,29 @@ def test_chart_with_no_motion_slot_rides_on_footage_as_an_inset() -> None:
     chart = b.bar_chart_spec(["1990", "2020"], [550, 733], title="Population")
     ideas = [VisualIdea(beat_id="b1", family="motion", intent="Population chart", motion=chart)]
     shots = _shots([(ShotType.footage, 5.4, None), (ShotType.image, 5.6, None)])
-    ctx = SimpleNamespace(ideas=ideas, profile=profile(), locked=set(), rebind=_rebind)
+    words = _words("550 people lived there in 1990", 105.6)  # the chart is said while the still plays
+    ctx = SimpleNamespace(ideas=ideas, profile=profile(), locked=set(), rebind=_rebind, words=words)
     ensure_chart(shots, ctx, {"b1": (100.0, 111.0)}, NullLogger())
     assert shots[1].type == ShotType.image_overlay and shots[0].type == ShotType.footage
     assert shots[1].overlay.kind == MotionKind.bar_chart and shots[1].overlay.background == "transparent"
     near = _shots([(ShotType.footage, 5.4, None), (ShotType.footage_overlay, 5.6, None)])
+    near[0].type = ShotType.footage_overlay
     near[0].overlay = b.route_map_spec([[("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)]])
     ensure_chart(near, ctx, {"b1": (105.4, 111.0)}, NullLogger())  # a map inset 5.4 s away needs its room
     assert near[1].overlay is None and near[0].overlay.kind == MotionKind.map
+
+
+def test_full_screen_chart_slot_must_pass_the_later_cue_and_map_tests() -> None:
+    chart = b.bar_chart_spec(["1990", "2020"], [550, 733], title="Population")
+    ideas = [VisualIdea(beat_id="b1", family="motion", intent="Population chart", motion=chart)]
+    shots = _shots([(ShotType.footage_overlay, 6.0, None), (ShotType.motion_graphic, 6.0, None),
+                    (ShotType.footage, 4.0, None), (ShotType.image, 6.0, None)])
+    shots[0].overlay = b.route_map_spec([[("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)]])
+    words = _words("550 people lived there in 1990", 116.4)  # spoken 16 s after the map, not on the motion slot
+    ctx = SimpleNamespace(ideas=ideas, profile=profile(), locked=set(), rebind=_rebind, words=words)
+    ensure_chart(shots, ctx, {"b1": (100.0, 122.0)}, NullLogger())
+    assert shots[1].intent == "shot 1"  # 6 s after the map and off its cue: screen_guard would undo it
+    assert shots[3].type == ShotType.motion_graphic and shots[3].intent == "Population chart"  # cued, clear
 
 
 # ---------------------------------------------------------------- built videos
@@ -170,7 +186,7 @@ def test_built_documentary_cards_are_short_and_on_cue(seed: int) -> None:
         if s.motion.kind == MotionKind.title_card and s.motion.payload["title"] == "The Panama Canal":
             continue  # the structural main title at the setup
         a, z = spans[s.beat_id]
-        cues = rules.cue_times(s.motion, [w for w in nar.words if a <= w.start <= z])
+        cues = I.spoken_times(s.motion, [w for w in nar.words if a <= w.start <= z])
         assert any(s.start - rules.CUE_EARLY_S <= c <= s.start + rules.CUE_LATE_S for c in cues), (seed, s.id)
 
 
@@ -212,7 +228,7 @@ def test_spoken_year_is_a_year_card_not_a_count(text: str, year: str) -> None:
 @pytest.mark.parametrize("text,number", [
     ("The team carried the serum six hundred seventy-four miles.", "674"),
     ("Fifteen hundred soldiers crossed the river.", "1,500"),
-    ("It has eighteen hundred named islands.", "1,800"),
+    ("It has eighteen hundred islands.", "1,800"),
 ])
 def test_spelled_counts_still_make_number_cards(text: str, number: str) -> None:
     idea = I.number_idea(_bc(text), I.beat_entities(_bc(text)), None, "documentary_warm")
@@ -221,11 +237,12 @@ def test_spelled_counts_still_make_number_cards(text: str, number: str) -> None:
 
 
 def test_chapter_title_is_a_lower_third_on_footage_not_a_card() -> None:
-    made = I.ideas_for_beat(_bc("Sled dogs raced across the frozen river.", first=True), None, "documentary_warm",
-                            random.Random(1))
+    made = I.ideas_for_beat(_bc("Sled dogs raced across the frozen river.", first=True), None, "documentary_warm")
     assert not any(i.motion and i.motion.kind == MotionKind.title_card for i in made)
     foot = [i for i in made if i.family == "footage"]
     assert foot[0].overlay.kind == MotionKind.lower_third and foot[0].overlay.payload["title"] == "The Serum Run"
+    # a chapter title is a name like any other: it shows only on a picture whose must_show names it
+    assert not I.label_ok(foot[0].overlay, []) and I.label_ok(foot[0].overlay, ["the serum run relay"])
 
 
 # ---------------------------------------------------------------- QA and acceptance

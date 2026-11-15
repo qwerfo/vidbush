@@ -2,12 +2,15 @@
 
 Sources, in preference order: assets/geo/landmarks.json (historically relevant
 sites), country label points from ne_50m_admin_0_countries.geojson, and the
-Natural Earth populated places gazetteer. States and provinces (shading and
+Natural Earth populated places gazetteer. Small US towns Natural Earth lacks come
+from gnis_places.json.gz (USGS GNIS, public domain) and answer only names a caller
+gives explicitly, never free text scanning. States and provinces (shading and
 framing only) come from ne_50m_admin_1_states_provinces.geojson. Everything
 loads lazily and is cached.
 """
 from __future__ import annotations
 
+import gzip
 import json
 import math
 import re
@@ -36,6 +39,7 @@ class GeoHit(BaseModel):
     country: str = ""
     pop: int = 0
     iso_a3: str = ""
+    state: str = ""  # set only on small places (GNIS state name)
 
 
 # ---------------------------------------------------------------- loading
@@ -59,6 +63,18 @@ def landmarks() -> list[dict]:
 def gazetteer() -> list[list]:
     """Populated places: [name, lat, lon, pop_max, country, admin1]."""
     return json.loads((GEO_DIR / "gazetteer_places.json").read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=1)
+def small_places() -> dict[str, list[list]]:
+    """GNIS populated places Natural Earth lacks, keyed by normalised name: [[name, lat, lon, state], ...].
+    Built by geo_tools/build_gnis.py; loaded on the first explicit lookup that needs it, never at import."""
+    rows = json.loads(gzip.decompress((GEO_DIR / "gnis_places.json.gz").read_bytes()))
+    idx: dict[str, list[list]] = {}
+    for row in rows:
+        plain = row[0].isascii() and row[0].replace(" ", "").isalpha()  # norm is then lower(); 15x faster
+        idx.setdefault(row[0].lower() if plain else norm(row[0]), []).append(row)
+    return idx
 
 
 @lru_cache(maxsize=1)
@@ -122,19 +138,72 @@ def _best(hits: list[GeoHit], us_bias: bool) -> GeoHit:
     return max(hits, key=key)
 
 
-def candidates(name: str) -> list[GeoHit]:
-    """Every hit for a name under its normalised forms (homonyms in other countries included)."""
+# A small place farther than this from the near centroid is a homonym, not the town the caller means:
+# a wrong dot in another state is worse than no dot. About 1100 km, wide enough for one state's map.
+NEAR_RADIUS_DEG = 10.0
+
+
+def _small_hits(name: str) -> list[GeoHit]:
     out: list[GeoHit] = []
-    for variant in _variants(name.strip()) if name.strip() else []:
-        out += [h for h in _index().get(variant, []) if h not in out]
+    for variant in _variants(name):
+        for n, lat, lon, state in small_places().get(variant, []):
+            hit = GeoHit(name=n, lat=lat, lon=lon, kind="place", country=US, state=state)
+            if hit not in out:
+                out.append(hit)
     return out
 
 
-def lookup(name: str, us_bias: bool = False) -> Optional[GeoHit]:
-    """Best hit for a name: exact, then case-insensitive, then alias forms."""
+def candidates(name: str) -> list[GeoHit]:
+    """Every hit for a name under its normalised forms (homonyms in other countries and small places
+    included, Natural Earth first)."""
+    out: list[GeoHit] = []
+    for variant in _variants(name.strip()) if name.strip() else []:
+        out += [h for h in _index().get(variant, []) if h not in out]
+    return out + [h for h in (_small_hits(name.strip()) if name.strip() else []) if h not in out]
+
+
+def _centroid(near: Sequence[tuple[float, float]]) -> tuple[float, float]:
+    """Mean point; longitude as a circular mean so points either side of the antimeridian stay together."""
+    lon = math.degrees(math.atan2(sum(math.sin(math.radians(p[1])) for p in near),
+                                  sum(math.cos(math.radians(p[1])) for p in near)))
+    return sum(p[0] for p in near) / len(near), lon
+
+
+def lookup(name: str, us_bias: bool = False, *, near: Sequence[tuple[float, float]] = (),
+           small: bool = False) -> Optional[GeoHit]:
+    """Best hit for a name: exact, then case-insensitive, then alias forms. With near points (the map's other
+    places), the candidate nearest their centroid wins, so a homonym resolves to the one on this map.
+
+    small=True (opt-in) adds GNIS small places, only for an explicit place name a caller draws on a map:
+    79k town names include common words (President, Treaty, Chicken), so free text never sees them.
+    Without near, Natural Earth wins and a small place answers only a name no other town shares, since
+    small places carry no population to rank homonyms. With near, a small place beyond NEAR_RADIUS_DEG of
+    the centroid never wins, and none wins over a country or landmark of the same name (Canada, Ohio
+    is never Canada)."""
     name = name.strip()
     if not name:
         return None
+    if near:
+        c = _centroid(near)
+        cands = candidates(name)
+        small = small and not any(h.kind in ("country", "landmark") for h in cands)
+        pool = [h for h in cands if not h.state or (small and distance_deg(c, (h.lat, h.lon)) <= NEAR_RADIUS_DEG)]
+        if not pool:
+            return None
+        pool.sort(key=lambda h: distance_deg(c, (h.lat, h.lon)))
+        best = pool[0]
+        towns = [h for h in pool if h.state]
+        if best.state and len(towns) > 1 and (distance_deg(c, (towns[1].lat, towns[1].lon))
+                                              < 2 * distance_deg(c, (best.lat, best.lon))):
+            # two small towns about as near: the name is ambiguous on this map, and a wrong dot is worse than
+            # none (Santa Monica, Texas and California, from the centre of a continental map)
+            return None
+        plain = lookup(name, us_bias, small=small)
+        # near only breaks ties between homonyms: the plain hit stays when it is about as close (it keeps its
+        # own name form, Colon and not Colón for the same town)
+        if plain is not None and distance_deg(c, (plain.lat, plain.lon)) <= distance_deg(c, (best.lat, best.lon)) + 0.5:
+            return plain
+        return best
     exact = [h for h in _index().get(norm(name), []) if h.name == name]
     if exact:
         return _best(exact, us_bias)
@@ -142,6 +211,9 @@ def lookup(name: str, us_bias: bool = False) -> Optional[GeoHit]:
         hits = _index().get(variant)
         if hits:
             return _best(hits, us_bias)
+    if small:
+        hits = _small_hits(name)
+        return hits[0] if len(hits) == 1 else None
     return None
 
 

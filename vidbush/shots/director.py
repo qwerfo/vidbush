@@ -17,15 +17,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..mg import builders as b
+from ..mg.inset import INSET_KINDS
 from ..models import (OVERLAY_TYPES, Brand, DirectorPlan, MotionKind, Narration, Project, Research, Scene,
                       ScenePurpose, Script, Shot, ShotList, ShotType, StyleProfile, VideoFormat, VisualIdea)
 from ..util import NullLogger
 from . import ideas as I
-from ..mg.inset import INSET_KINDS
 from .assembler import FAMILY, _Assembler, ai_prompt, overlap, prompt_subject, signature  # noqa: F401 re-exported
-from .assembler import INSET_GAP_S
-from .pacing import Anchor, plan_slots
-from .rules import MG_HOLD_MAX_S
+from .assembler import map_conflict, picture_anchor_misses, shown_graphics
+from .pacing import EPS, Anchor, plan_slots
+from .rules import CUE_EARLY_S, CUE_LATE_S, MG_HOLD_MAX_S
 from .seat import (OVERLAY_KINDS, SYSTEM, check_chart, director_ideas,  # noqa: F401 re-exported
                    director_prompt, validate_idea, verify_map)
 
@@ -36,8 +36,7 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
                    profile: StyleProfile, brand: Brand, seats: Any,
                    rng: random.Random) -> tuple[ShotList, DirectorPlan]:
     """Ideas per beat (seat plus heuristics), pacing slots, rules; returns the ShotList and the merged plan."""
-    from .rules import (apply_rules, cards_on_cue, demote_repeating_cards, drop_repeated_overlays, space_cards,
-                        time_overlays)
+    from .rules import apply_rules, cards_on_cue, demote_repeating_cards, screen_guard, space_cards, time_overlays
     log = getattr(seats, "log", None) or NullLogger()
     total = round(narration.duration + 1.0, 3)
     spans = beat_spans(script, narration)
@@ -46,15 +45,15 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
     work = Path(project.paths.work) if project.paths and project.paths.work else None
     llm = director_ideas(script, spans, research, profile, brand, seats, log,
                          work if work is not None and work.is_dir() else None)
-    ideas = merge_ideas(llm, bcs, research, profile.palette, rng)
+    ideas = merge_ideas(llm, bcs, research, profile.palette)
     top10 = profile.top10 or script.format == VideoFormat.top10
     anchors = structural_anchors(script, spans, profile, top10, total, topic)
     exempt = card_exempt_ranges(script, spans, profile, anchors)
     slots = plan_slots(total, profile, rng, narration.words, scene_starts(script, spans), anchors, exempt)
     ctx = _Assembler(script, spans, bcs, ideas, profile, rng, narration.words)
     shots = ctx.assign(slots)
-    shots = apply_rules(shots, ctx.ideas, ctx.idea_of, profile, ctx.rebind, ctx.overlay_for, frozenset(ctx.locked),
-                        overlay_pool=ctx.overlay_pool, footage_for=ctx.footage_for)
+    shots = apply_rules(shots, ctx.ideas, ctx.idea_of, profile, ctx.rebind, ctx.overlay_for, ctx.choose,
+                        frozenset(ctx.locked), overlay_pool=ctx.overlay_pool, footage_for=ctx.footage_for)
     ensure_chart(shots, ctx, spans, log)
     off_cue = cards_on_cue(shots, narration.words, spans, profile, ctx.ideas, ctx.rebind, ctx.footage_for,
                            ctx.overlay_for, frozenset(ctx.locked))
@@ -69,15 +68,34 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
                                      frozenset(ctx.locked))
     if repeats:
         log.info("cards that repeat nearby narration moved onto footage", cards=repeats)
-    time_overlays(shots, narration.words, frozenset(ctx.locked))
-    repeated = drop_repeated_overlays(shots, frozenset(ctx.locked))
-    if repeated:
-        log.info("overlays repeated within 30 s dropped", shots=repeated)
+    time_overlays(shots, narration.words, frozenset(ctx.locked), overlay_offers(ctx.ideas, spans),
+                  round(len(shots) * profile.animation_target()["overlay_shots"] / 100.0))
+    guarded = screen_guard(shots, ctx.ideas, ctx.rebind, ctx.footage_for, frozenset(ctx.locked))
+    if guarded:
+        log.info("screen guard: repeated, crowded or unshown graphics and labels removed", shots=guarded)
+    misses = picture_anchor_misses(shots, ctx.ideas, narration.words, spans)
+    log.info("pictures placed on their words", picture_shots=sum(s.type != ShotType.motion_graphic for s in shots),
+             anchor_misses=len(misses))
     sl = ShotList(project_id=project.id, duration=total, shots=shots)
     _finalize(sl, profile)
     log.info("shot list built", shots=len(sl.shots), ideas=len(ctx.ideas), llm_ideas=len(llm),
              duration=sl.duration, top10=top10)
     return sl, DirectorPlan(ideas=ctx.ideas)
+
+
+def overlay_offers(ideas: list[VisualIdea], spans: dict[str, tuple[float, float]]) -> list[tuple[tuple[float, float], Any]]:
+    """Every honest overlay an idea carries, plus its map or chart as an inset, with its beat's time range,
+    best idea first (time_overlays places each one on the plain shot that holds its words)."""
+    out = []
+    for idea in sorted(ideas, key=lambda i: -i.priority):
+        span = spans.get(idea.beat_id)
+        if span is None:
+            continue
+        if idea.overlay is not None:
+            out.append((span, idea.overlay))
+        if idea.motion is not None and idea.motion.kind in INSET_KINDS:
+            out.append((span, idea.motion.model_copy(update={"background": "transparent"})))
+    return out
 
 
 CHART_KINDS = (MotionKind.bar_chart, MotionKind.line_chart)
@@ -89,9 +107,11 @@ def ensure_chart(shots: list[Shot], ctx: _Assembler, spans: dict[str, tuple[floa
     """Guarantee one data chart (full screen or inset) when any beat has chartable numbers, shown while that
     beat is narrated.
 
-    Rebinds a free motion shot over the chart's beat, else turns a long enough free shot over it into one,
-    else puts the chart as a transparent inset on the free footage or still shot that overlaps the beat most
-    (replacing its overlay), unless another map or chart inset is within INSET_GAP_S of that shot.
+    Rebinds a free motion shot over the chart's beat, else turns a long enough free shot over it into one, when
+    the chart is cued at that shot's start and passes map_conflict there; else puts the chart as a transparent
+    inset on the free footage or still shot that overlaps the beat most (replacing its overlay) where its numbers
+    or labels are spoken with time to read it (ideas.overlay_start, the test time_overlays applies later, so the
+    guarantee survives it) and it passes map_conflict.
     """
     if any(sp is not None and sp.kind in CHART_KINDS for s in shots for sp in (s.motion, s.overlay)):
         return
@@ -100,6 +120,7 @@ def ensure_chart(shots: list[Shot], ctx: _Assembler, spans: dict[str, tuple[floa
     best: Optional[tuple[tuple[int, float], Shot, VisualIdea]] = None
     for idea in charts:
         span = spans.get(idea.beat_id, (0.0, 0.0))
+        cues = I.spoken_times(idea.motion, [w for w in ctx.words if span[0] - EPS <= w.start <= span[1] + EPS])
         for k, sh in enumerate(shots):
             shared = overlap(span, (sh.start, sh.end))
             if sh.id in ctx.locked or shared < min(2.0, 0.3 * sh.duration):
@@ -107,14 +128,18 @@ def ensure_chart(shots: list[Shot], ctx: _Assembler, spans: dict[str, tuple[floa
             is_mg = sh.type == ShotType.motion_graphic
             if not is_mg and (sh.duration < mg_min or sh.duration > MG_HOLD_MAX_S or _mg_neighbours(shots, k) >= 1):
                 continue
+            # the tests cards_on_cue and screen_guard apply later, so they never undo the guaranteed chart
+            if (not any(sh.start - CUE_EARLY_S <= c <= sh.start + CUE_LATE_S for c in cues)
+                    or map_conflict(idea.motion, sh.start, shown_graphics(shots, (sh.id,)))):
+                continue
             rank = (1 if is_mg else 0, shared)
             if best is None or rank > best[0]:
                 best = (rank, sh, idea)
     if best is None:
         hosts = [(overlap(spans.get(i.beat_id, (0.0, 0.0)), (sh.start, sh.end)), sh, i) for i in charts for sh in shots
                  if sh.id not in ctx.locked and sh.type in INSET_HOST
-                 and not any(o is not sh and o.overlay is not None and o.overlay.kind in INSET_KINDS
-                             and abs(o.start - sh.start) < INSET_GAP_S for o in shots)]
+                 and I.overlay_start(i.motion, ctx.words, sh.start, sh.end) is not None
+                 and not map_conflict(i.motion, sh.start, shown_graphics(shots, (sh.id,)))]
         hosts = [x for x in hosts if x[0] >= min(2.0, 0.3 * x[1].duration)]
         if hosts:
             _, shot, idea = max(hosts, key=lambda x: x[0])
@@ -187,8 +212,8 @@ CTA_MOTION_BLOCK = {MotionKind.map, MotionKind.number_card, MotionKind.lower_thi
                     MotionKind.line_chart}
 
 
-def merge_ideas(llm: list[VisualIdea], bcs: list[I.BeatContext], research: Optional[Research], palette: str,
-                rng: random.Random) -> list[VisualIdea]:
+def merge_ideas(llm: list[VisualIdea], bcs: list[I.BeatContext], research: Optional[Research],
+                palette: str) -> list[VisualIdea]:
     """Model ideas first; heuristic ideas fill every missing family and stay as lower priority reserves.
 
     On call-to-action beats model overlays are dropped, and so are model maps, charts and number cards.
@@ -203,7 +228,7 @@ def merge_ideas(llm: list[VisualIdea], bcs: list[I.BeatContext], research: Optio
         out.append(idea)
     have = {(i.beat_id, i.family) for i in out}
     for bc in bcs:
-        for idea in I.ideas_for_beat(bc, research, palette, rng):
+        for idea in I.ideas_for_beat(bc, research, palette):
             if (bc.beat.id, idea.family) in have:
                 idea.priority = round(idea.priority * 0.5, 3)
             out.append(idea)
@@ -221,7 +246,8 @@ def item_title(title: str) -> str:
 def structural_anchors(script: Script, spans: dict[str, tuple[float, float]], profile: StyleProfile,
                        top10: bool, total: float, topic: str) -> list[Anchor]:
     """Top 10: number card and item lower third per item, recap grid on the Recap scene (else the outro).
-    Documentary: main title at the setup."""
+    Documentary: main title at the setup, unless its text repeats the opening line (the captions already said
+    it, and a minute later it lands on other words)."""
     pal = profile.palette
     out: list[Anchor] = []
     starts = {sc.id: spans[sc.beats[0].id][0] for sc in script.scenes if sc.beats and sc.beats[0].id in spans}
@@ -235,8 +261,14 @@ def structural_anchors(script: Script, spans: dict[str, tuple[float, float]], pr
         out += _recap_anchor(script, starts, ends, items, numbers, profile, total)
         return out
     setup = next((sc for sc in script.scenes if sc.purpose == ScenePurpose.setup and sc.id in starts), None)
-    if setup is not None and starts[setup.id] >= 5.0:
-        main, _, sub = (script.title or topic).partition(":")
+    main, _, sub = (script.title or topic).partition(":")
+    opening = script.beats()[0].text if script.beats() else ""
+    # a title is checked against one known line, so a short title-cased title spoken there whole repeats it too
+    # (no short-name exemption); a one-word title never does
+    toks = I.norm_tokens(main)
+    dup = len(toks) >= 2 and (f" {' '.join(toks)} " in f" {' '.join(I.norm_tokens(opening))} "
+                              or I.repeats_narration(main.strip(), opening))
+    if setup is not None and starts[setup.id] >= 5.0 and not dup:
         out.append(Anchor(start=starts[setup.id], duration=profile.pacing.card_hold_max, type=ShotType.motion_graphic,
                           tag="title_card",
                           motion=b.title_card_spec(main.strip() or topic, sub.strip(), palette=pal)))

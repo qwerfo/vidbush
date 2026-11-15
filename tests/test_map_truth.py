@@ -94,7 +94,7 @@ def test_unsnappable_route_keeps_endpoint_markers_only() -> None:
 def test_distance_between_two_markers_is_checked() -> None:
     p = _map({"center": [63.0, -157.0], "zoom": 4.5, "title": "About 70 miles apart",
               "markers": [{"place": "Anchorage"}, {"place": "Nome", "label": "Nome, 540 miles away"}]}).typed_payload()
-    assert p.title == "" and p.markers[1].label == "Nome, 540 miles away"
+    assert p.title == "Anchorage and Nome" and p.markers[1].label == "Nome, 540 miles away"  # title: what is drawn
     assert checked_distance("Train", 47.0) == "Train"
     assert checked_distance("Panama Railroad, 47 miles", 42.0) == "Panama Railroad, 47 miles"
     assert checked_distance("fifty-eight miles", 47.0) == "fifty-eight miles"
@@ -107,8 +107,10 @@ def test_markers_are_gazetteer_places_in_their_own_view() -> None:
         {"label": "Toksook Bay", "lat": 60.2, "lon": 162.58}, {"place": "Fairbanks"},
         {"place": "Paris"}]}).typed_payload()
     nome = geo.lookup("Nome")
-    assert [m.label for m in p.markers] == ["Nome", "Fairbanks"]  # descriptions, unknowns and Paris dropped
+    # descriptions, unknowns and Paris dropped; Toksook Bay (a small GNIS place) keeps its real spot, not the flipped one
+    assert [m.label for m in p.markers] == ["Nome", "Toksook Bay", "Fairbanks"]
     assert (p.markers[0].lat, p.markers[0].lon) == (nome.lat, nome.lon)
+    assert p.markers[1].lon < -160
     flipped = _map({"center": [61.0, 150.0], "zoom": 5, "markers": [{"place": "Anchorage"}]}).typed_payload()
     assert flipped.markers and b.in_view(flipped.center, flipped.zoom, (61.2181, -149.9003))
 
@@ -195,9 +197,9 @@ def test_research_never_makes_a_named_animal_a_place_anchor() -> None:
 
 
 def test_route_endpoints_pass_the_same_view_check_as_markers() -> None:
-    """A Texas map: Paris, France is not a route endpoint and never refits the map to the Atlantic."""
-    p = _map({"center": [33.3, -96.5], "zoom": 6.5, "markers": [{"place": "Dallas"}, {"place": "Paris"}],
-              "routes": [{"from_place": "Dallas", "to_place": "Paris", "via": "road"}]}).typed_payload()
+    """A Texas map: Kyoto, Japan is not a route endpoint and never refits the map to the Pacific."""
+    p = _map({"center": [33.3, -96.5], "zoom": 6.5, "markers": [{"place": "Dallas"}, {"place": "Kyoto"}],
+              "routes": [{"from_place": "Dallas", "to_place": "Kyoto", "via": "road"}]}).typed_payload()
     assert p.routes == [] and [m.label for m in p.markers] == ["Dallas"]
     assert p.center == [33.3, -96.5] and p.zoom == 6.5
 
@@ -273,3 +275,33 @@ def test_an_idea_overlay_never_repeats_a_map_card() -> None:
     shot.overlay = None
     ctx.rebind(shot, ideas[0], 0)
     assert shot.overlay is None
+
+
+def test_a_small_town_far_from_a_wide_view_center_still_resolves_in_view() -> None:
+    # Shaktoolik is 13.6 deg from the view center, past geo.NEAR_RADIUS_DEG, but unique and on screen
+    raw = {"center": [55.0, -140.0], "zoom": 3, "markers": [{"place": "Seattle"}, {"place": "Shaktoolik"}],
+           "routes": [{"from_place": "Seattle", "to_place": "Shaktoolik", "via": "sea"}]}
+    p = _map(raw).typed_payload()
+    assert {m.label for m in p.markers} == {"Seattle", "Shaktoolik"} and len(p.routes) == 1
+
+
+def test_a_well_known_place_in_view_beats_a_small_homonym_nearer_the_centre():
+    """A wide map of North America keeps Jacksonville, Florida: near only decides when the plain hit is off the map."""
+    from vidbush.models import MotionKind, MotionSpec
+    from vidbush.shots.seat import verify_map
+    spec = MotionSpec(kind=MotionKind.map, duration=5.0, payload={
+        "center": [52.0, -120.0], "zoom": 1.8, "markers": [{"place": "Jacksonville"}, {"place": "Utqiagvik"}]})
+    out = verify_map(spec)
+    jax = [m for m in out.payload["markers"] if m["label"].startswith("Jacksonville")]
+    assert jax and jax[0]["lat"] < 32 and jax[0]["lon"] > -85  # Florida
+
+
+def test_far_apart_places_keep_their_well_known_hits_without_a_view():
+    """With no view, the centre of Santa Monica and Jacksonville is Texas; neither may become a Texas homonym."""
+    from vidbush.models import MotionKind, MotionSpec
+    from vidbush.shots.seat import verify_map
+    spec = MotionSpec(kind=MotionKind.map, duration=5.0, payload={
+        "markers": [{"place": "Santa Monica"}, {"place": "Jacksonville"}]})
+    pts = {m["label"]: (m["lat"], m["lon"]) for m in verify_map(spec).payload["markers"]}
+    assert pts["Jacksonville"][1] > -85  # Florida, the well known one
+    assert "Santa Monica" not in pts or pts["Santa Monica"][1] < -117  # California or no dot, never Texas

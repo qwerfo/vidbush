@@ -2,15 +2,15 @@
 
 Every function returns a MotionSpec whose payload validates through
 spec.typed_payload(). Data-driven specs (maps, charts) always carry a
-source_note. Safe area: important content stays inside y in [150, 930] px, so
-box coordinates are clamped to that band (letterbox bars are 138 px).
+source_note. Safe area: important content stays inside y in [150, 930] px
+(letterbox bars are 138 px).
 """
 from __future__ import annotations
 
 import math
 from typing import Literal, Optional, Sequence
 
-from ..models import (BoxPayload, ChartPayload, ChartSeries, MapLabel, MapMarker, MapPayload, MapRoute, MotionKind,
+from ..models import (ChartPayload, ChartSeries, MapLabel, MapMarker, MapPayload, MapRoute, MotionKind,
                       MotionSpec, NumberCardPayload, RecapPayload, StyleTokens, TextPayload)
 from ..util import clamp
 
@@ -19,8 +19,7 @@ Position = Literal["center", "lower_left", "upper_left", "upper_right", "lower_r
 Background = Literal["transparent", "solid", "footage_behind"]
 
 MAP_SOURCE = "Map data: Natural Earth"
-SAFE_TOP = 150 / 1080
-SAFE_BOTTOM = 930 / 1080
+DISPLAY_NAMES = {"United States of America": "United States", "United Kingdom": "Britain"}
 _USABLE_H_PX = 780  # safe vertical band height at 1080p
 _FRAME_W_PX = 1920
 
@@ -114,10 +113,27 @@ def trace_route(places: Sequence[Place], via: str) -> tuple[Optional[list[list[f
     return None, via
 
 
+def drawn_title(payload: dict) -> str:
+    """A map's title rebuilt from what it draws, never free text: 'A to B' when exactly one route is drawn,
+    else up to three marker names ('A, B and C'), else the shaded regions, else ''. A title is read as a claim
+    about the picture, so it can only name places that are on it (run 2 titled a map 'Nome to Wrangell-St.
+    Elias' with only Nome drawn); a distance claim lives on the checked route label."""
+    routes = [r for r in payload.get("routes") or [] if isinstance(r, dict)]
+    if len(routes) == 1 and routes[0].get("from_place") and routes[0].get("to_place"):
+        return f"{routes[0]['from_place']} to {routes[0]['to_place']}"
+    names = [str(m.get("label") or "").strip() for m in payload.get("markers") or [] if isinstance(m, dict)]
+    names = list(dict.fromkeys(n for n in names if n))[:3] or [str(r) for r in payload.get("shaded_regions") or []][:3]
+    names = [DISPLAY_NAMES.get(n, n) for n in names]  # the short name a viewer knows (United States)
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def map_spec(places: Sequence[Place], duration: float = 8.0, route: bool = False, shaded: Sequence[str] = (),
-             title: str = "", source_note: str = MAP_SOURCE, palette: str = "documentary_warm",
+             source_note: str = MAP_SOURCE, palette: str = "documentary_warm",
              push_in: bool = True, dashed: bool = False, route_label: str = "", via: str = "line") -> MotionSpec:
-    """Map with staggered markers, an optional route through the places in order and shaded regions.
+    """Map with staggered markers, an optional route through the places in order and shaded regions; the
+    title is drawn_title of what it draws.
 
     The route is real geometry (trace_route with via); with none, the map keeps the markers only. shaded may
     name countries, states or provinces (shaded) or continents (a large label that frames the view).
@@ -154,15 +170,17 @@ def map_spec(places: Sequence[Place], duration: float = 8.0, route: bool = False
                                to_place=places[-1][0]))
     payload = MapPayload(center=center, zoom=zoom, zoom_end=round(zoom + 0.35, 2) if push_in else None,
                          markers=markers, routes=routes, labels=labels,
-                         shaded_regions=countries, title=title)
+                         shaded_regions=countries)
+    payload.title = drawn_title(payload.model_dump())
     return _spec(MotionKind.map, duration, payload.model_dump(), palette, "solid", source_note or MAP_SOURCE)
 
 
-def route_map_spec(paths: Sequence[Sequence[Place]], duration: float = 9.0, title: str = "",
-                   labels: Sequence[str] = (), source_note: str = MAP_SOURCE, palette: str = "documentary_warm",
+def route_map_spec(paths: Sequence[Sequence[Place]], duration: float = 9.0, labels: Sequence[str] = (),
+                   source_note: str = MAP_SOURCE, palette: str = "documentary_warm",
                    dashed_from: int = 1, via: str = "line") -> MotionSpec:
     """Several routes revealed one after another (e.g. old route vs new shortcut); later ones dashed. Each is
-    real geometry (trace_route with via); a path with none keeps its endpoint markers only."""
+    real geometry (trace_route with via); a path with none keeps its endpoint markers only. The title is
+    drawn_title of what it draws."""
     from . import routes as R
     traced = [trace_route(path, via) for path in paths]
     lines = [t[0] for t in traced]
@@ -186,7 +204,8 @@ def route_map_spec(paths: Sequence[Sequence[Place]], duration: float = 9.0, titl
                 seen.add(name)
                 markers.append(MapMarker(lat=lat, lon=lon, label=name, appear_at=round(a if j == 0 else b, 2)))
     payload = MapPayload(center=center, zoom=zoom, zoom_end=round(zoom + 0.25, 2), markers=markers,
-                         routes=routes, title=title)
+                         routes=routes)
+    payload.title = drawn_title(payload.model_dump())
     return _spec(MotionKind.map, duration, payload.model_dump(), palette, "solid", source_note or MAP_SOURCE)
 
 
@@ -240,8 +259,8 @@ def title_card_spec(title: str, subtitle: str = "", duration: float = 6.0,
 def lower_third_spec(title: str, subtitle: str = "", duration: float = 5.0,
                      palette: str = "documentary_warm") -> MotionSpec:
     """Transparent lower third naming a person or place (sits above the caption band)."""
-    payload = TextPayload(title=title, subtitle=subtitle, position="lower_left")
-    return _spec(MotionKind.lower_third, duration, payload.model_dump(), palette, "transparent")
+    payload = TextPayload(title=title, subtitle=subtitle, position="lower_left").model_dump()
+    return _spec(MotionKind.lower_third, duration, payload, palette, "transparent")
 
 
 def callout_spec(text: str, subtitle: str = "", duration: float = 5.0, position: Position = "upper_left",
@@ -256,31 +275,6 @@ def text_overlay_spec(text: str, position: Position = "center", subtitle: str = 
     """Date stamp, quote or statement. Use background='solid' for a full-frame quote card."""
     payload = TextPayload(title=text, subtitle=subtitle, position=position)
     return _spec(MotionKind.text_overlay, duration, payload.model_dump(), palette, background)
-
-
-def _box(x: float, y: float, w: float, h: float) -> tuple[float, float, float, float]:
-    w = clamp(w, 0.02, 1.0)
-    h = clamp(h, 0.02, SAFE_BOTTOM - SAFE_TOP)
-    x = clamp(x, 0.0, 1.0 - w)
-    y = clamp(y, SAFE_TOP, SAFE_BOTTOM - h)
-    return round(x, 4), round(y, 4), round(w, 4), round(h, 4)
-
-
-def highlight_box_spec(x: float = 0.3, y: float = 0.3, w: float = 0.4, h: float = 0.3, label: str = "",
-                       duration: float = 5.0, palette: str = "documentary_warm") -> MotionSpec:
-    """Transparent box drawing attention to a frame region (0..1 coordinates, kept in the safe band)."""
-    bx, by, bw, bh = _box(x, y, w, h)
-    payload = BoxPayload(x=bx, y=by, w=bw, h=bh, label=label)
-    return _spec(MotionKind.highlight_box, duration, payload.model_dump(), palette, "transparent")
-
-
-def arrow_spec(x: float = 0.25, y: float = 0.3, to_x: float = 0.5, to_y: float = 0.5, label: str = "",
-               duration: float = 5.0, palette: str = "documentary_warm") -> MotionSpec:
-    """Transparent arrow from (x, y) to (to_x, to_y) in 0..1 frame coordinates."""
-    lo, hi = SAFE_TOP, SAFE_BOTTOM
-    payload = BoxPayload(x=clamp(x, 0, 1), y=clamp(y, lo, hi), w=0.0, h=0.0, label=label,
-                         to_x=clamp(to_x, 0, 1), to_y=clamp(to_y, lo, hi))
-    return _spec(MotionKind.arrow, duration, payload.model_dump(), palette, "transparent")
 
 
 def recap_grid_spec(items: Sequence[str], title: str = "Recap", duration: float = 10.0,

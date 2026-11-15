@@ -28,6 +28,14 @@ def _rebind(shot: Shot, idea: VisualIdea, idx, idea_of: dict, ideas: list) -> No
     shot.intent, shot.queries = idea.intent, list(idea.queries)
 
 
+def _choose(ideas: list):
+    """Priority-only stand-in for the assembler's choose: honours its exclude constraint."""
+    def choose(shot, exclude):
+        ok = [k for k, i in enumerate(ideas) if k not in exclude]
+        return max(ok, key=lambda k: ideas[k].priority, default=None)
+    return choose
+
+
 def test_merge_short_shots() -> None:
     shots = rules.merge_short(_shots([("footage", 4.0), ("image", 1.0), ("footage", 5.0), ("image", 0.8)]), 1.5)
     assert len(shots) == 2
@@ -53,23 +61,24 @@ def test_repeated_idea_gets_alternative_or_framing_cycle() -> None:
     ideas = [VisualIdea(beat_id="b1", family="footage", intent="only idea", queries=["q"])]
     shots = _shots([("footage", 4.0), ("footage", 4.0), ("footage", 4.0)])
     idea_of = {s.id: 0 for s in shots}
-    rules.avoid_repeats(shots, ideas, idea_of, lambda s, i, k: _rebind(s, i, k, idea_of, ideas))
+    rules.avoid_repeats(shots, ideas, idea_of, lambda s, i, k: _rebind(s, i, k, idea_of, ideas), _choose(ideas))
     assert [s.framing for s in shots] == ["full", "tight", "detail"]
     ideas.append(VisualIdea(beat_id="b1", family="footage", intent="second", queries=["other"]))
     shots = _shots([("footage", 4.0), ("footage", 4.0)])
     idea_of = {s.id: 0 for s in shots}
-    rules.avoid_repeats(shots, ideas, idea_of, lambda s, i, k: _rebind(s, i, k, idea_of, ideas))
+    rules.avoid_repeats(shots, ideas, idea_of, lambda s, i, k: _rebind(s, i, k, idea_of, ideas), _choose(ideas))
     assert idea_of["s1"] == 1 and shots[1].intent == "second"
 
 
-def test_opening_prefers_opening_safe_footage() -> None:
-    ideas = [VisualIdea(beat_id="b1", family="footage", intent="empty hills", opening_safe=False, priority=1.0),
-             VisualIdea(beat_id="b1", family="footage", intent="workers digging", opening_safe=True, priority=0.5)]
+def test_opening_trims_cards_and_leaves_pictures_on_their_words() -> None:
+    """The hook's activity preference is a tie breaker inside the assembler's score (HOOK_CALM_W, below one
+    second of anchor gap), so densify_opening never re-picks a picture: the words own the content."""
+    from vidbush.shots.assembler import ANCHOR_W, HOOK_CALM_W
+    assert HOOK_CALM_W < ANCHOR_W
     shots = _shots([("footage", 3.0), ("motion_graphic", 9.0), ("footage", 3.0)])
     shots[1].motion = title_card_spec("Title", duration=9.0)
-    idea_of = {"s0": 0, "s2": 1}
-    rules.densify_opening(shots, ideas, idea_of, profile(), lambda s, i, k: _rebind(s, i, k, idea_of, ideas))
-    assert shots[0].intent == "workers digging"
+    rules.densify_opening(shots, profile())
+    assert shots[0].intent == "shot 0"  # not re-picked for opening_safe
     assert shots[1].duration <= profile().pacing.motion_graphic.min * 1.15 + 1e-6
     assert round(sum(s.duration for s in shots), 6) == 15.0
     _contiguous(shots)

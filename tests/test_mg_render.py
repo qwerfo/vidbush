@@ -14,7 +14,7 @@ from vidbush.mg.chartdraw import format_value, nice_ticks
 from vidbush.mg.palettes import PALETTES, get_palette
 from vidbush.mg.renderer import render_spec
 from vidbush.mg.textdraw import coloured, fit_text, text_width, unpremultiply
-from vidbush.models import MotionKind, MotionSpec
+from vidbush.models import BoxPayload, MotionKind, MotionSpec
 from vidbush.render.mg_python import build_comp, count_start, format_count, parse_number, recap_numbers
 
 W, H = 640, 360
@@ -26,8 +26,7 @@ def small(spec: MotionSpec, duration: float = 1.0) -> MotionSpec:
 
 def specs() -> dict[str, MotionSpec]:
     return {
-        "map": b.map_spec([("Colon", 9.35, -79.9), ("Panama City", 8.98, -79.52)], route=True, shaded=["Panama"],
-                          title="The Panama Canal"),
+        "map": b.map_spec([("Colon", 9.35, -79.9), ("Panama City", 8.98, -79.52)], route=True, shaded=["Panama"]),
         "bar_chart": b.bar_chart_spec(["1914", "1950", "2020"], [1000, 6000, 13300], units="ships",
                                       title="Transits", highlight_index=2),
         "line_chart": b.line_chart_spec(["1914", "1950", "1980", "2020"], [1.1, 5.4, 13.2, 13.3], units="%",
@@ -36,9 +35,11 @@ def specs() -> dict[str, MotionSpec]:
         "title_card": b.title_card_spec("A Path Between the Seas", "Chapter one"),
         "lower_third": b.lower_third_spec("Theodore Roosevelt", "26th President"),
         "callout": b.callout_spec("The French lost 22,000 workers", "Yellow fever and malaria"),
-        "highlight_box": b.highlight_box_spec(0.3, 0.3, 0.3, 0.3, label="Culebra Cut"),
+        "highlight_box": b._spec(MotionKind.highlight_box, 5.0, BoxPayload(x=0.3, y=0.3, w=0.3, h=0.3,
+                                 label="Culebra Cut").model_dump(), "documentary_warm", "transparent"),
         "text_overlay": b.text_overlay_spec("August 15, 1914", position="lower_left"),
-        "arrow": b.arrow_spec(0.2, 0.3, 0.6, 0.6, label="Gatun Locks"),
+        "arrow": b._spec(MotionKind.arrow, 5.0, BoxPayload(x=0.2, y=0.3, to_x=0.6, to_y=0.6,
+                         label="Gatun Locks").model_dump(), "documentary_warm", "transparent"),
         "recap_grid": b.recap_grid_spec(["One", "Two", "Three", "Four", "Five"], title="Top 5"),
     }
 
@@ -169,7 +170,7 @@ def test_recap_numbering() -> None:
 
 def test_map_fps_benchmark_1080p() -> None:
     spec = b.map_spec([("Colon", 9.35, -79.9), ("Panama City", 8.98, -79.52)], duration=2.0, route=True,
-                      shaded=["Panama"], title="Benchmark")
+                      shaded=["Panama"])  # the title is derived from what the map draws
     t0 = time.perf_counter()
     comp = build_comp(spec, False)
     t1 = time.perf_counter()

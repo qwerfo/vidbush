@@ -175,7 +175,7 @@ def test_no_overlay_text_repeats_within_30_seconds() -> None:
 
 def test_cta_beat_has_no_overlay_map_or_number_card() -> None:
     bc = _bc("Subscribe for more of the history that built America, from New York to California.")
-    made = I.ideas_for_beat(bc, None, "documentary_warm", random.Random(1))
+    made = I.ideas_for_beat(bc, None, "documentary_warm")
     assert all(i.overlay is None for i in made)
     assert not any(i.motion and i.motion.kind in (MotionKind.map, MotionKind.number_card) for i in made)
     assert {i.family for i in made} == {"footage", "still"}  # no card over a call to action
@@ -184,7 +184,7 @@ def test_cta_beat_has_no_overlay_map_or_number_card() -> None:
 
 def test_place_lower_thirds_only_name_points_the_idea_shows() -> None:
     bc = _bc("Workers from New York and all over the United States poured into Europe and Boulder City.")
-    made = I.ideas_for_beat(bc, None, "documentary_warm", random.Random(1))
+    made = I.ideas_for_beat(bc, None, "documentary_warm")
     for idea in made:
         ov = idea.overlay
         if ov is not None and ov.kind == MotionKind.lower_third:
@@ -231,8 +231,8 @@ def test_comparison_places_make_no_map() -> None:
 
 
 def test_map_signature_ignores_wording() -> None:
-    a = b.map_spec([("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)], route=True, title="A")
-    c = b.map_spec([("Panama City", 8.97, -79.54), ("Colon", 9.36, -79.9)], route=True, title="B")
+    a = b.map_spec([("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)], route=True)
+    c = b.map_spec([("Panama City", 8.97, -79.54), ("Colon", 9.36, -79.9)], route=True)
     assert motion_signature(a) == motion_signature(c)
     assert motion_signature(a) != motion_signature(b.map_spec([("Las Vegas", 36.2, -115.2)]))
 
