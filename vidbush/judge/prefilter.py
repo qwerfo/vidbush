@@ -24,7 +24,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from ..config import PrefilterConfig
-from ..models import Candidate, SourceKind
+from ..models import GENERATED_SOURCES, Candidate, SourceKind
 
 WORK_WIDTH = 640  # frames are downscaled to this width before OCR and the face cascade
 LOGO_WIDTH = 320  # the logo check works on smaller frames
@@ -38,7 +38,7 @@ STATIC_SHARE = 0.75  # when this share of the frame centre is stable the clip is
 PREFILTER_WORKERS = 4
 LABELS = ("burned_in_captions", "channel_logo", "talking_head")
 # operator media (library folder, uploads) and generated media are not third party footage: never pre-filtered
-TRUSTED_SOURCES = {SourceKind.local, SourceKind.upload, SourceKind.ai_image, SourceKind.ai_video, SourceKind.motion}
+TRUSTED_SOURCES = {SourceKind.local, SourceKind.upload} | GENERATED_SOURCES
 
 _LOCK = threading.Lock()
 _OCR: list[Any] = []  # the lazily built engine; empty until first use

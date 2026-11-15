@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import Narration, Scene, Script, ShotList, SourceKind, VideoFormat
+from ..models import GENERATED_SOURCES, Narration, Scene, Script, ShotList, SourceKind, VideoFormat
 from ..util import no_em_dash, read_json
 
 MIN_CHAPTER_S = 10.0
@@ -380,7 +380,7 @@ def credits_block(shotlist: ShotList) -> str:
     lines: list[str] = []
     for shot in shotlist.shots:
         c = shot.selected_candidate()
-        if c is None or c.source in {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}:
+        if c is None or c.source in GENERATED_SOURCES:
             continue
         head = f"{c.title or 'Untitled'} by {c.author}" if c.author else (c.title or "Untitled")
         line = c.attribution or ", ".join(p for p in (head, c.licence, c.url) if p and p != "unknown")

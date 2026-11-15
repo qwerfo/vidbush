@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from PIL import Image
 
+from .. import models
 from ..models import Candidate, Narration, Script, Shot, SourceKind, Word
 from ..source.licence import is_public_domain, normalise_licence
 
@@ -65,9 +66,10 @@ Result = tuple[float, str, Optional[str]]
 # ---------------------------------------------------------------- picture kinds
 
 REAL_FOOTAGE, REAL_STILL, AI_PHOTO, DESIGNED, GRAPHIC = "real_footage", "real_still", "ai_photo", "designed", "graphic"
-AI_PHOTO_SOURCES = {SourceKind.ai_image.value, SourceKind.ai_video.value}  # photo-style AI standing in for real footage
-DESIGNED_SOURCES: set[str] = set()  # designed animation (illustrated maps, declared-style art): add source values
-GRAPHIC_SOURCES = {SourceKind.motion.value}
+# the source sets live in models.py; compared by value so plain strings work too
+AI_PHOTO_SOURCES = {k.value for k in models.PHOTO_AI_SOURCES}
+DESIGNED_SOURCES = {k.value for k in models.DESIGNED_SOURCES}
+GRAPHIC_SOURCES = {k.value for k in models.GRAPHIC_SOURCES}
 GENERATED_KINDS = {AI_PHOTO, DESIGNED, GRAPHIC}
 ARCHIVAL_SOURCES = {"loc", "archive", "nasa", "wikimedia", "nara"}  # by value: nara may not be a SourceKind yet
 
