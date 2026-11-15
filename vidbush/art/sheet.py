@@ -54,7 +54,7 @@ def stills(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             score = (float(ap.get("appeal") or 60) + float(ap.get("fit") or 60)) / 2
             out.append({"kind": "illustrated map", "path": it["frame"], "start": it["start"], "line": it["window"],
                         "score": score})
-        elif it.get("type") == "illustration" and it.get("ok") and it.get("still") and Path(it["still"]).exists()                 and not TEXT_ARTIFACT.search(str(it.get("report", {}).get("brief", ""))):  # the picker's own rule
+        elif it.get("type") == "illustration" and it.get("ok") and it.get("still") and Path(it["still"]).exists()                 and not TEXT_ARTIFACT.search(str(it.get("report", {}).get("brief", "")))                 and not it.get("scene"):  # the picker's own rule; a split-panel picture is not one scene
             out.append({"kind": "illustration", "path": it["still"], "start": it["start"], "line": it["window"],
                         "score": float(it.get("score") or 0)})
     seen: dict[str, dict[str, Any]] = {}  # one item per picture: several processes may report the same one
@@ -169,7 +169,10 @@ def main(argv: list[str] | None = None) -> None:
     items = _items(review / "art_project" / "work" / "art")
     chosen = pick12(stills(items))
     contact_sheet(chosen, review / "art_contact_sheet.png")
-    clips = number_clips(items, review, failed_stills(review / "art_project" / "work" / "art"))
+    bad = failed_stills(review / "art_project" / "work" / "art")
+    bad |= {str(it["still"]) for it in items if it.get("type") == "illustration"
+            and (it.get("scene") or TEXT_ARTIFACT.search(str(it.get("report", {}).get("brief", ""))))}  # its clip too
+    clips = number_clips(items, review, bad)
     y = yield_numbers(items)
     (review / "yield.json").write_text(json.dumps({"yield": y, "sheet": chosen, "clips": clips}, indent=1),
                                        encoding="utf-8")

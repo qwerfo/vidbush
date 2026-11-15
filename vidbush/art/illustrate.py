@@ -43,7 +43,7 @@ happens), a comparison, a sense of scale, or a scene from before cameras existed
 moments, where the narration makes the illustration meaningful.
 For each pick write a brief: what to draw, in plain words. No person names, no brand names, no
 readable text, never the likeness of a named real person (an anonymous figure is fine).
-Never a map, chart, graph, diagram with labels, document or screen: maps and charts are drawn by the
+One single scene, never split panels or a collage. Never a map, chart, graph, diagram with labels, document or screen: maps and charts are drawn by the
 renderer, where every word is checked.
 Answer JSON: {"picks": [{"shot_id": "...", "category": "process|comparison|scale|before_cameras|other",
 "brief": "..."}]} with at most the number of picks asked for, best first."""
@@ -56,6 +56,10 @@ HEURISTIC_WORDS = re.compile(
 # a brief naming a lettered artifact is the renderer's job (maps, charts) or text the model would invent
 TEXT_ARTIFACT = re.compile(r"\b(maps?|charts?|graphs?|diagrams?|infographics?|documents?|newspapers?|headlines?|"
                            r"signs?|screens?|labels?|captions?)\b", re.I)
+
+
+# a brief asking for several pictures in one frame breaks the one-scene rule before any image is paid for
+SPLIT_BRIEF = re.compile(r"\b(panels?|split|side by side|collage|triptych|diptych|two halves|on one side)\b", re.I)
 
 
 def _eligible(shot: Shot) -> bool:
@@ -86,7 +90,8 @@ def _validate(raw: Any, by_id: dict[str, Shot]) -> list[dict]:
         if not isinstance(it, dict):
             continue
         sid, brief = str(it.get("shot_id") or ""), str(it.get("brief") or "").strip()
-        if sid in seen or sid not in by_id or not brief or not _eligible(by_id[sid]) or TEXT_ARTIFACT.search(brief):
+        if sid in seen or sid not in by_id or not brief or not _eligible(by_id[sid]) or TEXT_ARTIFACT.search(brief) \
+                or SPLIT_BRIEF.search(brief):
             continue
         cat = str(it.get("category") or "other")
         seen.add(sid)

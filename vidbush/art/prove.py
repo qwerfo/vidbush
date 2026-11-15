@@ -187,6 +187,10 @@ class Prove:
         used = tuple(sorted({str(x) for m in first for x in m.get("places", [])}))
         more = self._cached("prove_moments2.json", lambda: self._moments(self.args.maps, used)) \
             if self.args.only == "maps" else []
+        if self.args.only == "maps" and self.args.moments_round > 2:  # a further round, never a place used before
+            used = tuple(sorted({str(x) for m in first + more for x in m.get("places", [])}))
+            more = more + self._cached(f"prove_moments{self.args.moments_round}.json",
+                                       lambda: self._moments(self.args.maps, used))
         for m in first + more:
             if done >= self.args.maps:
                 break
@@ -416,6 +420,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--image-cap", type=float, default=300.0)
     ap.add_argument("--stop-clips-at", default="")
     ap.add_argument("--picks-file", default="prove_picks_extra.json")
+    ap.add_argument("--moments-round", type=int, default=2)
     ap.add_argument("--skip-places", nargs="*", default=[], help="place names the gazetteer resolves wrongly")
     ap.add_argument("--only", default="", choices=["", "ai-clips", "extra-illustrations", "maps", "clips"])
     args = ap.parse_args(argv)
