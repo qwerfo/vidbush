@@ -97,6 +97,7 @@ def _fake(monkeypatch, tmp_path, scores, texts=None, spec=True):
     monkeypatch.setattr(E, "generate", gen)
     monkeypatch.setattr(common, "elevate_spec", lambda ctx: SimpleNamespace(name="e") if spec else None)
     monkeypatch.setattr(common, "find_text", lambda p: (texts or {}).get(Path(p).name.split("_16x9")[0], []))
+    monkeypatch.setattr(common, "scene_problems", lambda p, ctx: [])
     it = iter(scores)
     monkeypatch.setattr(J, "score_candidate", lambda shot, cand, ctx, narration="": next(it))
     return calls
@@ -146,3 +147,12 @@ def test_lettered_artifact_briefs_are_dropped():
     assert TEXT_ARTIFACT.search("A printed map of the United States with Alaska as an inset")
     assert TEXT_ARTIFACT.search("a newspaper headline")
     assert not TEXT_ARTIFACT.search("A dog team crossing cracked sea ice at dusk")
+
+
+def test_scene_check_needs_a_real_no_for_panels():
+    from types import SimpleNamespace
+    from vidbush.art.common import scene_problems
+    ctx = lambda reply: SimpleNamespace(stage="v", seats=SimpleNamespace(vision_json=lambda *a, **k: reply))  # noqa: E731
+    assert scene_problems("x.png", ctx({"panels": False, "frame": False})) == []
+    assert scene_problems("x.png", ctx({"panels": True, "frame": False})) == ["split panels or collage"]
+    assert scene_problems("x.png", ctx({"panels": False, "frame": False, "_mock": True}))  # a mock proves nothing

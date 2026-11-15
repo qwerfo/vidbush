@@ -153,6 +153,7 @@ class Prove:
         with self.lock:
             self.items.append(item)
             name = {"ai-clips": "art_report_ai_clips.json", "maps": "art_report_maps.json",
+                    "clips": "art_report_clips.json",
                     "extra-illustrations": f"art_report_{Path(self.args.picks_file).stem}.json"}.get(self.args.only, "art_report.json")
             common.write_report(self.ctx, name, self.items)
 
@@ -283,18 +284,49 @@ class Prove:
 
     # ------------------------------------------------------------ clips
 
-    def seed_ai_clips(self, n: int) -> None:
+    def seed_ai_clips(self, n: int, skip: Optional[set] = None) -> None:
         """The opening first: AI stills of the stored shot list, picked by the clip planner."""
         eligible = {}
         for s in self.shotlist.shots:
             c = s.selected_candidate()
-            if c is not None and c.source.value == "ai_image" and c.local_path and Path(c.local_path).exists():
+            if c is not None and c.source.value == "ai_image" and c.local_path and Path(c.local_path).exists()                     and str(c.local_path) not in (skip or set()):
                 eligible[s.id] = "ai_image"
         art = self.ctx.profile.art.model_copy(update={"clip_every_s": max(60.0, self.shotlist.duration / max(1, n))})
         for sid in C.plan_clips(self.shotlist, art, eligible)[:n]:
             s = self.shotlist.by_id(sid)
             self.clipq.put({"kind": "ai_image", "still": s.selected_candidate().local_path, "shot": s,
                             "item": {"type": "ai_still", "shot_id": s.id, "start": s.start}})
+
+    def queue_unclipped(self) -> None:
+        """Every passing illustration and painted map of earlier passes whose clip was never checked: illustrations first,
+        then the opening's AI stills, then painted maps (veo moved the camera on every map clip in this run)."""
+        art = common.art_dir(self.ctx)
+        items: list[dict[str, Any]] = []
+        for f in sorted(art.glob("art_report*.json")):
+            if "attempt" not in f.name:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                items += data if isinstance(data, list) else []
+        # a still whose clip was already checked is never queued again, pass or fail: the vision check is not
+        # deterministic, and checking one clip again until it passes would be re-rolling, not checking
+        done = {str(it.get("still")) for it in items if it.get("type") == "clip" and it.get("check")}
+        seen: set[str] = set()
+        for it in items:
+            if it.get("type") == "illustration" and it.get("ok") and it.get("still"):
+                if it["still"] in done or it["still"] in seen:
+                    continue
+                seen.add(it["still"])
+                shot = self.shotlist.by_id(it["shot_id"])
+                self.clipq.put({"kind": "illustration", "still": it["still"], "item": it, "shot": shot,
+                                "subject": it["report"].get("brief", "")})
+        self.seed_ai_clips(self.args.ai_clips, skip=done)
+        for it in items:
+            if it.get("type") == "illustrated_map" and it.get("ok") and it["report"].get("base"):
+                still = it["report"]["base"]
+                if still in done or still in seen:
+                    continue
+                seen.add(still)
+                spec = MotionSpec(**it["spec"])
+                self.clipq.put({"kind": "illustrated_map", "still": still, "item": it, "spec": spec})
 
     def run_clips(self) -> None:
         out = self.root / "work" / "art" / "clips"
@@ -340,6 +372,11 @@ class Prove:
         if self.spec is None:
             raise SystemExit("no Elevate image seat configured")
         self.seed_ai_clips(self.args.ai_clips)
+        if self.args.only == "clips":
+            self.queue_unclipped()
+            self.clipq.put(None)
+            self.run_clips()
+            return
         if self.args.only == "maps":
             self.run_maps()
             self.clipq.put(None)
@@ -380,7 +417,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--stop-clips-at", default="")
     ap.add_argument("--picks-file", default="prove_picks_extra.json")
     ap.add_argument("--skip-places", nargs="*", default=[], help="place names the gazetteer resolves wrongly")
-    ap.add_argument("--only", default="", choices=["", "ai-clips", "extra-illustrations", "maps"])
+    ap.add_argument("--only", default="", choices=["", "ai-clips", "extra-illustrations", "maps", "clips"])
     args = ap.parse_args(argv)
     Prove(args).run()
 

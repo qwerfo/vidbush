@@ -80,6 +80,30 @@ def has_bars(path: str | Path, band: float = 0.06, max_std: float = 6.0) -> bool
     return (flat(a[:bh]) and flat(a[-bh:])) or (flat(a[:, :bw]) and flat(a[:, -bw:]))
 
 
+SCENE_SYSTEM = ("You check one illustration for a documentary. Answer two fixed yes or no questions with strict JSON "
+                'only: {"panels": bool, "frame": bool}. panels: is the picture split into two or more panels, a '
+                "collage or a triptych instead of one single scene? frame: is there a border, frame or band painted "
+                "along any edge?")
+
+
+def scene_problems(path: str | Path, ctx: Any) -> list[str]:
+    """Fixed yes or no vision questions an illustration must pass: one single scene, no painted frame. A mock or
+    unreadable reply passes nothing: no answer is no evidence of a single scene."""
+    try:
+        raw = ctx.seats.vision_json("vision", "art_scene_check", SCENE_SYSTEM, "Answer for the attached picture.",
+                                    [str(path)], ctx.stage or "visuals")
+    except Exception as e:  # noqa: BLE001
+        return [f"scene check failed: {str(e)[:120]}"]
+    if not isinstance(raw, dict) or raw.get("_mock") or "panels" not in raw:
+        return ["scene check gave no answer"]
+    out = []
+    if raw.get("panels") is not False:
+        out.append("split panels or collage")
+    if raw.get("frame") is True:
+        out.append("painted frame or band")
+    return out
+
+
 def elevate_spec(ctx: Any) -> Optional[ProviderSpec]:
     """The first configured Elevate provider of the image seat (the art layer needs reference images, which
     only Elevate's media API takes here), or None: no art without it, never a mock."""

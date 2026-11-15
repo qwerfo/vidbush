@@ -20,6 +20,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from ..mg.palettes import font_path
+from .illustrate import TEXT_ARTIFACT
 
 TILE_W, TILE_H, CAP_H, PAD, COLS = 640, 360, 150, 24, 4
 
@@ -53,7 +54,7 @@ def stills(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             score = (float(ap.get("appeal") or 60) + float(ap.get("fit") or 60)) / 2
             out.append({"kind": "illustrated map", "path": it["frame"], "start": it["start"], "line": it["window"],
                         "score": score})
-        elif it.get("type") == "illustration" and it.get("ok") and it.get("still") and Path(it["still"]).exists():
+        elif it.get("type") == "illustration" and it.get("ok") and it.get("still") and Path(it["still"]).exists()                 and not TEXT_ARTIFACT.search(str(it.get("report", {}).get("brief", ""))):  # the picker's own rule
             out.append({"kind": "illustration", "path": it["still"], "start": it["start"], "line": it["window"],
                         "score": float(it.get("score") or 0)})
     seen: dict[str, dict[str, Any]] = {}  # one item per picture: several processes may report the same one
@@ -64,6 +65,12 @@ def stills(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def pick12(cands: list[dict[str, Any]], n: int = 12, floor: int = 4) -> list[dict[str, Any]]:
+    best: dict[tuple, dict[str, Any]] = {}  # one item per moment and kind: the best scored
+    for c in cands:
+        k = (c["kind"], round(float(c["start"])))
+        if k not in best or c["score"] > best[k]["score"]:
+            best[k] = c
+    cands = list(best.values())
     by = {k: sorted([c for c in cands if c["kind"] == k], key=lambda c: -c["score"])
           for k in ("illustrated map", "illustration")}
     chosen = [c for k in by for c in by[k][:floor]]
@@ -98,9 +105,26 @@ def contact_sheet(chosen: list[dict[str, Any]], out: Path) -> Path:
     return out
 
 
-def number_clips(items: list[dict[str, Any]], review: Path) -> list[dict[str, Any]]:
-    ok = sorted([it for it in items if it.get("type") == "clip" and it.get("ok") and it.get("final")
-                 and Path(it["final"]).exists()], key=lambda it: float(it.get("start") or 0))
+def failed_stills(art: Path) -> set[str]:
+    """Stills whose clip failed any check in any report, earlier attempts included."""
+    out: set[str] = set()
+    for f in art.glob("art_report*.json"):
+        data = json.loads(f.read_text(encoding="utf-8"))
+        for it in data if isinstance(data, list) else []:
+            if it.get("type") == "clip" and it.get("check") and not it.get("ok"):
+                out.add(str(it.get("still")))
+    return out
+
+
+def number_clips(items: list[dict[str, Any]], review: Path, failed: set[str] = frozenset()) -> list[dict[str, Any]]:
+    """Clips whose every check passed: a clip that failed once and passed on a later check is not counted, because
+    the vision check is not deterministic and the later pass would be a re-roll."""
+    ok, seen = [], set()
+    for it in sorted(items, key=lambda it: float(it.get("start") or 0)):
+        if it.get("type") == "clip" and it.get("ok") and it.get("final") and Path(it["final"]).exists() \
+                and str(it.get("still")) not in failed and str(it.get("still")) not in seen:
+            seen.add(str(it.get("still")))
+            ok.append(it)
     for old in review.glob("clip_*.mp4"):
         old.unlink()
     lines = ["# Clips", "", "| clip | time | made from | narration line |", "|---|---|---|---|"]
@@ -145,7 +169,7 @@ def main(argv: list[str] | None = None) -> None:
     items = _items(review / "art_project" / "work" / "art")
     chosen = pick12(stills(items))
     contact_sheet(chosen, review / "art_contact_sheet.png")
-    clips = number_clips(items, review)
+    clips = number_clips(items, review, failed_stills(review / "art_project" / "work" / "art"))
     y = yield_numbers(items)
     (review / "yield.json").write_text(json.dumps({"yield": y, "sheet": chosen, "clips": clips}, indent=1),
                                        encoding="utf-8")

@@ -176,6 +176,11 @@ def illustrate(shot: Shot, pick: dict, ctx: Any, out_dir: Path, window: str) -> 
                 row["reject"] = "text in picture" if row["text"] else "bars painted at the frame edge"
                 variants.append(row)
                 continue
+            scene = common.scene_problems(fitted, ctx)  # one scene, no painted frame: the judge passed collages
+            if scene:
+                row["reject"] = "; ".join(scene)
+                variants.append(row)
+                continue
             cand = Candidate(id=f"{shot.id}_ill_{i}", source=SourceKind.illustration, local_path=str(fitted),
                              media="image", width=1920, height=1080, licence="AI generated illustration",
                              attribution="Illustration (AI generated)", title="Illustration",

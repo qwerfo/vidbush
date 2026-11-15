@@ -35,8 +35,10 @@ def test_sheet_clips_and_yield(tmp_path):
          "report": {"chosen": "v0", "variants": [{"path": "v0", "ok": True, "registration": {"ok": True},
                                                   "appeal": {"appeal": 80, "fit": 70}},
                                                  {"path": "v1", "ok": False, "registration": {"ok": False}}]}},
-        {"type": "clip", "kind": "illustration", "ok": True, "raw": "r", "final": str(clip), "start": 12, "window": "A"},
-        {"type": "clip", "kind": "ai_image", "ok": False, "raw": "r", "check": {"reasons": ["morphing"]}, "start": 1},
+        {"type": "clip", "kind": "illustration", "ok": True, "raw": "r", "final": str(clip), "start": 12, "window": "A",
+         "still": "a.png", "check": {"ok": True}},
+        {"type": "clip", "kind": "ai_image", "ok": False, "raw": "r", "check": {"reasons": ["morphing"]}, "start": 1,
+         "still": "b.png"},
     ]
     (art / "art_report.json").write_text(json.dumps(items), encoding="utf-8")
     (art / "art_report_attempt1.json").write_text(json.dumps(items * 3), encoding="utf-8")  # ignored
@@ -48,3 +50,16 @@ def test_sheet_clips_and_yield(tmp_path):
     assert y["illustrations"]["text_found"] == 1 and y["illustrations"]["passed_judge"] == 1
     assert y["clips"] == {"generated": 2, "passed": 1, "failed_reasons": ["morphing"]}
     assert "0:12" in (tmp_path / "clips.md").read_text(encoding="utf-8")
+
+
+def test_a_clip_that_failed_once_is_never_counted(tmp_path):
+    art = tmp_path / "art_project" / "work" / "art"
+    art.mkdir(parents=True)
+    clip = tmp_path / "c.mp4"
+    clip.write_bytes(b"x" * 4096)
+    passed = {"type": "clip", "kind": "ai_image", "ok": True, "final": str(clip), "start": 3, "still": "s.png",
+              "check": {"ok": True}}
+    failed = {"type": "clip", "kind": "ai_image", "ok": False, "start": 3, "still": "s.png",
+              "check": {"reasons": ["text: True"]}}
+    (art / "art_report_attempt1.json").write_text(json.dumps([failed]), encoding="utf-8")
+    assert sheet.number_clips([passed], tmp_path, sheet.failed_stills(art)) == []

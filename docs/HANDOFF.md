@@ -811,5 +811,68 @@ few seconds; `algrow` and `elevate` write `data/live_probe/<seat>_tts.mp3`, say
 `words_returned: false`, and show `aligned_by: whisper` with word times that
 look right when you play the file.
 
+## 11. Art layer: illustrated maps, illustrations, clips (run 3)
+
+Designed visuals that are openly illustrations or animations, counted as animation and never as photographs.
+Code: `vidbush/art/` and `vidbush/providers/video_elevate.py`; architecture in `docs/ARCHITECTURE.md` (Art layer);
+every rule with its reason in `docs/DECISIONS.md` (Run 3: art layer); Elevate's catalogue, credits and limits in
+`docs/PROVIDER_NOTES.md` (Elevate catalogue, image and video).
+
+### 11a. What it does
+
+- **Illustrated maps.** The exact map view is rendered with no text and sent to `nano_banana_pro` as a reference
+  image. The prompt is written by the director seat from the narration at that moment and the map's places,
+  with names and digits removed. The prompt is phrased as a repaint, so the model keeps the outlines. Of three
+  variants (two nano_banana_pro, one gemini_flash_image), only those that pass three checks count: registration
+  against the true coast, OCR (no text), and a vision call (no painted text or lines). The best of those by
+  appeal and fit becomes the painted base. The renderer draws markers, routes, labels, title and credit on top,
+  plus the true borders and river names. With no passing variant the plain map stays. Maps that make a precise
+  point (route, arrow, shaded region, distance or border words) always stay plain.
+- **Illustrations.** For moments no footage can show, in the brand's one style line
+  (`illustration_style` in `config/brands/default.yaml`). Each must have no text and no painted bars, and must
+  pass the normal judge against its shot window. They replace only AI photo-style stills or weak picks, never
+  good real material.
+- **Clips.** veo_3_1 image to video from an illustration, a painted map or a photo-style AI still, never from a
+  real photograph. The shot holds the still, then moves for 3 to 5 s. A clip is used only when:
+  - its first frame matches the still;
+  - fixed yes or no vision questions pass (same subject, same layout, no new objects, no text, no morphing);
+  - for a map, its middle and last frames register onto the view without moving.
+
+  Otherwise the still keeps its Ken Burns move.
+
+### 11b. Turning it on and off
+
+`config/style_profiles/documentary_default.yaml` now carries `art: {illustrated_maps: 0.5, illustrations: 0.05,
+clip_every_s: 90, clip_opening_s: 60}`. Every other profile has no art, because every `ArtProfile` default is
+off. To turn it off for a run, set the shares to 0 or remove the `art:` line. Other keys: `map_variants`,
+`illustration_variants`, `map_repeat_s` (180), `map_model`, `map_fallback_model`, `illustration_model`,
+`clip_min_s`, `clip_max_s`, `clip_from_ai_stills` (true), and `hour_credit_cap` (skip new art while the shared
+key has used this many image credits this hour; 0 means no cap).
+
+The video seat is `elevate_video` (veo_3_1, 1080p, 2 credits a clip) first in the `video` role of
+`config/seats.yaml`. Set `options.resolution: "720p"` there to halve the credits. `python -m vidbush doctor --probe`
+now checks it.
+
+### 11c. Cost and time on Adam's Elevate key
+
+- Map view: three paintings, about 13 credits (5 + 5 + 3) and 2 to 3 minutes.
+- Illustration: two paintings, 10 credits.
+- Clip: 2 credits at 1080p, about 6 minutes each. The key allows one clip at a time and 40 clips (80 credits)
+  an hour.
+- At the default shares, a 11 minute documentary with 9 maps, 130 shots and 7 clips spends about 60 + 70 image
+  credits and 14 video credits. Clip generation adds about 45 minutes to the visuals stage, because clips run
+  one after another.
+
+### 11d. Proving it on a finished project
+
+```powershell
+python -m vidbush.art.prove --source "E:\coding projects\Vidbush\output\alaska_run2" --review "E:\coding projects\Vidbush\review_run3" --maps 8 --illustrations 10 --clips 16 --ai-clips 4 --image-cap 300
+python -m vidbush.art.sheet --review "E:\coding projects\Vidbush\review_run3"
+```
+
+The source project is only read. Everything is written under `<review>\art_project`. The sheet step writes
+`art_contact_sheet.png`, `clip_NN.mp4`, `clips.md` and `yield.json` beside it. The director's moments and
+picks are cached, so a restart reuses every paid file.
+
 See also: `docs/ARCHITECTURE.md` (stage graph, contracts, cache rule),
 `docs/DECISIONS.md`, `docs/PROGRESS.md`, `docs/BLOCKERS.md`, `docs/SPEC.md`.

@@ -46,11 +46,13 @@ PAINT_SYSTEM = (
 
 # Phrased as a repaint of the given image: models keep the outlines of an image they edit far better than of
 # one they take as loose inspiration (run 3 probe: regional views were redrawn when asked for "a map of").
-PROMPT_VERSION = "p4"  # in variant file names: a changed prompt never reuses paintings of the old one
+PROMPT_VERSION = "p5"  # in variant file names: a changed prompt never reuses paintings of the old one
 LEAD = ("Repaint this exact map image. It is a map seen from directly above: the tan shapes are land, the blue "
         "shapes are sea, lakes and rivers. Trace every outline exactly where it is in the image, same framing and "
         "scale; do not move, add or remove any coast, island, bay, lake or river. Strictly top-down and flat like "
         "an atlas page: no horizon, no sky, no perspective tilt, no mountains rising toward the viewer.")
+TRACE_AGAIN = ("Above all: the result is the same map as the reference image, every outline traced in place, seen "
+               "flat from directly above.")
 FIXED_RULES = ("No text, no letters, no labels, no numbers, no place names, no borders or dividing lines, no legend, "
                "no compass rose, no frame, no map grid.")
 MAP_STYLE = ("An illustrated, hand-painted relief map in the style of an animation-heavy geography documentary: "
@@ -113,14 +115,16 @@ def map_prompt(p: MapPayload, window: str, ctx: Any, style: str = "") -> tuple[s
             parts.append(f"Water: {_clean(raw.get('water'), names)}")
         touches = [t for t in (_clean(t, names) for t in (raw.get("touches") or [])[:2]) if t]
         if touches:
-            parts.append("Small illustrated touches where they belong: " + "; ".join(touches) + ".")
+            # touches stay map symbols: vivid scene words made every model paint a close-up landscape instead
+            parts.append("Tiny map symbols, at the scale of the whole map, where they belong: " + "; ".join(touches) + ".")
         if raw.get("light"):
             parts.append(f"Light: {_clean(raw.get('light'), names)}")
     else:
         parts.append("Land: natural shaded relief with the vegetation, rock, snow and rivers of this latitude. "
                      "Water: deep water with soft painted texture, lighter near the shore.")
     lead = (style.strip() + " ") if style else ""
-    return f"{LEAD} {lead}{MAP_STYLE} {' '.join(parts)} {FIXED_RULES}".strip(), ok
+    # the trace rule closes the prompt too: what comes last weighs most against the narration's scene words
+    return f"{LEAD} {lead}{MAP_STYLE} {' '.join(parts)} {FIXED_RULES} {TRACE_AGAIN}".strip(), ok
 
 
 APPEAL_SYSTEM = (
