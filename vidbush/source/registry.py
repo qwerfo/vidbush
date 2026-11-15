@@ -17,8 +17,8 @@ Politeness: search responses are cached on disk under
 <source_cache_folder>/search/<adapter>/ (SEARCH_CACHE_TTL_S) so a resume or
 a re-run does not query again; each run has a query budget per adapter
 (throttle.take_budget, keyed by run_id(ctx)), shared fairly by the shots that still need
-candidates (queries go out in rounds and a shot with enough results leaves the pool, see
-_search_all); requests are rate limited per host and capped
+candidates (queries go out in rounds, one series per adapter so a paced host never holds back
+the others, and a shot with enough results leaves the pool, see _search_all); requests are rate limited per host and capped
 globally in base/throttle. A throttled or over-budget search returns no
 results and is logged once per adapter and run. Searches used per adapter and
 run, the budget and whether it ran out are persisted in
@@ -571,9 +571,10 @@ def _search_all(targets: list[Shot], adapters: list[SourceAdapter], ctx: "StageC
                 pools: SearchPools) -> dict[str, dict[str, list[RawResult]]]:
     """Searches for every target shot in query rounds that share each run budget fairly.
 
-    Round k sends every still searching shot's k-th query to every adapter, all submitted before any
-    result is awaited. After each round a shot whose web results already fill its plan leaves the
-    budget pools (throttle.release_shot), so its unused share goes to the shots that still need
+    Round k sends every still searching shot's k-th query to an adapter, all submitted before any
+    result is awaited; each adapter keeps its own rounds, so a paced host never holds back the others.
+    After an adapter's round a shot whose web results already fill its plan leaves that adapter's
+    budget pool (throttle.release_shot), so its unused share goes to the shots that still need
     candidates. Each shot spends at most its fair share of a budget (throttle.take_budget), and only
     the budgets of sources that can serve its media.
 
@@ -611,42 +612,60 @@ def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str,
     """One pass of query rounds over shots (timeline order); results are added to merged and searches
     not sent to unsent. Without retry every shot joins the pools first. With retry only those
     (shot, source, query) searches are sent, at most allowance[source] per source, and a shot joins a
-    pool when it takes a search (throttle.take_budget)."""
+    pool when it takes a search (throttle.take_budget).
+
+    Each adapter runs its own rounds: a paced host (Pexels) still busy with round k never holds back
+    another host's round k + 1, and its own next round goes only to shots still short on every result
+    in by then. The pass returns when every adapter's rounds are done, so no result is lost."""
+    lock = threading.Lock()  # merged is read by every adapter's rounds
+    with ThreadPoolExecutor(max_workers=max(1, len(adapters))) as drivers:
+        futs = [drivers.submit(_adapter_rounds, a, shots, queries, merged, ctx, pools, unsent, retry, allowance,
+                               lock) for a in adapters]
+        for f in futs:
+            f.result()
+
+
+def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, list[str]],
+                    merged: dict[str, dict[str, list[RawResult]]], ctx: "StageContext", pools: SearchPools,
+                    unsent: set[tuple[str, str, str]], retry: Optional[set[tuple[str, str, str]]],
+                    allowance: Optional[dict[str, int]], lock: threading.Lock) -> None:
+    """The query rounds of one adapter (see _rounds); a shot leaves only this adapter's pool."""
     cap = ctx.settings.sources.max_candidates
     rid = run_id(ctx)
-    for a in adapters if retry is None else ():  # a shot shares only the budgets of the sources that serve its media
-        throttle.register_shots(rid, [a.name], [s.id for s in shots if shot_media(s) in a.media])
-    pending = list(shots)
-    asked: set[tuple[str, str, str]] = set()  # (shot, source, sent query): a shot never sends one request twice
+    pending = [s for s in shots if shot_media(s) in a.media]  # a shot shares only the budgets that serve its media
+    if retry is None:
+        throttle.register_shots(rid, [a.name], [s.id for s in pending])
+    asked: set[tuple[str, str]] = set()  # (shot, sent query): a shot never sends one request twice
     for k in range(QUERIES_PER_SHOT):
-        jobs: list[tuple[str, str, Future]] = []
+        jobs: list[tuple[str, Future]] = []
         for s in pending:
             if k >= len(queries[s.id]):
                 continue
-            media, q = shot_media(s), queries[s.id][k]
-            for a in adapters:
-                if media not in a.media or (retry is not None and (s.id, a.name, q) not in retry):
+            q = queries[s.id][k]
+            if (retry is not None and (s.id, a.name, q) not in retry) or (s.id, sent_query(a, q)) in asked:
+                continue
+            asked.add((s.id, sent_query(a, q)))
+            if allowance is not None:
+                if allowance[a.name] <= 0:
                     continue
-                if (s.id, a.name, sent_query(a, q)) in asked:
-                    continue
-                asked.add((s.id, a.name, sent_query(a, q)))
-                if allowance is not None:
-                    if allowance[a.name] <= 0:
-                        continue
-                    allowance[a.name] -= 1 + bool(search_hints(a, ctx).get("prefer_cc"))
-                jobs.append((s.id, a.name, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap),
-                                                        s, ctx, unsent)))
-        for sid, name, fut in jobs:
-            merged[sid][name].extend(fut.result())
+                allowance[a.name] -= 1 + bool(search_hints(a, ctx).get("prefer_cc"))
+            jobs.append((s.id, pools.submit(a, _search_one, a, q, shot_media(s), _per_adapter_n(a, cap),
+                                            s, ctx, unsent)))
+        for sid, fut in jobs:
+            res = fut.result()
+            with lock:
+                merged[sid][a.name].extend(res)
         still: list[Shot] = []
         for s in pending:
-            if k + 1 < len(queries[s.id]) and not enough_results(merged[s.id], cap):
+            with lock:
+                short = k + 1 < len(queries[s.id]) and not enough_results(merged[s.id], cap)
+            if short:
                 still.append(s)
             else:
-                throttle.release_shot(rid, s.id)
+                throttle.release_shot(rid, s.id, [a.name])
         pending = still
     for s in pending:
-        throttle.release_shot(rid, s.id)
+        throttle.release_shot(rid, s.id, [a.name])
 
 
 def _plan_all(shotlist: ShotList, found: dict[str, dict[str, list[RawResult]]], order: list[str],

@@ -97,6 +97,41 @@ def test_a_shot_never_sends_one_request_twice(make_ctx, monkeypatch) -> None:
     assert a.sent == ["National Atlas United", "Juneau harbor"]
 
 
+def test_a_slow_host_never_holds_back_another_hosts_rounds(make_ctx, monkeypatch) -> None:
+    """A paced host (Pexels, one search per 22.5 s) still busy with round 1 does not stop a fast host
+    from sending its round 2 and 3 queries, and the slow host's results still reach the shot."""
+    import threading
+    ctx = make_ctx(mode="script")
+    monkeypatch.setattr(registry, "cache_get", lambda *x, **k: None)
+    monkeypatch.setattr(registry, "cache_put", lambda *x, **k: None)
+    fast_done = threading.Event()
+    seen_by_slow: list[bool] = []
+
+    class Fast(_ShortAdapter):
+        name, keyword_words = "wikimedia", 0
+
+        def search(self, query: str, *a: Any, **k: Any) -> list[RawResult]:
+            self.sent.append(query)
+            if len(self.sent) == 3:
+                fast_done.set()
+            return []
+
+    class Slow(_ShortAdapter):
+        name, keyword_words = "pexels", 0
+
+        def search(self, query: str, media: str, *a: Any, **k: Any) -> list[RawResult]:
+            seen_by_slow.append(fast_done.wait(2.0))  # a round barrier keeps the fast host waiting here
+            return [RawResult(source="pexels", url=f"https://px/{query}", media=media, title=query)]
+
+    fast, slow = Fast(), Slow()
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.image, intent="x",
+                queries=["harbour cranes", "container ship", "dock workers"])
+    with registry.SearchPools([fast, slow]) as pools:
+        found = registry._search_all([shot], [fast, slow], ctx, pools)
+    assert fast.sent == ["harbour cranes", "container ship", "dock workers"] and all(seen_by_slow)
+    assert len(found["s1"]["pexels"]) == 3  # every slow result joined the shot
+
+
 def test_pixabay_tags_count_for_relevance(settings) -> None:
     from vidbush.source import pixabay
     data = {"hits": [{"pageURL": "https://pixabay.com/photos/x-1/", "user": "u", "imageWidth": 4000,
