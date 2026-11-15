@@ -63,10 +63,13 @@ def band_image(path: str, ratio: Optional[float]) -> str:
 
 
 def _ok(v: Any) -> Optional[bool]:
+    """ok as a bool from true/false or a yes/no word ('Yes.', 'no, the sled is missing'); None when unreadable."""
     if isinstance(v, bool):
         return v
-    if isinstance(v, str) and v.strip().lower() in ("yes", "true", "no", "false"):
-        return v.strip().lower() in ("yes", "true")
+    if isinstance(v, str):
+        words = v.strip().lower().replace(",", " ").replace(".", " ").replace("!", " ").split()
+        if words and words[0] in ("yes", "true", "no", "false"):
+            return words[0] in ("yes", "true")
     return None
 
 
@@ -86,8 +89,6 @@ def check_still(shot: Shot, cand: Candidate, ctx: Any) -> dict[str, Any]:
         ctx.log.warn("ai still check failed", shot=shot.id, candidate=cand.id, error=str(e)[:200])
         return {}
     if not isinstance(raw, dict) or raw.get("_mock"):
-        if not isinstance(raw, dict):
-            ctx.log.warn("ai still check reply unusable", shot=shot.id, candidate=cand.id)
         return {}
     given = raw.get("answers") if isinstance(raw.get("answers"), dict) else {}
     answers: dict[str, dict[str, Any]] = {}
@@ -99,6 +100,9 @@ def check_still(shot: Shot, cand: Candidate, ctx: Any) -> dict[str, Any]:
             unanswered.append(q)
             continue
         answers[q] = {"ok": ok, "reason": " ".join(str(a.get("reason") or "").split())[:200]}
+    if not answers:  # an empty or wrongly shaped reply says nothing about the still
+        ctx.log.warn("ai still check reply unusable", shot=shot.id, candidate=cand.id)
+        return {}
     if unanswered:
         ctx.log.warn("ai still check left questions unanswered", shot=shot.id, candidate=cand.id,
                      unanswered=unanswered)

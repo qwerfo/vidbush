@@ -22,8 +22,10 @@ _STYLE = ("Photographic documentary still, natural light, realistic detail, era-
           "and architecture, 35mm lens. One single continuous photograph of one moment, one unbroken frame from "
           "edge to edge. {frame} People appear only as anonymous figures, never as the likeness of a named real "
           "person.")
-_BAND = ("Composed for a wide cinematic {ratio}:1 frame: every head and the main subject sit inside the middle band "
-         "with headroom, nothing important in the top or bottom sixth of the picture.")
+# The image seat may return 3:2 or square, which is cropped to 16:9 and then letterboxed, so the safe band is
+# stated for the worst canvas: the middle half of the picture height.
+_BAND = ("Composed for a wide cinematic {ratio}:1 frame: every head and the main subject sit inside the middle half "
+         "of the picture height with headroom, nothing important in the top or bottom quarter.")
 _FULL = "Wide 16:9 composition with every head and the main subject inside the frame with headroom."
 DEFAULT_LETTERBOX = 2.39
 
@@ -340,8 +342,10 @@ def safe_prompt(text: str, ctx: Any, keep: Optional[list[str]] = None, narration
 _YEARS = re.compile(r"(?<!\w)'?\d{2,4}s?(?!\w)")
 _MEDIA_WORDS = {"archival", "footage", "stock", "photograph", "photo", "image", "picture", "film", "video", "clip",
                 "reel"}
-# "X, then Y" style connectors: everything after the first one is a second moment (run 2: split-panel collages)
-_THEN = re.compile(r"\s*(?:[,;]\s*(?:and\s+)?then\b|\band\s+then\b|\bthen\b|\bfollowed\s+by\b|"
+# "X, then Y" style connectors at a clause boundary: everything after the first one is a second moment (run 2:
+# split-panel collages). A bare 'then' ('back then', 'by then', 'then 21') or 'followed by' inside one clause
+# ('a dog team followed by children') is one moment and stays whole.
+_THEN = re.compile(r"\s*(?:[,;]\s*(?:and\s+)?then\b(?!\s+\d)|\band\s+then\b|[,;]\s*followed\s+by\b|"
                    r"\bbefore\s+cutting\s+to\b)", re.I)
 _FIRST_LATER = re.compile(r"^\s*first\s+(.+?),?\s+later\b", re.I | re.S)
 
@@ -423,16 +427,29 @@ BRIEF_SYSTEM = (
 BRIEF_TEXT_KEYS = ("agent", "action", "object", "place", "era", "moment")
 
 
+def _scalar(v: Any) -> Optional[str]:
+    """A brief field as text: strings as they are, numbers (an era of 1925) as digits, nothing as ''; None for
+    lists and objects, which are not a field value."""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return f"{v:g}"
+    return None
+
+
 def _valid_brief(raw: Any) -> Optional[dict[str, Any]]:
-    if not isinstance(raw, dict) or not isinstance(raw.get("moment"), str) or not raw["moment"].strip():
+    if not isinstance(raw, dict):
         return None
-    if any(not isinstance(raw.get(k) or "", str) for k in BRIEF_TEXT_KEYS):
+    vals = {k: _scalar(raw.get(k)) for k in BRIEF_TEXT_KEYS}
+    if any(v is None for v in vals.values()) or not vals["moment"].strip():
         return None
     people = raw.get("people") or []
-    if not isinstance(people, list) or any(not isinstance(p, str) for p in people):
-        return None
-    out: dict[str, Any] = {k: no_em_dash(" ".join((raw.get(k) or "").split())) for k in BRIEF_TEXT_KEYS}
-    out["people"] = [p.strip() for p in people if p.strip()]
+    people = people if isinstance(people, list) else [people]
+    names = [p.get("name") if isinstance(p, dict) else p for p in people]
+    out: dict[str, Any] = {k: no_em_dash(" ".join(v.split())) for k, v in vals.items()}
+    out["people"] = [n.strip() for n in names if isinstance(n, str) and n.strip()]
     return out
 
 
@@ -471,16 +488,19 @@ def scene_brief(shot: Shot, ctx: Any) -> dict[str, Any]:
 
 
 def _brief_prompt(brief: dict[str, Any], shown: list[str]) -> str:
-    """Moment, must_show items, then place and period when known."""
+    """Moment and must_show items; place and period are added after the name removal (_lock)."""
     moment = brief["moment"].strip().rstrip(".")
     parts = [(moment[:1].upper() + moment[1:] + ".") if moment else "Documentary scene."]
     if shown:
         parts.append(f"Clearly showing: {', '.join(one_moment(m) for m in shown)}.")
-    if brief.get("place"):
-        parts.append(f"Place: {brief['place'].rstrip('.')}.")
-    if brief.get("era"):
-        parts.append(f"Period: {brief['era'].rstrip('.')}.")
     return " ".join(parts)
+
+
+def _lock(brief: dict[str, Any]) -> str:
+    """'Place: ... Period: ...' from the brief. It is added after safe_prompt, because a heuristic name guess
+    (when the editor gives no answer) deletes capitalised words and would take the place names with it."""
+    return " ".join(f"{label}: {brief[k].strip().rstrip('.')}." for label, k in (("Place", "place"), ("Period", "era"))
+                    if brief.get(k, "").strip())
 
 
 def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None, problem: str = "") -> Candidate:
@@ -495,7 +515,10 @@ def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None, pr
     from ..judge.judge import narration_by_beat
     brief = scene_brief(shot, ctx)
     shown = _shown(shot, brief["stub"], _title(ctx))
-    base = one_moment(prompt) if prompt else _brief_prompt(brief, shown)
+    # An operator's explicit prompt is kept whole (it carries their prompt delta); without one, the brief writes
+    # the prompt. shot.ai_prompt is not used: the shot planner writes it from the intent, which is where stub
+    # prompts came from.
+    base = prompt if prompt else _brief_prompt(brief, shown)
     text = build_prompt(shot, f"{base.strip().rstrip('.')}. {house_style(letterbox_ratio(ctx))}")
     if problem:
         text = build_prompt(shot, f"{text} Must clearly show: {', '.join(shown) or brief['moment']}.")
@@ -504,6 +527,9 @@ def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None, pr
     narration = " ".join(dict.fromkeys(x for x in (shot_window_text(shot, ctx),
                                                     narration_by_beat(ctx).get(shot.beat_id, "")) if x))
     text = safe_prompt(text, ctx, keep=shot.must_show, narration=narration, problem=problem, names=brief["people"])
+    lock = _lock(brief)
+    if lock and lock not in text:
+        text = f"{text.rstrip()} {lock}"
     n = next_ai_index(shot, ctx.work)
     out = ctx.work / "ai" / f"{shot.id}_{n}.png"
     path, is_mock = _call_image(ctx, text, negative_prompt(shot, prompt), out, "image" if n == 1 else "image retry")

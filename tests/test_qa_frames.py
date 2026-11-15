@@ -175,7 +175,8 @@ def test_judge_rendered_fails_on_a_check_or_a_very_low_score_but_not_on_a_middli
 
     monkeypatch.setattr(ctx.seats, "vision_json", fake)
     monkeypatch.setattr(qa, "JUDGE_WORKERS", 1)
-    shots = [_shot(1, 0, 4), _shot(2, 4, 8), _shot(3, 8, 12)]
+    shots = [_shot(i, 4 * (i - 1), 4 * i, in_point=10.0 * i) for i in (1, 2, 3)]  # three different segments
+    assert qa.local_checks(ShotList(project_id="p", duration=12, shots=shots), [], {}) == {}
     out = qa.judge_rendered(ShotList(project_id="p", duration=12, shots=shots), {s.id: [IMG] for s in shots}, ctx)
     assert [out[s.id]["fail"] for s in shots] == [False, True, True]
     assert "matches_words: illustrates the next line" in out["shot_002"]["reason"]
@@ -235,3 +236,30 @@ def test_review_labels_read_defects_skip_fine_and_corrected_shots():
                                                                           "shot_002"})
     assert res["recall_pct"] == 50.0 and res["false_alarm_pct"] == 50.0 and res["missed"] == ["shot_063"]
     assert json.dumps(res)
+
+
+# ---------------------------------------------------------------- review fixes
+
+def test_text_whose_words_come_long_after_is_early_and_unanchored():
+    words = [Word(text="Nenana", start=40.0, end=40.5)]
+    s = _shot(1, 10.0, 14.0, ShotType.footage_overlay, overlay=_spec(MotionKind.lower_third, 0.5, title="Nenana"))
+    r = qa.text_item_report(s, words)
+    assert r["early"] and r["unanchored"]
+    assert qa.overlay_text_stats(ShotList(project_id="p", duration=14, shots=[s]), words)["unanchored"] == 1
+    assert not qa.text_item_report(s, [])["unanchored"]  # no narration at all is not a timing defect
+
+
+def test_the_text_frame_survives_the_frame_limit(tmp_path, monkeypatch):
+    s = _shot(1, 0.0, 8.0, ShotType.footage_overlay, overlay=_spec(MotionKind.lower_third, 6.5, title="Nome"))
+    grabbed: list[float] = []
+    monkeypatch.setattr(qa, "_grab", lambda video, t, out, width=0: grabbed.append(t) or str(out))
+    monkeypatch.setattr(qa, "GRAB_WORKERS", 1)
+    frames = qa.sample_frames(tmp_path / "v.mp4", ShotList(project_id="p", duration=8, shots=[s]), tmp_path / "f")
+    assert grabbed[0] == 4.0 and grabbed[1] >= 6.5 and len(frames["shot_001"]) == 4
+
+
+def test_parallax_clip_of_a_still_counts_as_a_still_and_map_arrows_are_text():
+    s = _shot(1, 0, 4, ShotType.image, SourceKind.wikimedia, "video", flags=["depthflow"])
+    assert qa.on_screen(s) == "real_still"
+    m = _spec(MotionKind.map, center=[0, 0], arrows=[{"start": [0, 0], "end": [1, 1], "label": "Serum route"}])
+    assert ("place", "Serum route") in qa.spec_texts(m)

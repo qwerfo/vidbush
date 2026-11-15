@@ -26,19 +26,13 @@ FINE = re.compile(r"\bOK\b|^\s*FINE\b")
 STYLE_NOTE = re.compile(r"^\s*every callout is cent", re.I)
 # the synthesizer's own corrections: shots it re-checked and found a loose fit, not a defect
 CORRECTION = re.compile(r"shot_(\d{3})\b[^\n]{0,400}?\bloose fit, not (?:a )?clear mismatch", re.I)
-# Shots the run 2 review names as frame defects only in its root-cause evidence (AI area: "Heads or faces cut
-# in 048, 064, 066, 071, 076, 096 and 104", "Diptychs or triptychs in 001, 088, 096, 099, 107, 110, 115 (092
-# intended triptych)", "104 and 030 trees on tundra coast"), not in its defect list. Evidence of causes about
-# sourcing or about QA itself names shots that are not frame defects and is left out.
-EVIDENCE_DEFECTS = {"shot_064": "heads cut by the letterbox", "shot_076": "heads cut by the letterbox",
-                    "shot_096": "heads cut, split panel", "shot_099": "split panel", "shot_107": "split panel",
-                    "shot_030": "trees on a tundra coast"}
-# Risk notes the review says it did not count (an AI face standing in for a named elder, identifiable children):
-# neither a defect nor a pass, so they leave the comparison.
-NEUTRAL = {"shot_018", "shot_028", "shot_029"}  # 1:52 to 1:58 spans shots 028 and 029
+# Labels a review states outside its defect list come from a sidecar file (--extras), never from code:
+# {"evidence_defects": {shot id: why}} for shots its root-cause evidence names as frame defects, and
+# {"neutral": [shot ids]} for risk notes it says it did not count (neither a defect nor a pass).
 
 
-def review_labels(review: dict[str, Any]) -> tuple[dict[str, list[str]], set[str]]:
+def review_labels(review: dict[str, Any], extras: Optional[dict[str, Any]] = None
+                  ) -> tuple[dict[str, list[str]], set[str]]:
     """(shot id -> defect areas, shot ids the review notes as style only). A defect entry names its shots in
     its "shot" field (shot_034, 'shots 034, 035', 'callouts 064, 083'); entries marked OK or FINE are passes,
     and a shot the synthesizer corrected to a loose fit is not a defect."""
@@ -61,9 +55,8 @@ def review_labels(review: dict[str, Any]) -> tuple[dict[str, list[str]], set[str
                 defects.setdefault(sid, [])
                 if name not in defects[sid]:
                     defects[sid].append(name)
-    if review.get("reviews"):
-        for sid, why in EVIDENCE_DEFECTS.items():
-            defects.setdefault(sid, []).append(f"root cause evidence: {why}")
+    for sid, why in ((extras or {}).get("evidence_defects") or {}).items():
+        defects.setdefault(sid, []).append(f"root cause evidence: {why}")
     return defects, style
 
 
@@ -77,15 +70,15 @@ def compare(fails: set[str], defects: set[str], universe: set[str]) -> dict[str,
             "missed": sorted(d - fails), "false": sorted(false)}
 
 
-def _ctx(project: Path, out: Path) -> Any:
+def _ctx(project: Path, out: Path, settings_root: str = "") -> Any:
     """A read-only stand-in for a stage context: loads work/*.json of the project, writes nothing there."""
     from vidbush.config import REPO_ROOT, load_settings
     from vidbush.providers.base import CostTracker
     from vidbush.providers.seats import Seats
     from vidbush.util import JsonLogger, read_model
     from vidbush import models as M
-    main = Path(r"C:\projects\vidbush_tmp")  # the operator checkout holds .env and .env.local
-    settings = load_settings(main if (main / ".env").exists() else REPO_ROOT)
+    root = Path(settings_root) if settings_root else REPO_ROOT  # the checkout whose .env holds the keys
+    settings = load_settings(root)
     log = JsonLogger("qa_calibration", out / "logs", echo=False)
     tracker = CostTracker("qa_calibration", out / "cost_report.json")
     seats = Seats(settings, tracker, log)
@@ -105,6 +98,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--review", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--tag", default="v1")
+    ap.add_argument("--extras", default="", help="JSON with evidence_defects and neutral labels for this review")
+    ap.add_argument("--settings-root", default="", help="checkout with .env and config (default: this one)")
     ap.add_argument("--reuse-frames", action="store_true")
     ap.add_argument("--reuse-verdicts", action="store_true", help="recompute fails from saved verdicts only")
     ap.add_argument("--min-score", type=float, default=None, help="score below this fails (default threshold)")
@@ -122,7 +117,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if a.reuse_verdicts and verdict_path.exists():
         verdicts = json.loads(verdict_path.read_text(encoding="utf-8"))
     else:
-        ctx = _ctx(project, out)
+        ctx = _ctx(project, out, a.settings_root)
         frames_dir = out / "frames"
         if a.reuse_frames and frames_dir.exists():
             frames: dict[str, list[str]] = {}
@@ -130,7 +125,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                 sid = "_".join(f.stem.split("_")[1:3])
                 frames.setdefault(sid, []).append(str(f))
         else:
-            frames = qa.sample_frames(project / "final.mp4", sl, frames_dir)
+            asm = project / "work" / "assembly.json"
+            offset = float(json.loads(asm.read_text(encoding="utf-8")).get("intro_duration", 0) or 0) \
+                if asm.exists() else 0.0
+            frames = qa.sample_frames(project / "final.mp4", sl, frames_dir, offset=offset)
         words = read_model(project / "work" / "narration.json", Narration).words
         verdicts = qa.judge_rendered(sl, frames, ctx, words)
         verdict_path.write_text(json.dumps(verdicts, indent=1), encoding="utf-8")
@@ -140,8 +138,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     fails = {sid for sid, v in verdicts.items()
              if set(v["failed"]) - ignore or v["rejects"] or v["score"] < threshold}
     review = json.loads(Path(a.review).read_text(encoding="utf-8"))
-    defects, style = review_labels(review)
-    universe = {s.id for s in sl.shots if s.id in verdicts} - NEUTRAL
+    extras = json.loads(Path(a.extras).read_text(encoding="utf-8")) if a.extras else {}
+    defects, style = review_labels(review, extras)
+    universe = {s.id for s in sl.shots if s.id in verdicts} - set(extras.get("neutral") or [])
     res = compare(fails, set(defects), universe)
     by_check = Counter(c for sid in fails for c in verdicts[sid]["failed"])
     res.update({"tag": a.tag, "qa_fails": len(fails & universe), "shots": len(universe), "style_only": sorted(style),

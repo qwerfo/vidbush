@@ -55,6 +55,7 @@ def build_qa(shotlist: ShotList, ctx: Any) -> list[Path]:
     post = judge_rendered(shotlist, frames, ctx, words)
     coverage, match = caption_check(ctx)
     report = make_report(shotlist, ctx, threshold, post, coverage, match, notes, words)
+    report.summary = summary_lines(report, offset)  # final.mp4 time, as in the markdown
     json_path = write_json(ctx.root / "qa_report.json", report)
     md_path = ctx.root / "qa_report.md"
     md_path.write_text(render_markdown(report, offset), encoding="utf-8")
@@ -113,8 +114,8 @@ def shot_times(shot: Shot) -> list[float]:
 def sample_frames(video: Path, shotlist: ShotList, out_dir: Path, every: float = 0.0,
                   offset: float = 0.0) -> dict[str, list[str]]:
     """Frames of each shot from its own window (shot_times), shifted by the intro offset: shot id -> paths,
-    the middle frame first. every is kept for callers and ignored: a fixed grid sampled short shots late or
-    in their neighbour."""
+    the middle frame first, then one where the overlay text shows. every is kept for callers and ignored: a
+    fixed grid sampled short shots late or in their neighbour."""
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
@@ -122,7 +123,12 @@ def sample_frames(video: Path, shotlist: ShotList, out_dir: Path, every: float =
     for s in shotlist.shots:
         times = shot_times(s)
         mid = min(times, key=lambda t: abs(t - (s.start + s.end) / 2))
-        jobs += [(s.id, k, t) for k, t in enumerate([mid] + [t for t in times if t != mid])]
+        spec = s.overlay if s.type != ShotType.motion_graphic else None
+        shown = s.start + spec.start_at if spec is not None and spec.start_at > 0 else None
+        text = next((t for t in reversed(times) if shown is not None and t >= shown and t != mid), None)
+        # the middle first, then a frame with the overlay text on screen, so both survive FRAMES_PER_SHOT
+        order = [mid] + ([text] if text is not None else []) + [t for t in times if t not in (mid, text)]
+        jobs += [(s.id, k, t) for k, t in enumerate(order)]
 
     def one(job: tuple[str, int, float]) -> tuple[str, Optional[str]]:
         sid, k, t = job
@@ -174,6 +180,8 @@ def on_screen(shot: Shot) -> str:
             return "generated_still"
         if c.source == SourceKind.ai_video:
             return "generated_video"
+        if "depthflow" in c.flags:  # a still turned into a parallax clip is still a still
+            return "real_still"
         return "real_footage" if c.media == "video" else "real_still"
     return {ShotType.ai_image: "generated_still", ShotType.ai_video: "generated_video"}.get(
         shot.type, "real_footage" if shot.type.value.startswith("footage") else "real_still")
@@ -223,7 +231,7 @@ def spec_texts(spec: Optional[MotionSpec]) -> list[tuple[str, str]]:
         add("number", " ".join(str(p.get(x) or "") for x in ("number", "label", "sublabel")))
     elif k == MotionKind.map:
         add("title", p.get("title"))
-        for group in ("markers", "labels", "routes"):
+        for group in ("markers", "labels", "routes", "arrows"):
             for item in p.get(group) or []:
                 if isinstance(item, dict):
                     add("place", item.get("label") or item.get("text"))
@@ -643,9 +651,12 @@ def text_item_report(shot: Shot, words: list[Word]) -> Optional[dict[str, Any]]:
     read = max(I.READ_MIN_S, I.READ_PER_WORD_S * len(" ".join(t["text"] for t in texts[:2]).split()))
     lead = GRAPHIC_LEAD_S if card or first["kind"] in GRAPHIC_KINDS else EARLY_S
     return {"kind": first["kind"], "texts": [t["text"] for t in texts], "at": at, "gap": gap, "card": card,
-            "verbatim": bool(verbatim), "early": gap is not None and gap < -lead,
+            "verbatim": bool(verbatim),
+            "early": (gap is not None and gap < -lead) or (far is not None and far > at + I.REPEAT_WINDOW_S),
             "late": (gap is not None and gap > LATE_S) or (far is not None and far < at - I.REPEAT_WINDOW_S),
-            "short": until - at < max(SHORT_S, read) - 0.05, "unanchored": spoken is None and far is None}
+            "short": until - at < max(SHORT_S, read) - 0.05,
+            # its words are not spoken near it (none at all, or only long after): the legacy meaning
+            "unanchored": bool(words) and spoken is None and (far is None or far > at + I.REPEAT_WINDOW_S)}
 
 
 LEGACY_TEXT_KINDS = {k.value for k in I.TEXT_OVERLAY_KINDS}
@@ -754,7 +765,7 @@ CHECK_LABELS = {"matches_words": "picture does not match the words", "text_true"
                 "text_filler": "filler subtitle", "picture_repeat": "picture repeated within a minute",
                 "clean": "source graphics, logo or talking head", "one_image": "split panel or collage",
                 "no_fake_face": "fake face of a named person", "quality": "framing, blur or artifact",
-                "score": "scored below threshold", "reject": "hard reject"}
+                "score": f"scored below {SCORE_FLOOR:g}", "reject": "hard reject"}
 
 
 def make_report(shotlist: ShotList, ctx: Any, threshold: float, post: dict[str, Any],
@@ -810,7 +821,7 @@ WORST_N = 5
 
 def _fail_reasons(q: QAShot, threshold: float) -> list[str]:
     out = list(q.checks_failed)
-    if q.post_render_score is not None and q.post_render_score < threshold:
+    if q.post_render_score is not None and q.post_render_score < min(threshold, SCORE_FLOOR):
         out.append("score")
     return out or (["reject"] if q.failed else [])
 

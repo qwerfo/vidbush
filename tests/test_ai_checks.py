@@ -78,8 +78,7 @@ def test_stub_intents(intent, title, stub):
 @pytest.mark.parametrize("text", [
     "A dog team on the ice, then a crowd in Nome",
     "A dog team on the ice; then a crowd in Nome",
-    "A dog team on the ice then a crowd in Nome",
-    "A dog team on the ice followed by a crowd in Nome",
+    "A dog team on the ice, followed by a crowd in Nome",
     "A dog team on the ice before cutting to a crowd in Nome",
     "A dog team on the ice and then a crowd in Nome",
     "First a dog team on the ice, later a crowd in Nome",
@@ -109,7 +108,7 @@ def test_window_widening_stops_at_three_seconds(make_ctx):
 
 # ---------------------------------------------------------------- scene brief
 
-@pytest.mark.parametrize("answer", [None, "junk", {"moment": 5}, {"moment": "ok", "people": "Seppala"},
+@pytest.mark.parametrize("answer", [None, "junk", {"moment": ["a", "list"]}, {"moment": "   "},
                                     RuntimeError("editor down")])
 def test_brief_falls_back_to_must_show_and_the_narration(make_ctx, monkeypatch, answer):
     ctx = with_story(make_ctx())
@@ -150,7 +149,7 @@ def test_prompt_has_place_period_and_the_letterbox_band_and_no_stub_text(make_ct
     cand = A.generate_ai_candidate(shot(), ctx)
     p = sent[0]
     assert "Place: Norton Sound, Alaska" in p and "Period: 1925." in p
-    assert "2.39:1 frame" in p and "top or bottom sixth" in p and "natural light" in p
+    assert "2.39:1 frame" in p and "top or bottom quarter" in p and "natural light" in p
     assert "a sea" not in p and "1920s" not in p and "Clearly showing" not in p and "arriving in Nome" not in p
     assert cand.prompt == p and cand.brief["place"].startswith("Norton Sound") and cand.brief["stub"] is True
     for neg in ("split panels", "collage", "diptych", "grid", "multiple frames", "border"):
@@ -165,12 +164,41 @@ def test_letterbox_off_composes_for_the_full_frame(make_ctx, monkeypatch):
     assert "2:1 frame" in A.house_style(A.letterbox_ratio(ctx))
 
 
-def test_an_operator_prompt_wins_but_keeps_one_moment_and_the_house_style(make_ctx, monkeypatch):
+def test_an_operator_prompt_is_kept_whole_with_the_house_style_and_the_place_lock(make_ctx, monkeypatch):
     ctx = with_story(make_ctx())
     fake_llm(ctx, monkeypatch, BRIEF)
     sent = image_prompts(ctx, monkeypatch)
-    A.generate_ai_candidate(shot(), ctx, prompt="A lighthouse on a rocky coast, then a storm at sea")
-    assert sent[0].startswith("A lighthouse on a rocky coast.") and "storm" not in sent[0] and "2.39:1" in sent[0]
+    # the operator's text carries their prompt delta, so it is never cut
+    A.generate_ai_candidate(shot(), ctx, prompt="A lighthouse on a rocky coast. Stormier sky")
+    assert sent[0].startswith("A lighthouse on a rocky coast. Stormier sky") and "2.39:1" in sent[0]
+    assert "Place: Norton Sound" in sent[0] and "Period: 1925." in sent[0]
+
+
+@pytest.mark.parametrize("text", ["Miners back then lived in canvas tents on the beach",
+                                  "The town, by then a boomtown of tents, filled the beach",
+                                  "A dog team followed by a crowd of children runs down Front Street",
+                                  "The serum arrived, then 21 children were treated"])
+def test_one_moment_leaves_a_single_moment_whole(text):
+    assert A.one_moment(text) == text
+
+
+def test_brief_reads_a_numeric_era_and_people_given_as_objects(make_ctx, monkeypatch):
+    ctx = with_story(make_ctx())
+    fake_llm(ctx, monkeypatch, dict(BRIEF, era=1925, people=[{"name": "Leonhard Seppala"}, 7]))
+    b = A.scene_brief(shot(), ctx)
+    assert b["era"] == "1925" and b["people"] == ["Leonhard Seppala"]
+
+
+def test_the_place_lock_survives_a_silent_editor(make_ctx, monkeypatch):
+    ctx = with_story(make_ctx())
+    sent = image_prompts(ctx, monkeypatch)
+
+    def llm_json(role, task, system, user, stage, **k):
+        return BRIEF if task == "ai_scene_brief" else None  # the name removal gives no answer
+
+    monkeypatch.setattr(ctx.seats, "llm_json", llm_json)
+    A.generate_ai_candidate(shot(), ctx)
+    assert sent[0].endswith("Place: Norton Sound, Alaska: flat treeless sea ice under a dark sky. Period: 1925.")
 
 
 def test_named_people_flag_the_shot_and_never_reach_the_image_model(make_ctx, monkeypatch):
