@@ -281,3 +281,25 @@ def test_rerun_clears_stale_art_and_keeps_existing_illustrations(tmp_path, monke
     plan.paint_maps(sl, ctx, None, rep)
     assert m.motion.payload["art_base"] == "" and m.motion.payload["art_clip"] == ""  # a route map is plain now
     assert plan.add_illustrations(sl, ctx, None, rep) == 1
+
+
+def test_view_key_names_coast_detail():
+    a = MapPayload(center=[60, -150], zoom=2.6)
+    b = MapPayload(center=[60, -150], zoom=2.6, zoom_end=3.4)
+    assert mapref.view_key(a)["zoom"] == mapref.view_key(b)["zoom"]
+    assert mapref.view_key(a) != mapref.view_key(b)  # 110 m vs 50 m coast: never the same painting
+
+
+def test_rerun_keeps_clip_slots_without_paying(tmp_path, monkeypatch):
+    from vidbush.models import Candidate, SourceKind
+    still = tmp_path / "s.png"
+    cv2.imwrite(str(still), np.zeros((10, 10, 3), np.uint8))
+    a = Shot(id="a", beat_id="b", start=0, end=5, duration=5, type=ShotType.ai_video, intent="x",
+             candidates=[Candidate(id="a_art_clip", source=SourceKind.ai_video, media="video")], selected="a_art_clip")
+    y = Shot(id="y", beat_id="b", start=5, end=25, duration=20, type=ShotType.ai_image, intent="x",
+             candidates=[Candidate(id="c", source=SourceKind.ai_image, local_path=str(still))], selected="c")
+    sl = ShotList(project_id="p", duration=60, shots=[a, y])
+    ctx = _ctx(tmp=tmp_path, profile=StyleProfile(id="t", art=ArtProfile(clip_every_s=60)))
+    ctx.seats.is_real = lambda role: True
+    monkeypatch.setattr(plan.C, "make_clip", lambda *a, **k: pytest.fail("a kept clip slot must not be paid again"))
+    assert plan.add_clips(sl, ctx, None, {"maps": [], "illustrations": [], "clips": []}) == 1

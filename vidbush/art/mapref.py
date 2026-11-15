@@ -35,7 +35,9 @@ def view_key(p: MapPayload) -> dict[str, float]:
     lat, lon = (list(p.center) + [0.0, 0.0])[:2]
     z = min(float(p.zoom), float(p.zoom_end if p.zoom_end is not None else p.zoom))
     z = float(np.clip(z, 0.6, 12))
-    return {"lat": round(float(np.clip(lat, -85, 85)), 4), "lon": round(float(lon), 4), "zoom": round(z, 4)}
+    z_hi = max(float(p.zoom), float(p.zoom_end if p.zoom_end is not None else p.zoom))
+    return {"lat": round(float(np.clip(lat, -85, 85)), 4), "lon": round(float(lon), 4), "zoom": round(z, 4),
+            "detail": bool(z_hi >= 3)}  # the coast layer (50 m from zoom 3) the painting was registered to
 
 
 class _RefBase(M.MapBase):

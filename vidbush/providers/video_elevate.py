@@ -124,6 +124,16 @@ def _remembered(out_path: Path, req: str) -> Optional[str]:
     return str(data.get("task_id")) if data.get("request") == req and data.get("task_id") else None
 
 
+RESULT_WAIT_S = 3600.0  # how long a completed task may stay without a file before it counts as dead
+
+
+def _age(out_path: Path) -> float:
+    try:
+        return time.time() - float(json.loads(_sidecar(out_path).read_text(encoding="utf-8")).get("ts") or 0)
+    except (OSError, ValueError):
+        return 0.0
+
+
 def _remember(out_path: Path, req: str, task_id: Optional[str]) -> None:
     p = _sidecar(out_path)
     if task_id is None:
@@ -217,7 +227,9 @@ def generate_video(spec: ProviderSpec, prompt: str, still: Optional[Path], out_p
         if status == "completed" and task.get("result_url"):
             break
         if status == "completed":
-            raise ProviderError(f"Elevate video task {task_id} completed without result_url; a later call polls it again")
+            if _age(out_path) < RESULT_WAIT_S:
+                raise ProviderError(f"Elevate video task {task_id} completed without result_url; a later call polls it again")
+            status = "error"  # an hour with no file: the task produced nothing; one fresh submit below
         _remember(out_path, req, None)  # dead task: forget it; one fresh submit, as a first call would make
         error = str(task.get("error") or status)[:300]
         if any(w in error.lower() for w in ("policy", "safety", "moderat", "invalid", "refus")):

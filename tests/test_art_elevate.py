@@ -106,3 +106,14 @@ def test_hour_credits(monkeypatch):
     monkeypatch.setattr(E, "get_json", lambda *a, **k: data)
     assert E.hour_credits(_spec()) == (22.0, 800.0)
     assert E.hour_credits(_spec(), "video") == (3.0, 80.0)
+
+
+def test_failed_retry_task_drops_its_sidecar(monkeypatch, tmp_path):
+    from vidbush.providers.base import TransportError
+    out = tmp_path / "o.png"
+    out.with_suffix(".task.json").write_text('{"key": "k", "task_id": "t1"}', encoding="utf-8")
+    monkeypatch.setattr(E, "_key", lambda *a, **k: "k")
+    monkeypatch.setattr(E.image_mod, "_poll", lambda *a, **k: (_ for _ in ()).throw(TransportError("Processing failed, please retry")))
+    with pytest.raises(TransportError):
+        E.generate(_spec(), "p", out)
+    assert not out.with_suffix(".task.json").exists()  # the next call submits afresh instead of re-polling a dead task

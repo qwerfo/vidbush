@@ -164,6 +164,14 @@ def save_base(raw_path: Path, p: MapPayload, reg: dict[str, Any], out: Path, met
     return out
 
 
+def existing_base(p: MapPayload, out_dir: Path) -> str:
+    """Path of a finished painting of this exact view on disk, or ""."""
+    from .hooks import _matches
+    key = hashlib.sha256(json.dumps(mapref.view_key(p), sort_keys=True).encode()).hexdigest()[:10]
+    out = out_dir / f"map_{key}_base.png"
+    return str(out) if out.exists() and _matches(p, str(out)) else ""
+
+
 def paint_map(p: MapPayload, window: str, ctx: Any, out_dir: Path, tag: str, variants: int = 0) -> dict[str, Any]:
     """Paint one view. Returns a report with every variant's checks and `base` (the chosen aligned painting) or
     None when no variant passed."""

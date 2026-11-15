@@ -196,7 +196,12 @@ def map_frames_hold(frames_rgb: list[np.ndarray], payload: Any, reasons: list[st
     return out
 
 
-def check(raw: Path, still: Path, kind: str, ctx: Any, payload: Any = None) -> dict[str, Any]:
+def played_length(shot_s: float, raw_s: float, clip_min_s: float = 3.0, clip_max_s: float = 5.0) -> float:
+    """Seconds of the raw clip that reach the screen (compose and hooks.moving_base play its start)."""
+    return min(max(shot_s, clip_min_s), clip_max_s, raw_s) if raw_s > 0 else 0.0
+
+
+def check(raw: Path, still: Path, kind: str, ctx: Any, payload: Any = None, play_s: float = 0.0) -> dict[str, Any]:
     """First-frame match, fixed yes or no vision questions, and map registration on the last frame."""
     raw = Path(raw)
     out: dict[str, Any] = {"ok": False, "reasons": [], "answers": {}, "first_corr": 0.0, "map": None,
@@ -205,7 +210,8 @@ def check(raw: Path, still: Path, kind: str, ctx: Any, payload: Any = None) -> d
         dur = media_duration(raw)
     except Exception:  # noqa: BLE001
         dur = 0.0
-    fr = frames(raw, [0.0, dur / 2, max(0.0, dur - 0.1)])
+    span = min(play_s, dur) if play_s > 0 else dur  # the frames that play, not the unused tail of the clip
+    fr = frames(raw, [0.0, span / 2, max(0.0, span - 0.1)])
     if len(fr) < 3:
         out["reasons"].append("clip frames unreadable")
         return out
@@ -281,7 +287,14 @@ def make_clip(shot: Shot, still: Path, kind: str, ctx: Any, out_dir: Path, paylo
     if raw is None:
         return res
     res["raw"] = str(raw)
-    chk = check(raw, Path(still), kind, ctx, payload)
+    art = ctx.profile.art if hasattr(ctx, "profile") else None
+    try:
+        raw_s = media_duration(raw)
+    except Exception:  # noqa: BLE001  unreadable length: check the whole clip
+        raw_s = 0.0
+    play = played_length(shot.duration, raw_s, float(getattr(art, "clip_min_s", 3.0)),
+                         float(getattr(art, "clip_max_s", 5.0)))
+    chk = check(raw, Path(still), kind, ctx, payload, play_s=play)
     res["check"] = chk
     if not chk["ok"]:
         ctx.log.info("art clip rejected, keeping still", shot=shot.id, reasons=chk["reasons"][:5])

@@ -111,12 +111,14 @@ def generate(spec: ProviderSpec, prompt: str, out_path: Path, model: str = "",
     try:
         task = image_mod._poll(spec, url, headers, lambda r: image_mod._elevate_data(r, f"Elevate art task {task_id}"),
                                f"Elevate art task {task_id}", 420, 6)
-    except RefusalError as e:
-        if "not finished within" in str(e):
+    except (RefusalError, TransportError) as e:
+        if isinstance(e, RefusalError) and "not finished within" in str(e):
             with _LOCK:
                 _PENDING[key] = task_id  # still running server side: the retry polls it, never pays twice
             raise TransportError(str(e)) from e
-        side.unlink(missing_ok=True)  # a failed task is over: the next call submits afresh
+        # a failed task is over, whether it said "retry" (TransportError) or refused: the next call submits afresh
+        # (poll request errors never get here: _poll keeps polling through them)
+        side.unlink(missing_ok=True)
         raise
     if not task.get("result_url"):
         raise TransportError(f"Elevate art task {task_id} completed without result_url")

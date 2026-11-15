@@ -24,6 +24,7 @@ from typing import Any, Optional
 from ..models import MapPayload, MotionKind, MotionSpec, Shot, ShotList, ShotType, SourceKind
 from . import clips as C
 from . import common, illustrate as IL, paint as P
+from ..util import stable_hash
 from .mapref import view_key
 
 
@@ -75,6 +76,14 @@ def paint_maps(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str, Any]) 
             times.append(s.start)
             row["base"], row["reused"] = base, True
             continue
+        old = P.existing_base(p, out)
+        if old:  # a painting of this view is already on disk: reuse it before any budget or cap check
+            p.art_base = old
+            spec.payload = p.model_dump()
+            painted[vk] = (old, [s.start])
+            row["base"], row["reused"] = old, True
+            done += 1
+            continue
         if done >= budget:
             row["plain"] = "illustrated map share used"
             continue
@@ -103,18 +112,24 @@ def add_illustrations(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str,
     if a.illustrations <= 0:
         return 0
     budget = max(1, round(a.illustrations * len(shotlist.shots)))
-    have = [s for s in shotlist.shots if _selected_source(s) == SourceKind.illustration]
+    have = [s for s in shotlist.shots if _selected_source(s) == SourceKind.illustration
+            or (_selected_source(s) == SourceKind.art_video
+                and any(c.source == SourceKind.illustration for c in s.candidates))]  # an illustration that came alive
     if len(have) >= budget:  # a rerun keeps what it made and pays for nothing new
         return len(have)
     spec_e = common.elevate_spec(ctx)
     out = common.art_dir(ctx) / "illustrations"
     picks_file = out / "illustration_picks.json"
-    if picks_file.exists():  # the director's picks are kept, so a rerun reuses its paid illustrations
-        picks = json.loads(picks_file.read_text(encoding="utf-8"))
+    # the director's picks are kept for this shot list, so a rerun reuses its paid illustrations; a changed shot
+    # list (other shots or intents) asks again
+    fingerprint = stable_hash([(s.id, s.intent) for s in shotlist.shots])
+    saved = json.loads(picks_file.read_text(encoding="utf-8")) if picks_file.exists() else {}
+    if isinstance(saved, dict) and saved.get("key") == fingerprint:
+        picks = saved.get("picks") or []
     else:
         picks = IL.choose(shotlist, ctx, budget)
         out.mkdir(parents=True, exist_ok=True)
-        picks_file.write_text(json.dumps(picks, indent=1), encoding="utf-8")
+        picks_file.write_text(json.dumps({"key": fingerprint, "picks": picks}, indent=1), encoding="utf-8")
     n = len(have)
     for pick in picks:
         if n >= budget:
@@ -168,12 +183,15 @@ def add_clips(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str, Any]) -
         return 0
     eligible = {s.id: k for s in shotlist.shots if (k := _clip_kind(s))}
     out = common.art_dir(ctx) / "clips"
-    # clips already on screen from an earlier run count against the budget (map clips were cleared above and
-    # are decided again, their raw files reused)
-    have = sum(1 for s in shotlist.shots if (c := s.selected_candidate()) is not None and c.id.endswith("_art_clip"))
-    budget = max(1, int(shotlist.duration // a.clip_every_s)) - have
-    n = 0
-    for sid in C.plan_clips(shotlist, a, eligible)[:max(0, budget)]:
+    # clips already on screen from an earlier run keep their slots: they are planned as kept and skipped, so a
+    # rerun neither pays for a replacement nor drops a map clip (map clips were cleared above and are planned
+    # again, their raw files reused by still hash)
+    kept = {s.id for s in shotlist.shots if (c := s.selected_candidate()) is not None and c.id.endswith("_art_clip")}
+    plan_pool = {**eligible, **{sid: "illustration" for sid in kept}}
+    n = len(kept)
+    for sid in C.plan_clips(shotlist, a, plan_pool):
+        if sid in kept:
+            continue
         shot, kind = shotlist.by_id(sid), eligible[sid]
         try:
             if kind == "illustrated_map":
