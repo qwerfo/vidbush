@@ -133,6 +133,7 @@ def add_ai(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Candidate:
             break
         shot.candidates.append(cand)
         _prefilter_and_score([(shot, cand)], ctx, workers=1)
+        from .ai_checks import check_still; check_still(shot, cand, ctx)  # noqa: E702 fixed-question still check
         takes.append(cand)
         if _ok(cand, threshold) or JUDGE_MOCK_FLAG in cand.flags:
             break

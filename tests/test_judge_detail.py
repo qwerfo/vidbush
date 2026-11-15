@@ -117,7 +117,7 @@ def test_default_vision_json_and_learn_style_send_low(settings, monkeypatch, tmp
     assert sent == [["low", "low", "low"], ["low", "low"]]
 
 
-def test_qa_pass_sends_all_low(settings, monkeypatch, tmp_path):
+def test_qa_pass_reads_the_middle_frame_high_and_the_rest_low(settings, monkeypatch, tmp_path):
     _real_vision(settings)
     sent = _capture(monkeypatch)
     shot = Shot(id="s0", beat_id="b0", start=0, end=4, duration=4, type=ShotType.footage, intent="A harbour")
@@ -125,7 +125,8 @@ def test_qa_pass_sends_all_low(settings, monkeypatch, tmp_path):
                           log=NullLogger())
     out = score_post_render(ShotList(project_id="p", duration=4, shots=[shot]), {"s0": _frames(tmp_path, 3)}, ctx)
     assert "s0" in out
-    assert sent and all(d and set(d) == {"low"} for d in sent)
+    # the middle frame must be read closely (lower thirds, map titles, faces); the others only confirm
+    assert sent and all(d == ["high", "low", "low"] for d in sent)
 
 
 def test_thumbnail_scoring_sends_low(settings, monkeypatch, tmp_path, make_ctx):

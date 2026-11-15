@@ -265,7 +265,7 @@ def test_judge_and_qa_prompts_carry_the_narration(make_ctx, monkeypatch):
     monkeypatch.setattr(ctx.seats, "vision_json", lambda role, task, system, prompt, images, stage, **k: (
         seen.append(prompt) or {"score": 80, "reason": "ok", "rejects": []}))
     qa.score_post_render(ShotList(project_id="t1", duration=1.0, shots=[s]), {s.id: ["f.jpg"]}, ctx)
-    assert f"Narration: {SERUM}" in seen[0]
+    assert f"Narration of the whole beat, for context only: {SERUM}" in seen[0]  # no word timings here
 
 
 def test_ai_candidate_title_is_not_its_prompt(make_ctx):
@@ -281,6 +281,8 @@ def ai_vision(scores: list[float], prompts: Optional[list[str]] = None):
     left = list(scores)
 
     def vision_json(role, task, system, prompt, images, stage, intent="", details=None) -> dict[str, Any]:
+        if task == "ai_check":
+            return {"_mock": False}  # the fixed-question check (tests/test_ai_checks.py) takes no score
         if prompts is not None:
             prompts.append(prompt)
         score = left.pop(0) if len(left) > 1 else left[0]
@@ -326,7 +328,8 @@ def test_judge_reason_is_rewrite_context_and_never_a_negative(make_ctx, monkeypa
     monkeypatch.setattr(ctx.seats, "image", lambda prompt, out_path, stage, negative_prompt="", note="image": (
         negatives.append(negative_prompt) or real(prompt, out_path, stage, negative_prompt=negative_prompt)))
     users: list[str] = []
-    monkeypatch.setattr(ctx.seats, "llm_json", lambda role, task, system, user, stage, **k: users.append(user))
+    monkeypatch.setattr(ctx.seats, "llm_json", lambda role, task, system, user, stage, **k: (
+        users.append(user) if task == "ai_prompt_safety" else None))  # the scene brief call comes first
     reason = "Shows a man holding one husky on a leash, no sled and no team of dogs"
     ai_images.generate_ai_candidate(s, ctx, problem=reason)
     assert f"Problem: {reason}" in users[0] and "husky on a leash" not in users[0].splitlines()[0]
