@@ -84,6 +84,7 @@ def best_resource(item: dict[str, Any], media: Media) -> Optional[dict[str, Any]
 class LocAdapter(BaseAdapter):
     name = "loc"
     media = {"video", "image"}
+    keyword_words = 3  # loc.gov search matches every word
 
     def timeout(self, settings: Settings) -> float:
         """loc.gov search often takes 20 to 40 s; a short timeout loses most of its results."""
@@ -92,7 +93,8 @@ class LocAdapter(BaseAdapter):
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
         url = FILMS if media == "video" else PHOTOS
-        data = base.http_get_json(url, params={"q": query, "fo": "json", "c": max(n, 5)}, timeout=self.timeout(settings))
+        q = base.keyword_query(query, self.keyword_words)
+        data = base.http_get_json(url, params={"q": q, "fo": "json", "c": max(n, 5)}, timeout=self.timeout(settings))
         return parse_search(data, media)[:n]
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:

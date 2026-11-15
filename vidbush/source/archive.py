@@ -112,9 +112,11 @@ def resolve(raw: RawResult, meta_doc: dict[str, Any]) -> Optional[RawResult]:
 class ArchiveAdapter(BaseAdapter):
     name = "archive"
     media = {"video", "image"}
+    keyword_words = 3  # advancedsearch matches every word
 
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
+        query = base.keyword_query(query, self.keyword_words)
         mt = "movies" if media == "video" else "image"
         params = {"q": f"({query}) AND mediatype:({mt})", "fl[]": ["identifier", "title", "creator", "licenseurl", "date"],
                   "rows": max(n, 5), "page": 1, "output": "json", "sort[]": "downloads desc"}

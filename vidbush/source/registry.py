@@ -46,7 +46,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
 
-from ..models import FOOTAGE_TYPES, Candidate, Shot, ShotList, ShotType, SourceKind
+from ..models import FOOTAGE_TYPES, GENERATED_SOURCES, Candidate, Shot, ShotList, ShotType
 from . import base, throttle
 from .base import Media, RawResult, SourceAdapter
 from .blocklist import Blocklist
@@ -58,11 +58,11 @@ STILL_SHOT_TYPES = {ShotType.image, ShotType.image_overlay}
 QUERIES_PER_SHOT = 3
 RECENT_SHOTS = 3
 SEARCH_CACHE_TTL_S = 14 * 86400
+# a cached search never outlives the download links it holds: Pixabay's image links expire after 24 hours
+SEARCH_CACHE_TTL_BY_SOURCE = {"pixabay": 23 * 3600}
 ADAPTER_WORKERS = {"youtube": 1, "loc": 1, "local": 2}
 DEFAULT_ADAPTER_WORKERS = 3
 UNCACHED = {"local"}  # in-memory index; its results change with the library
-_BLOCKED: dict[str, set[str]] = defaultdict(set)  # run id -> sources that answered with a bot check page
-_BLOCKED_LOCK = threading.Lock()
 SOURCE_NOTES = "source_notes.json"  # in ctx.work: search usage per run, read by judge/qa.py
 MAX_NOTE_RUNS = 10
 
@@ -76,7 +76,7 @@ def _factories() -> dict[str, Callable[[], SourceAdapter]]:
         return build
     return {"local": make("local", "LocalAdapter"), "youtube": make("youtube", "YoutubeAdapter"),
             "wikimedia": make("wikimedia", "WikimediaAdapter"), "archive": make("archive", "ArchiveAdapter"),
-            "loc": make("loc", "LocAdapter"), "nasa": make("nasa", "NasaAdapter"),
+            "loc": make("loc", "LocAdapter"), "nara": make("nara", "NaraAdapter"), "nasa": make("nasa", "NasaAdapter"),
             "pexels": make("pexels", "PexelsAdapter"), "pixabay": make("pixabay", "PixabayAdapter")}
 
 
@@ -155,7 +155,7 @@ def shot_queries(shot: Shot, queries: Optional[list[str]] = None) -> list[str]:
     return qs[:QUERIES_PER_SHOT]
 
 
-GENERATED = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
+GENERATED = GENERATED_SOURCES  # never sourced, never replaced by a re-run of sourcing
 
 
 def _has_sourced(shot: Shot) -> bool:
@@ -182,17 +182,22 @@ def _variant(hints: dict[str, Any]) -> str:
     return ",".join(f"{k}={v}" for k, v in sorted(hints.items()))
 
 
+def cache_variant(adapter: SourceAdapter, hints: dict[str, Any]) -> str:
+    """Search cache variant: the hints, plus the keyword form when the adapter shortens queries (a
+    cached answer to the long query says nothing about the short one)."""
+    words = getattr(adapter, "keyword_words", 0)
+    return _variant({**hints, "kw": words} if words else hints)
+
+
 def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
                 ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]] = None) -> list[RawResult]:
     """One search: disk cache first, then the run budget (one per pass), then the adapter. Never raises.
     A search the budget deferred or the host throttled is added to unsent as (shot, source, query)."""
-    with _BLOCKED_LOCK:
-        if adapter.name in _BLOCKED[run_id(ctx)]:
-            return []
     cacheable = adapter.name not in UNCACHED
     hints = search_hints(adapter, ctx)
+    variant = cache_variant(adapter, hints)
     if cacheable:
-        hit = cache_get(adapter.name, query, media, n, ctx.settings, _variant(hints))
+        hit = cache_get(adapter.name, query, media, n, ctx.settings, variant)
         if hit is not None:
             return _screen(adapter.name, query, hit, shot, ctx)  # the cache holds raw results: same screen
         if not throttle.take_budget(run_id(ctx), adapter.name, shot.id):
@@ -217,16 +222,16 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
                    source=adapter.name, error=str(e)[:200])
         return []
     except Exception as e:  # noqa: BLE001 - one failing source never stops sourcing
-        if base.is_challenge(e):
-            with _BLOCKED_LOCK:
-                _BLOCKED[run_id(ctx)].add(adapter.name)
-            _note_once(ctx, f"challenge_{adapter.name}", "source answered with a bot check page; skipped for this run",
-                       source=adapter.name)
+        if base.is_challenge(e):  # base cooled the host down; its searches are deferred until then
+            if unsent is not None:
+                unsent.add((shot.id, adapter.name, query))
+            _note_once(ctx, f"challenge_{adapter.name}", "source answered with a bot check page; paused, "
+                       "it is asked again after a cool-down", source=adapter.name, error=str(e)[:120])
             return []
         ctx.log.warn("source search failed", source=adapter.name, query=query, shot=shot.id, error=str(e)[:200])
         return []
     if cacheable:
-        cache_put(adapter.name, query, media, n, results, ctx.settings, _variant(hints))
+        cache_put(adapter.name, query, media, n, results, ctx.settings, variant)
     return _screen(adapter.name, query, results, shot, ctx)
 
 
@@ -302,11 +307,11 @@ def _cache_path(adapter: str, query: str, media: str, n: int, settings: Any, var
 
 def cache_get(adapter: str, query: str, media: str, n: int, settings: Any,
               variant: str = "") -> Optional[list[RawResult]]:
-    """Cached search results younger than SEARCH_CACHE_TTL_S, or None. variant holds the search hints."""
+    """Cached search results younger than the source's TTL, or None. variant holds the search hints."""
     path = _cache_path(adapter, query, media, n, settings, variant)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if time.time() - float(data.get("ts", 0)) > SEARCH_CACHE_TTL_S:
+        if time.time() - float(data.get("ts", 0)) > SEARCH_CACHE_TTL_BY_SOURCE.get(adapter, SEARCH_CACHE_TTL_S):
             return None
         return [RawResult(**r) for r in data.get("results") or []]
     except (OSError, ValueError, TypeError):
@@ -504,7 +509,9 @@ def _blocklist(ctx: "StageContext") -> Blocklist:
 
 
 def _workers() -> int:
-    return max(2, min(6, os.cpu_count() or 2))
+    """Shots fetched at once: more than the YouTube download slots, so a slot freed while one shot
+    runs scene detection is taken by another shot's download."""
+    return max(2, min(8, os.cpu_count() or 2))
 
 
 # ---------------------------------------------------------------- entry points

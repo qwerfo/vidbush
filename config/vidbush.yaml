@@ -8,7 +8,7 @@ allow_mock_fallback: false  # true = if every real provider for a role fails, us
 
 sources:
   # order is the search order; disabled sources are skipped
-  enabled: [local, youtube, wikimedia, archive, loc, nasa, pexels, pixabay]
+  enabled: [local, youtube, wikimedia, archive, loc, nara, nasa, pexels, pixabay]
   allow_youtube: true
   flag_nc_nd: true      # CC NC / ND assets are allowed but flagged in qa_report
   blocklist: []         # domains never used, e.g. [example.com, badstock.net]
@@ -20,7 +20,8 @@ sources:
   flag_standard_youtube: true      # Standard YouTube Licence clips are allowed but flagged in qa_report
   youtube_cookies_from_browser: "" # e.g. firefox or "chrome:Profile 1"; passed to yt-dlp when set
   youtube_cookie_file: ""          # path to a Netscape cookies.txt; passed to yt-dlp when set
-  youtube_download_workers: 3      # parallel downloads of different videos; searches stay serial
+  youtube_download_workers: 6      # parallel downloads of different videos; searches stay serial
+  query_budget: {youtube: 500, pexels: 300, nara: 300}  # searches per run; host rates (source/throttle.py) pace them
   youtube_windows: 3               # windows sampled across a video when no transcript or chapter matches
 
 judge:

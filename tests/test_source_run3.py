@@ -1,0 +1,160 @@
+"""Run 3 sourcing rules: short keyword queries for every-word engines, their cache form, Pixabay tags and
+link lifetime, still repair, and the offline replay of a run's sourcing from its search cache."""
+from __future__ import annotations
+
+import io
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+import pytest
+from PIL import Image
+
+from vidbush.models import Shot, ShotList, ShotType
+from vidbush.source import base, registry, replay, throttle
+from vidbush.source.base import RawResult, keyword_query
+
+
+@pytest.fixture(autouse=True)
+def fresh():
+    throttle.reset()
+    yield
+    throttle.reset()
+
+
+def test_keyword_query_keeps_the_first_specific_words_in_their_spelling() -> None:
+    assert keyword_query("Leonhard Seppala and Togo photo", 3) == "Leonhard Seppala Togo"
+    assert keyword_query("Alaska biplane 1920s skis snow photo", 3) == "Alaska biplane skis"
+    assert keyword_query("Yup'ik dancing drumming school gym", 3) == "Yup'ik dancing drumming"
+    assert keyword_query("archival footage 1950s", 3) == "archival footage 1950s"  # nothing specific: unchanged
+    assert keyword_query("dog Dog dogs sled", 2) == "dog dogs"  # repeated spelling counted once
+
+
+def test_every_word_engines_send_short_queries(monkeypatch, settings) -> None:
+    from vidbush.source.archive import ArchiveAdapter
+    from vidbush.source.loc import LocAdapter
+    from vidbush.source.nasa import NasaAdapter
+    from vidbush.source.wikimedia import WikimediaAdapter
+    sent: list[str] = []
+
+    def get_json(url: str, params=None, headers=None, timeout: float = 20.0) -> Any:
+        sent.append(str(params.get("q") or params.get("gsrsearch")))
+        return {}
+
+    monkeypatch.setattr(base, "http_get_json", get_json)
+    for a in (WikimediaAdapter(), ArchiveAdapter(), NasaAdapter(), LocAdapter()):
+        a.search("vintage photo of a red sled dog team crossing ice", "image", 4, settings)
+    assert sent[0] == "red sled dog filetype:bitmap" and sent[1].startswith("(red sled dog)")
+    assert sent[2] == sent[3] == "red sled dog"
+
+
+def test_cache_form_changes_with_the_keyword_form(settings) -> None:
+    class Long:
+        name = "wikimedia"
+
+    class Short(Long):
+        keyword_words = 3
+
+    assert registry.cache_variant(Long(), {}) == ""
+    assert registry.cache_variant(Short(), {"language": "en"}) == "kw=3,language=en"
+    registry.cache_put("wikimedia", "q", "image", 4, [], settings, registry.cache_variant(Long(), {}))
+    assert registry.cache_get("wikimedia", "q", "image", 4, settings, registry.cache_variant(Short(), {})) is None
+
+
+def test_pixabay_tags_count_for_relevance(settings) -> None:
+    from vidbush.source import pixabay
+    data = {"hits": [{"pageURL": "https://pixabay.com/photos/x-1/", "user": "u", "imageWidth": 4000,
+                      "imageHeight": 3000, "largeImageURL": "https://pixabay.com/get/x.jpg",
+                      "tags": "huskies, dogs, race, sled dog racing, snow, musher"}]}
+    r = pixabay.parse_photos(data)[0]
+    assert r.title == "Huskies, dogs, race" and "musher" in r.extra["tags"]
+    assert base.relevance("musher snow", r) == 1.0  # both words are only in the tags past the title's three
+
+
+def test_pixabay_search_cache_outlives_no_download_link(settings) -> None:
+    registry.cache_put("pixabay", "q", "image", 4, [RawResult(source="pixabay", url="u")], settings)
+    path = registry._cache_path("pixabay", "q", "image", 4, settings)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["ts"] = time.time() - 25 * 3600
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert registry.cache_get("pixabay", "q", "image", 4, settings) is None
+    registry.cache_put("pexels", "q", "image", 4, [RawResult(source="pexels", url="u")], settings)
+    p2 = registry._cache_path("pexels", "q", "image", 4, settings)
+    d2 = json.loads(p2.read_text(encoding="utf-8"))
+    d2["ts"] = time.time() - 25 * 3600
+    p2.write_text(json.dumps(d2), encoding="utf-8")
+    assert registry.cache_get("pexels", "q", "image", 4, settings) is not None
+
+
+def test_padded_scan_is_repaired_on_download(monkeypatch, settings) -> None:
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 48), (10, 20, 30)).save(buf, "JPEG")
+    padded = buf.getvalue()[:-60] + b"\x00" * 200  # end marker lost, zero padding instead
+
+    def download(url: str, dest: Path, headers=None, timeout: float = 60.0, max_bytes: int = 0) -> Path:
+        dest.write_bytes(padded)
+        return dest
+
+    monkeypatch.setattr(base, "http_download", download)
+    path = base.cached_download("https://example.org/scan.jpg", ".jpg", settings)
+    with Image.open(path) as im:
+        im.load()  # strict decode works now
+        assert im.size == (64, 48)
+
+
+# ---------------------------------------------------------------- offline replay
+
+def _project(tmp: Path) -> Path:
+    shots = [Shot(id="s001", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage,
+                  intent="harbour", queries=["harbour cranes", "container ship"]),
+             Shot(id="s002", index=1, beat_id="b", start=4, end=8, duration=4, type=ShotType.ai_image,
+                  intent="lighthouse", queries=["lighthouse storm"]),
+             Shot(id="s003", index=2, beat_id="b", start=8, end=12, duration=4, type=ShotType.footage,
+                  intent="nothing cached", queries=["never searched"]),
+             Shot(id="s004", index=3, beat_id="b", start=12, end=16, duration=4, type=ShotType.image,
+                  intent="foghorn", queries=["foghorn"])]
+    proj = tmp / "proj"
+    proj.mkdir()
+    (proj / "shotlist.json").write_text(ShotList(project_id="p", duration=12, shots=shots).model_dump_json(),
+                                        encoding="utf-8")
+    (proj / "project.json").write_text(json.dumps({"id": "p", "brand_id": "default"}), encoding="utf-8")
+    return proj
+
+
+def test_replay_plans_from_cache_hits_only(monkeypatch, settings, tmp_path) -> None:
+    monkeypatch.setattr(replay, "load_settings", lambda: settings)
+    n = registry._per_adapter_n(type("A", (), {"name": "pexels"})(), settings.sources.max_candidates)
+    on = RawResult(source="pexels", url="https://px/1", title="Harbour cranes at dusk", media="video")
+    off = RawResult(source="pexels", url="https://px/2", title="Cat on a sofa", media="video")
+    registry.cache_put("pexels", "harbour cranes", "video", n, [on, off], settings)
+    still = RawResult(source="pexels", url="https://px/3", title="Lighthouse in a storm", media="image")
+    registry.cache_put("pexels", "lighthouse storm", "image", n, [still], settings)
+    registry.cache_put("pexels", "foghorn", "image", n, [], settings)
+    horn = RawResult(source="pexels", url="https://px/4", title="Foghorn blowing", media="video")
+    registry.cache_put("pexels", "foghorn", "video", n, [horn], settings)
+    rep = replay.replay(_project(tmp_path), adapter_names=["pexels"])
+    s1, s2, s3 = (rep["shots"][k] for k in ("s001", "s002", "s003"))
+    assert s1["matches"] == 1 and s1["fillers"] == 1 and s1["plan"] == 2 and s1["plan_matches"] == 1
+    assert s1["cache_misses"] == ["pexels:video:container ship"]  # sent past the budget, failed offline
+    assert rep["restored_types"] == {"s002": "image"} and s2["plan"] == 1  # the AI still was a still shot
+    assert s3["plan"] == 0 and s3["cache_misses"] == ["pexels:video:never searched"]
+    assert rep["shots"]["s004"]["frame_fallback_plan"] == {"plan": 1, "matches": 1}  # no still: video frames
+    assert "frame_fallback_plan" not in s2
+
+
+def test_replay_reads_drop_events_of_one_stage(monkeypatch, settings, tmp_path) -> None:
+    raws = [RawResult(source="pexels", url="https://px/1", title="Harbour cranes", media="video"),
+            RawResult(source="pexels", url="https://px/2", title="Cat", media="video")]
+    registry.cache_put("pexels", "harbour cranes", "video", 4, raws, settings)
+    log = tmp_path / "run.jsonl"
+    rows = [{"msg": "stage start", "stage": "sourcing"},
+            {"msg": "off-topic results dropped", "source": "pexels", "query": "Harbour  cranes", "dropped": 1},
+            {"msg": "stage start", "stage": "judge"},
+            {"msg": "off-topic results dropped", "source": "pexels", "query": "harbour cranes", "dropped": 1}]
+    log.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    ctx = type("C", (), {"settings": settings, "log": replay.Log()})()
+    assert replay.replay_drops(log, ctx) == {"events": 1, "results": 2, "now_matches": 1, "now_fillers": 1}
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n" + json.dumps(
+        {"msg": "sourcing done", "empty": ["s003"]}), encoding="utf-8")
+    assert replay.empty_shots(log) == ["s003"]

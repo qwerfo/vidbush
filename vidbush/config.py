@@ -29,7 +29,7 @@ def load_dotenv(path: Path) -> dict[str, str]:
 
 class SourcesConfig(BaseModel):
     enabled: list[str] = Field(
-        default_factory=lambda: ["local", "youtube", "wikimedia", "archive", "loc", "nasa", "pexels", "pixabay"]
+        default_factory=lambda: ["local", "youtube", "wikimedia", "archive", "loc", "nara", "nasa", "pexels", "pixabay"]
     )
     allow_youtube: bool = True
     flag_nc_nd: bool = True

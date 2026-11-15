@@ -51,7 +51,7 @@ RATE_LIMIT_RETRIES = 2
 RATE_LIMIT_MAX_WAIT_S = 60.0
 SOURCE_LABELS: dict[str, str] = {
     "youtube": "YouTube", "wikimedia": "Wikimedia Commons", "archive": "Internet Archive",
-    "loc": "Library of Congress", "nasa": "NASA", "pexels": "Pexels", "pixabay": "Pixabay",
+    "loc": "Library of Congress", "nara": "US National Archives", "nasa": "NASA", "pexels": "Pexels", "pixabay": "Pixabay",
     "local": "footage library",
 }
 
@@ -99,6 +99,7 @@ GENERIC_WORDS = {
     "photographs", "image", "images", "picture", "historic", "historical", "history", "old", "vintage",
     "black", "white", "aerial", "view", "shot", "scene", "documentary", "newsreel", "public", "domain",
     "color", "colour", "early", "rare", "real", "original", "the", "and", "with", "from", "for", "into",
+    "close", "closeup", "wide", "recreation", "reenactment", "stock", "clip", "clips", "cinematic",
 }
 
 
@@ -134,6 +135,21 @@ def _stem(word: str) -> str:
 def content_tokens(text: str) -> set[str]:
     """Stemmed words of 3+ letters that are not generic footage words."""
     return {_stem(w) for w in re.findall(r"[A-Za-z]{3,}", text or "") if w.lower() not in GENERIC_WORDS}
+
+
+def keyword_query(query: str, words: int) -> str:
+    """The first `words` specific words of a query, in their own spelling (generic footage words, years
+    and short words left out), for a search engine that requires every word to match. Such archives
+    answer long descriptive queries with nothing: in run 2, Commons and Internet Archive found results
+    for 75 and 90 percent of 2 word queries and 9 and 14 percent of 6 word ones. The relevance screen
+    still ranks the results against the whole query. The query is kept when it has no specific word."""
+    seen: list[str] = []
+    for w in re.findall(r"[A-Za-z][A-Za-z'\-]*[A-Za-z]|[A-Za-z]", query or ""):
+        if len(w) >= 3 and w.lower() not in GENERIC_WORDS and w.lower() not in (s.lower() for s in seen):
+            seen.append(w)
+        if len(seen) == words:
+            break
+    return " ".join(seen) if seen else query
 
 
 def relevance(query: str, raw: "RawResult") -> float:
@@ -184,6 +200,10 @@ def _rate_limited(call: Any, url: str) -> Any:
             throttle.cool_down(host, max(wait, 5.0))
             if n == RATE_LIMIT_RETRIES or wait > RATE_LIMIT_MAX_WAIT_S:
                 raise
+        except Exception as e:
+            if is_challenge(e):  # pause this host only; its next request waits out the cool-down
+                throttle.cool_down(host, throttle.challenge_cooldown(host))
+            raise
     raise AssertionError("unreachable")
 
 
@@ -192,7 +212,7 @@ _CHALLENGE_MARKS = ("just a moment", "cf-chl", "challenge-platform", "attention 
 
 def is_challenge(err: Exception) -> bool:
     """True when a source answered with a bot check page (Cloudflare and the like). Vidbush never tries to
-    get past one: the source is skipped for the rest of the run instead."""
+    get past one: the host is paused for throttle.challenge_cooldown(host), then asked once more."""
     low = str(err).lower()
     return ("403" in low or "503" in low or "429" in low) and any(m in low for m in _CHALLENGE_MARKS)
 
@@ -304,8 +324,36 @@ def cached_download(url: str, ext: str, settings: Settings, headers: Optional[di
             return dest
         tmp = dest.with_suffix(dest.suffix + ".part")
         http_download(url, tmp, headers=headers, timeout=settings.sources.timeout_s, max_bytes=max_bytes)
+        if ext.lower() in STILL_EXTS:
+            repair_still(tmp)
         tmp.replace(dest)
     return dest
+
+
+STILL_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+
+
+def repair_still(path: Path) -> None:
+    """Re-encode a still that decodes only leniently (archival scans often end in padding instead of the
+    JPEG end marker), so every later reader opens it; a file that does not decode at all is left as is."""
+    from PIL import Image, ImageFile
+    try:
+        with Image.open(path) as im:
+            im.load()
+        return
+    except OSError:
+        pass
+    ImageFile.LOAD_TRUNCATED_IMAGES = True  # shortcut: process wide during one repair, use a per-file option if PIL adds one
+    try:
+        with Image.open(path) as im:
+            im.load()
+            fmt = im.format or "JPEG"
+            clean = im.convert("RGB") if fmt == "JPEG" and im.mode not in ("RGB", "L") else im.copy()
+        clean.save(path, fmt, **({"quality": 95} if fmt == "JPEG" else {}))
+    except OSError:
+        pass
+    finally:
+        ImageFile.LOAD_TRUNCATED_IMAGES = False
 
 
 def cached_section(url: str, start: float, length: float, settings: Settings, ext: str = ".mp4") -> Path:
@@ -437,6 +485,7 @@ class BaseAdapter:
     name: str = ""
     media: set[str] = {"video", "image"}
     key_name: str = ""
+    keyword_words: int = 0  # > 0: the engine matches every word, so searches send keyword_query(query, n)
 
     def available(self, settings: Settings) -> bool:
         if settings.offline:

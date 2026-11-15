@@ -30,10 +30,61 @@ def test_token_bucket_bursts_then_refuses_long_waits() -> None:
 
 
 def test_default_rates_follow_published_limits() -> None:
-    assert throttle.DEFAULT_RATES["www.loc.gov"][0] == pytest.approx(1 / 3)
-    assert throttle.DEFAULT_RATES["api.pexels.com"][0] * 3600 == pytest.approx(200)
-    assert throttle.DEFAULT_RATES["pixabay.com"][0] * 60 == pytest.approx(100)
+    """Burst plus the refill over the window never exceeds the host's limit for that window."""
+    def most_in(host: str, window: float) -> float:
+        rate, burst = throttle.DEFAULT_RATES[host]
+        return burst + rate * window
+    assert most_in("www.loc.gov", 60) <= 21  # 20 per minute, the first one free
+    assert most_in("api.pexels.com", 3600) == pytest.approx(200)
+    assert most_in("pixabay.com", 60) == pytest.approx(100)
     assert "youtube" in throttle.SERIAL_HOSTS
+
+
+def test_slow_host_waits_one_interval_instead_of_refusing() -> None:
+    """A host slower than MAX_WAIT_S (Pexels: one search per 22.5 s) is paced: the next token is waited
+    for, a request queued behind it is refused before it is sent."""
+    rate, burst = throttle.window_rate(200, 3600, 1)
+    b = throttle.TokenBucket(rate, burst)
+    assert b.reserve(throttle.MAX_WAIT_S) == 0.0
+    wait = b.reserve(throttle.MAX_WAIT_S)
+    assert throttle.MAX_WAIT_S < wait <= 1 / rate + 1e-6
+    with pytest.raises(throttle.Throttled):
+        b.reserve(throttle.MAX_WAIT_S)
+
+
+def test_budget_over_hourly_limit_counts_only_sent_searches(monkeypatch) -> None:
+    """300 Pexels searches one after another against 200 an hour: each waits for its slot, none is refused,
+    and the run counts exactly the searches sent (the pacing spreads them over more than an hour)."""
+    clock = [1000.0]
+    monkeypatch.setattr(throttle.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(throttle.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    sent: list[str] = []
+
+    class Pexels:
+        name, media = "pexels", {"video"}
+
+        def search(self, query, media, n, settings, shot=None, **kw):
+            with throttle.slot("api.pexels.com"):
+                sent.append(query)
+            return []
+
+    class Ctx:
+        settings = type("S", (), {"source_cache_folder": "", "sources": None})()
+        project = type("P", (), {"id": "pacing"})()
+        extra: dict = {}
+        log = type("L", (), {"info": lambda *a, **k: None, "warn": lambda *a, **k: None})()
+
+    monkeypatch.setattr(registry, "cache_get", lambda *a, **k: None)
+    monkeypatch.setattr(registry, "cache_put", lambda *a, **k: None)
+    monkeypatch.setattr(registry, "search_hints", lambda a, c: {})
+    throttle.STATE.budget["pexels"] = 300
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage, intent="x")
+    unsent: set = set()
+    for i in range(300):
+        registry._search_one(Pexels(), f"q{i}", "video", 4, shot, Ctx(), unsent)
+    rid = registry.run_id(Ctx())
+    assert throttle.spent(rid)["pexels"] == len(sent) == 300 and not unsent
+    assert clock[0] - 1000.0 >= (300 - 40) * 3600 / 160 - 1  # the burst, then one every 22.5 s
 
 
 def test_cooldown_refuses_until_expired() -> None:
@@ -260,3 +311,54 @@ def test_era_mismatch_drops_modern_titles_for_historical_shots() -> None:
                 intent="Archival footage of Thomas Jefferson and a canal in New York, 1810s.")
     assert era_mismatch(shot, RawResult(source="loc", url="u", title="Thomas Jefferson Building: 2019 Book Festival"))
     assert not era_mismatch(shot, RawResult(source="loc", url="u", title="Pilot boats in New York harbor 1903"))
+
+
+def test_bot_check_pauses_only_that_host_then_asks_again(monkeypatch) -> None:
+    """A bot check page pauses its host for challenge_cooldown(host), never the run: other hosts keep
+    going, the paused host sends nothing until the cool-down ends, then one request goes out again."""
+    from vidbush.providers.base import RefusalError
+    clock = [5000.0]
+    monkeypatch.setattr(throttle.time, "monotonic", lambda: clock[0])
+    calls: list[str] = []
+
+    def get_json(url: str, params=None, headers=None, timeout: float = 20.0) -> Any:
+        calls.append(url)
+        if "loc.gov" in url:
+            raise RefusalError("http 403: <!DOCTYPE html><title>Just a moment...</title>")
+        return {"ok": True}
+
+    monkeypatch.setattr(base.provider_http, "get_json", get_json)
+    with pytest.raises(RefusalError):
+        base.http_get_json("https://www.loc.gov/photos/")
+    with pytest.raises(throttle.Throttled):  # paused: nothing is sent
+        base.http_get_json("https://www.loc.gov/photos/")
+    assert base.http_get_json("https://archive.org/advancedsearch.php") == {"ok": True}
+    assert throttle.challenge_cooldown("www.loc.gov") > 3600  # loc.gov restarts its hour on any request
+    assert throttle.challenge_cooldown("example.org") < throttle.challenge_cooldown("www.loc.gov")
+    clock[0] += throttle.challenge_cooldown("www.loc.gov") + 1
+    with pytest.raises(RefusalError):  # asked again once the pause is over
+        base.http_get_json("https://www.loc.gov/photos/")
+    assert [u for u in calls if "loc.gov" in u] == ["https://www.loc.gov/photos/"] * 2
+
+
+def test_registry_defers_a_challenged_search_instead_of_dropping_the_source(monkeypatch) -> None:
+    from vidbush.providers.base import RefusalError
+
+    class Loc:
+        name, media = "loc", {"image"}
+
+        def search(self, *a: Any, **k: Any) -> list:
+            raise RefusalError("http 403: <!DOCTYPE html><title>Just a moment...</title>")
+
+    class Ctx:
+        settings = type("S", (), {})()
+        project = type("P", (), {"id": "challenge"})()
+        extra: dict = {}
+        log = type("L", (), {"info": lambda *a, **k: None, "warn": lambda *a, **k: None})()
+
+    monkeypatch.setattr(registry, "cache_get", lambda *a, **k: None)
+    monkeypatch.setattr(registry, "search_hints", lambda a, c: {})
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.image, intent="x")
+    unsent: set = set()
+    assert registry._search_one(Loc(), "q", "image", 4, shot, Ctx(), unsent) == []
+    assert unsent == {("s1", "loc", "q")}  # the leftover pass and later re-queries send it again

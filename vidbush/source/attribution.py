@@ -7,9 +7,7 @@ lines for AI generated images and motion graphics.
 """
 from __future__ import annotations
 
-from ..models import Candidate, ShotList, SourceKind
-
-GENERATED = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
+from ..models import GENERATED_SOURCES as GENERATED, PHOTO_AI_SOURCES, Candidate, ShotList, SourceKind
 
 
 def format_line(c: Candidate) -> str:
@@ -54,7 +52,7 @@ def attribution_block(shotlist: ShotList) -> str:
     """Markdown 'Footage and image credits' section."""
     lines = attribution_lines(shotlist)
     selected = _selected(shotlist)
-    ai = sum(1 for c in selected if c.source in {SourceKind.ai_image, SourceKind.ai_video})
+    ai = sum(1 for c in selected if c.source in PHOTO_AI_SOURCES)
     motion = sum(1 for c in selected if c.source == SourceKind.motion)
     out = ["## Footage and image credits", ""]
     out += [f"- {ln}" for ln in lines] or ["- No third party footage or images."]
