@@ -56,7 +56,11 @@ def stills(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         elif it.get("type") == "illustration" and it.get("ok") and it.get("still") and Path(it["still"]).exists():
             out.append({"kind": "illustration", "path": it["still"], "start": it["start"], "line": it["window"],
                         "score": float(it.get("score") or 0)})
-    return out
+    seen: dict[str, dict[str, Any]] = {}  # one item per picture: several processes may report the same one
+    for c in out:
+        if c["path"] not in seen or c["score"] > seen[c["path"]]["score"]:
+            seen[c["path"]] = c
+    return list(seen.values())
 
 
 def pick12(cands: list[dict[str, Any]], n: int = 12, floor: int = 4) -> list[dict[str, Any]]:

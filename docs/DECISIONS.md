@@ -374,3 +374,19 @@ One line each: the decision and why.
 - art.hour_credit_cap lets a profile skip new art while the shared key's image credits this hour reach a cap, because the subscription is shared with other lanes and renders.
 - Map motion prompts ask for sea ripples and light only with a locked camera, because Veo added clouds and drift to a painted map and clouds hide the coast the registration checks.
 - The proving run reads a finished project's files without rebasing their media paths, because rebasing pointed the stored stills at the copy, where they do not exist.
+- A map prompt is phrased as a repaint of the given image ("trace every outline exactly where it is"), because models redrew regional views they took as inspiration (a probe view went from "not a refit" to a 4.9 percent patch with the same content).
+- Painted inland water counts as land only within 2 percent of the frame width of a true lake or major river, because a blanket inland exemption let an invented large lake pass; small painted ponds stay below the thickness rule.
+- A vision answer of painted text or painted lines rejects a map variant outright, because the rule is that every word and line on a map is the renderer's.
+- Map paintings use the documentary map style and not the brand's illustration line, because the plain documentary style was richer in the probe and a map reads as a map in any set.
+- An illustration must fill the frame: the prompt asks for a full-bleed picture, and a picture with flat bands along both opposite edges (and a non-flat middle) is rejected, because a model told about the letterbox painted bars that stack on the film's own.
+- Illustrations take a 4 percent edge trim before the 16:9 fit, because nano_banana_pro sometimes stamps a small corner mark and an illustration has no geometry to keep.
+- A map clip's middle and last frames must each pass registration with a refit within 1 percent of scale and 0.5 percent of the frame, because the renderer plays the clip unwarped under the true borders, labels and markers.
+- A painted map holds its painting and moves only for the last 3 to 5 s of the shot, because veo renders 8 s and the clip rule is 3 to 5 s.
+- The reference and the registration use the coast layer the renderer will draw (50 m once the push-in reaches zoom 3), because a painting traced from 110 m sat a few pixels off the 50 m borders drawn on top.
+- A clip is only paid for when the renderer would play it (no shaded region, push-in at most 1.5x).
+- An Elevate video request that ends (a task still running after three poll deadlines, a dead task after its one fresh submit, a completed task without a file) raises a plain provider error, which the client neither retries nor counts against the seat, because a client retry would submit and pay again.
+- An art image task id is kept beside its output like a video's (<out>.task.json, keyed with the seed), so a restart polls the running task instead of paying again.
+- A still larger than 3.5 MB is sent to the video lane as a JPEG of the same pixels, because Elevate refuses a source_image over 5 MB (run 2's AI stills are PNGs of that size).
+- A raw clip file is named with a hash of its still, so a changed still never reuses a clip of the old one.
+- A rerun of the visuals stage keeps the art it made: maps are decided again from clean payloads with paid paintings and clips reused, a finished painting of a view is reused without new judging, illustration picks are kept in work/art, and art already on screen counts against each budget.
+- Designed animation counts as AI generated in the description, the attribution list and QA (models.DESIGNED_SOURCES added to each generated set), because a viewer must be told what was generated.

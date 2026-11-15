@@ -76,9 +76,10 @@ def build_map(places: list[str], start: float, end: float) -> Optional[MotionSpe
     from ..mg import builders, geo
     hits = []
     for name in places:
-        found = geo.find_places(name)
-        if found:
-            hits.append(found[0])
+        # a bare name is looked up in the gazetteer (find_places scans sentences and drops lone words)
+        hit = geo.lookup(name, us_bias=True)
+        if hit is not None and hit.kind != "continent":
+            hits.append((hit.name, hit.lat, hit.lon))
     if not hits:
         return None
     title = ", ".join(h[0] for h in hits[:2])
@@ -140,7 +141,8 @@ class Prove:
     def add(self, item: dict[str, Any]) -> None:
         with self.lock:
             self.items.append(item)
-            name = "art_report_ai_clips.json" if self.args.only == "ai-clips" else "art_report.json"
+            name = {"ai-clips": "art_report_ai_clips.json", "maps": "art_report_maps.json",
+                    "extra-illustrations": "art_report_extra_ills.json"}.get(self.args.only, "art_report.json")
             common.write_report(self.ctx, name, self.items)
 
     # ------------------------------------------------------------ maps
@@ -157,24 +159,30 @@ class Prove:
     def moments(self, n: int) -> list[dict[str, Any]]:
         return self._cached("prove_moments.json", lambda: self._moments(n))
 
-    def _moments(self, n: int) -> list[dict[str, Any]]:
+    def _moments(self, n: int, exclude: tuple[str, ...] = ()) -> list[dict[str, Any]]:
         sents = sentences(self.narr)
         text = "\n".join(f"[{s['start']:.0f}-{s['end']:.0f}] {s['text']}" for s in sents)
+        avoid = f"Do not use these places again: {', '.join(exclude)}. Prefer towns and coasts.\n" if exclude else ""
         raw = self.ctx.seats.llm_json("director", "art_map_moments", MOMENTS_SYSTEM,
-                                      f"Pick {n + 4} moments.\n{text}", "art_prove", temperature=0.4)
+                                      f"Pick {n + 4} moments.\n{avoid}{text}", "art_prove", temperature=0.4)
         rows = (raw or {}).get("moments") if isinstance(raw, dict) else None
         return [r for r in rows or [] if isinstance(r, dict) and r.get("places")]
 
     def run_maps(self) -> None:
         out = self.root / "work" / "art" / "maps"
         done, seen = 0, set()
-        for m in self.moments(self.args.maps):
+        first = self.moments(self.args.maps)
+        used = tuple(sorted({str(x) for m in first for x in m.get("places", [])}))
+        more = self._cached("prove_moments2.json", lambda: self._moments(self.args.maps, used)) \
+            if self.args.only == "maps" else []
+        for m in first + more:
             if done >= self.args.maps:
                 break
             try:
                 start, end = float(m.get("start", 0)), float(m.get("end", 0))
                 spec = build_map([str(x) for x in m["places"]][:3], start, end)
                 if spec is None:
+                    self.add({"type": "map_skipped", "start": start, "places": m["places"], "reason": "no place found"})
                     continue
                 spec = widen_until_checkable(spec)
                 p = spec.typed_payload()
@@ -225,7 +233,12 @@ class Prove:
 
     def run_illustrations(self) -> None:
         out = self.root / "work" / "art" / "illustrations"
-        picks = self._cached("prove_picks.json", lambda: IL.choose(self.shotlist, self.ctx, self.args.illustrations))
+        if self.args.only == "extra-illustrations":  # a second round of picks, never a shot already tried
+            tried = {p["shot_id"] for p in self._cached("prove_picks.json", lambda: [])}
+            rest = self.shotlist.model_copy(update={"shots": [s for s in self.shotlist.shots if s.id not in tried]})
+            picks = self._cached("prove_picks_extra.json", lambda: IL.choose(rest, self.ctx, self.args.illustrations))
+        else:
+            picks = self._cached("prove_picks.json", lambda: IL.choose(self.shotlist, self.ctx, self.args.illustrations))
         for pick in picks:
             try:
                 shot = self.shotlist.by_id(pick["shot_id"])
@@ -303,6 +316,16 @@ class Prove:
         if self.spec is None:
             raise SystemExit("no Elevate image seat configured")
         self.seed_ai_clips(self.args.ai_clips)
+        if self.args.only == "maps":
+            self.run_maps()
+            self.clipq.put(None)
+            self.run_clips()  # painted maps that pass come alive too
+            return
+        if self.args.only == "extra-illustrations":
+            self.run_illustrations()
+            self.clipq.put(None)
+            self.run_clips()  # its passing illustrations come alive too, one clip lane shared by every process
+            return
         if self.args.only == "ai-clips":
             self.clipq.put(None)
             self.run_clips()
@@ -331,7 +354,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--ai-clips", type=int, default=4)
     ap.add_argument("--image-cap", type=float, default=300.0)
     ap.add_argument("--stop-clips-at", default="")
-    ap.add_argument("--only", default="", choices=["", "ai-clips"])
+    ap.add_argument("--only", default="", choices=["", "ai-clips", "extra-illustrations", "maps"])
     args = ap.parse_args(argv)
     Prove(args).run()
 

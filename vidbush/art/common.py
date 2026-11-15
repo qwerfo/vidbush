@@ -1,6 +1,7 @@
 """Shared helpers of the art layer: narration windows, text detection, image seat access, budgets."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import threading
@@ -90,9 +91,14 @@ def elevate_spec(ctx: Any) -> Optional[ProviderSpec]:
     return None
 
 
-def call_image(ctx: Any, spec: ProviderSpec, fn: Any, note: str) -> CallResult:
+def call_image(ctx: Any, spec: ProviderSpec, fn: Any, note: str, model: str = "") -> CallResult:
     """Run one art image request through the shared provider client, so it is costed, logged and health
-    tracked like any image seat call (no fallback to another provider: a reference image is Elevate only)."""
+    tracked like any image seat call (no fallback to another provider: a reference image is Elevate only).
+    The spec carries the art model, so health is tracked per model: one model's outage (Elevate answered
+    "temporarily unavailable" for gemini_flash_image three times on 2026-11-15) never marks the other art
+    model or the seat's own stills model down."""
+    if model and model != spec.model:
+        spec = dataclasses.replace(spec, model=model)
     return ctx.seats.client.call("image", ctx.stage or "visuals", [spec], fn, note)
 
 

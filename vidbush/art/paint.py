@@ -229,7 +229,7 @@ def _variant(spec: Any, p: MapPayload, prompt: str, ref: np.ndarray, model: str,
     row: dict[str, Any] = {"path": str(path), "model": model, "seed": seed, "ok": False}
     try:
         if not path.exists():
-            common.call_image(ctx, spec, lambda s: elevate_generate(s, prompt, path, model=model, references=[ref],
+            common.call_image(ctx, spec, model=model, fn=lambda s: elevate_generate(s, prompt, path, model=model, references=[ref],
                                                                     seed=seed), note="art map")
         img = cv2.cvtColor(cv2.imread(str(path), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
     except Exception as e:  # noqa: BLE001  one failed variant never stops the map

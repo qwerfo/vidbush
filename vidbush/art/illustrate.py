@@ -167,8 +167,8 @@ def illustrate(shot: Shot, pick: dict, ctx: Any, out_dir: Path, window: str) -> 
         try:
             if not raw.exists():  # resume: a finished variant is never paid for twice
                 seed = int(stable_hash(shot.id, i), 16) % 2147483647
-                common.call_image(ctx, spec, lambda sp, r=raw, sd=seed: generate(
-                    sp, prompt, r, model=art.illustration_model, seed=sd), "art illustration")
+                common.call_image(ctx, spec, model=art.illustration_model, fn=lambda sp, r=raw, sd=seed: generate(
+                    sp, prompt, r, model=art.illustration_model, seed=sd), note="art illustration")
             fitted = fit_16x9(raw.read_bytes(), out_dir / f"{shot.id}_ill_{i}_16x9.png", trim=EDGE_TRIM)
             row["path"] = str(fitted)
             row["text"] = common.find_text(fitted)
