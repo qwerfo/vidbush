@@ -55,10 +55,12 @@ def pick_asset(urls: list[str], media: Media) -> str:
 class NasaAdapter(BaseAdapter):
     name = "nasa"
     media = {"video", "image"}
+    keyword_words = 3  # the library search matches every word
 
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
-        data = base.http_get_json(SEARCH, params={"q": query, "media_type": media, "page_size": max(n, 5)},
+        q = base.keyword_query(query, self.keyword_words)
+        data = base.http_get_json(SEARCH, params={"q": q, "media_type": media, "page_size": max(n, 5)},
                                   timeout=self.timeout(settings))
         return parse_search(data, media)[:n]
 

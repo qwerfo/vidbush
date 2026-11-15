@@ -1,0 +1,62 @@
+{
+ "body": {
+  "hits": {
+   "total": {
+    "value": 3,
+    "relation": "eq"
+   },
+   "hits": [
+    {
+     "_id": "102043355",
+     "_source": {
+      "record": {
+       "levelOfDescription": "item",
+       "useRestriction": {
+        "note": "Some or all of this material may be restricted by copyright or other intellectual property rights restrictions.",
+        "specificUseRestrictions": [
+         "Copyright"
+        ],
+        "status": "Restricted - Possibly"
+       },
+       "title": "Annual Anchorage Fur Rendezvous, Anchorage, Alaska",
+       "accessRestriction": {
+        "status": "Unrestricted"
+       },
+       "generalRecordsTypes": [
+        "Moving Images"
+       ],
+       "digitalObjects": [
+        {
+         "objectFilename": "111-dd-69-58-page-1.jpg",
+         "objectUrl": "https://catalog.archives.gov/medialz/mopix/111/DD/Sheets/1958/111-dd-69-58-page-1.jpg",
+         "objectFileSize": 441381,
+         "objectDesignator": "111-DD Release Sheet",
+         "objectId": "475722045",
+         "objectType": "Image (JPG)"
+        },
+        {
+         "objectFilename": "111-dd-69-58-page-2.jpg",
+         "objectUrl": "https://catalog.archives.gov/medialz/mopix/111/DD/Sheets/1958/111-dd-69-58-page-2.jpg",
+         "objectFileSize": 318720,
+         "objectDesignator": "111-DD Release Sheet",
+         "objectId": "475722046",
+         "objectType": "Image (JPG)"
+        },
+        {
+         "objectFilename": "111-dd-69-58.pdf",
+         "objectUrl": "https://catalog.archives.gov/medialz/mopix/111/DD/Sheets/1958/111-dd-69-58.pdf",
+         "objectFileSize": 765009,
+         "objectDesignator": "111-DD Release Sheet",
+         "objectId": "475722047",
+         "objectType": "Portable Document File (PDF)"
+        }
+       ],
+       "naId": 102043355
+      }
+     }
+    }
+   ]
+  }
+ },
+ "statusCode": 200
+}

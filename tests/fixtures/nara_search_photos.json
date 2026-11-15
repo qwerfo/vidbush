@@ -1,0 +1,117 @@
+{
+ "body": {
+  "hits": {
+   "total": {
+    "value": 136,
+    "relation": "eq"
+   },
+   "hits": [
+    {
+     "_id": "42211832",
+     "_source": {
+      "record": {
+       "levelOfDescription": "item",
+       "useRestriction": {
+        "status": "Unrestricted"
+       },
+       "title": "Resting sled dog",
+       "accessRestriction": {
+        "status": "Unrestricted"
+       },
+       "generalRecordsTypes": [
+        "Photographs and other Graphic Materials"
+       ],
+       "digitalObjects": [
+        {
+         "objectFilename": "2252773-016-003-0033.jpg",
+         "objectCreatedDate": "2026-08-31 20:23:21.000000",
+         "objectUrl": "https://catalog.archives.gov/medialz/seattle/rg-079/2252773/Box16/2252773-016-003/2252773-016-003-0033.jpg",
+         "ocrCompletedDate": "2022-07-30 16:47:57.000000",
+         "objectFileSize": 3450961,
+         "objectId": "42211833",
+         "objectType": "Image (JPG)"
+        }
+       ],
+       "naId": 42211832
+      }
+     }
+    },
+    {
+     "_id": "166694340",
+     "_source": {
+      "record": {
+       "levelOfDescription": "item",
+       "useRestriction": {
+        "status": "Unrestricted"
+       },
+       "title": "Local resident with sled dog",
+       "accessRestriction": {
+        "status": "Unrestricted"
+       },
+       "generalRecordsTypes": [
+        "Photographs and other Graphic Materials"
+       ],
+       "productionDates": [
+        {
+         "month": 4,
+         "year": 1981,
+         "day": 1,
+         "logicalDate": "1981-04-01"
+        }
+       ],
+       "digitalObjects": [
+        {
+         "objectFilename": "022-DP-02302.jpg",
+         "objectUrl": "https://catalog.archives.gov/medialz/stillpix/022-dp/22-DP/022-DP-02302.jpg",
+         "objectFileSize": 1234,
+         "objectId": "166694341",
+         "objectType": "Image (JPG)"
+        }
+       ],
+       "scopeAndContentNote": "Note: Some of the following information may have arrived from the agency cut off or incomplete.\n\nCreator: Kaye, Roger.\n\nDescription: Stevens Village resident Abe Stevens with his sled dog.\n\nSubjects: Indigenous populations; Native Americans; Interior Indians; Athabascans; Recreation; Winter Sports; ",
+       "naId": 166694340
+      }
+     }
+    },
+    {
+     "_id": "166690226",
+     "_source": {
+      "record": {
+       "levelOfDescription": "item",
+       "useRestriction": {
+        "status": "Unrestricted"
+       },
+       "title": "Local resident working on dog sled harness",
+       "accessRestriction": {
+        "status": "Unrestricted"
+       },
+       "generalRecordsTypes": [
+        "Photographs and other Graphic Materials"
+       ],
+       "productionDates": [
+        {
+         "month": 4,
+         "year": 1981,
+         "day": 1,
+         "logicalDate": "1981-04-01"
+        }
+       ],
+       "digitalObjects": [
+        {
+         "objectFilename": "022-DP-00243.jpg",
+         "objectUrl": "https://catalog.archives.gov/medialz/stillpix/022-dp/22-DP/022-DP-00243.jpg",
+         "objectFileSize": 1234,
+         "objectId": "166690227",
+         "objectType": "Image (JPG)"
+        }
+       ],
+       "scopeAndContentNote": "Note: Some of the following information may have arrived from the agency cut off or incomplete.\n\nCreator: Kaye, Roger.\n\nDescription: Stevens Village resident Laurence Joseph sews a dog sled harness.\n\nSubjects: Indigenous populations; Native Americans; Athabascans; Crafts; Recreation; Winter Sports; ",
+       "naId": 166690226
+      }
+     }
+    }
+   ]
+  }
+ },
+ "statusCode": 200
+}

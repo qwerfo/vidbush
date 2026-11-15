@@ -77,6 +77,7 @@ class SourceKind(str, Enum):
     wikimedia = "wikimedia"
     archive = "archive"
     loc = "loc"
+    nara = "nara"  # US National Archives catalogue
     nasa = "nasa"
     pexels = "pexels"
     pixabay = "pixabay"
@@ -85,6 +86,15 @@ class SourceKind(str, Enum):
     ai_video = "ai_video"
     upload = "upload"
     motion = "motion"  # rendered motion graphic
+
+
+# Pictures Vidbush makes rather than sources, in two kinds told apart everywhere: photo-style AI stills
+# (and clips animated from them) that stand in for real footage and are kept rare, and designed pictures
+# (motion graphics, and illustrated maps or illustrations in a declared style). A new generated source
+# value joins one of these two sets here, and every reader of the sets follows.
+PHOTO_AI_SOURCES = {SourceKind.ai_image, SourceKind.ai_video}
+DESIGNED_SOURCES = {SourceKind.motion}
+GENERATED_SOURCES = PHOTO_AI_SOURCES | DESIGNED_SOURCES
 
 
 class StageStatus(str, Enum):

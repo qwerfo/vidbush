@@ -83,9 +83,11 @@ def _video_source(url: str, ext: str, settings: Settings, shot_duration: float, 
 class WikimediaAdapter(BaseAdapter):
     name = "wikimedia"
     media = {"video", "image"}
+    keyword_words = 3  # CirrusSearch matches every word
 
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
+        query = base.keyword_query(query, self.keyword_words)
         search = f"{query} filetype:video" if media == "video" else f"{query} filetype:bitmap"
         params = {"action": "query", "format": "json", "generator": "search", "gsrsearch": search,
                   "gsrnamespace": 6, "gsrlimit": max(n, 5), "prop": "imageinfo",

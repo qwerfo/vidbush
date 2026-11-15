@@ -46,7 +46,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
 
-from ..models import FOOTAGE_TYPES, Candidate, Shot, ShotList, ShotType, SourceKind
+from ..models import FOOTAGE_TYPES, GENERATED_SOURCES, Candidate, Shot, ShotList, ShotType
 from . import base, throttle
 from .base import Media, RawResult, SourceAdapter
 from .blocklist import Blocklist
@@ -58,11 +58,13 @@ STILL_SHOT_TYPES = {ShotType.image, ShotType.image_overlay}
 QUERIES_PER_SHOT = 3
 RECENT_SHOTS = 3
 SEARCH_CACHE_TTL_S = 14 * 86400
-ADAPTER_WORKERS = {"youtube": 1, "loc": 1, "local": 2}
+# a cached search never outlives the download links it holds: Pixabay's image links expire after 24 hours
+SEARCH_CACHE_TTL_BY_SOURCE = {"pixabay": 23 * 3600}
+# One worker for a host whose token interval is longer than throttle.MAX_WAIT_S (Pexels: one every 22.5 s):
+# its searches queue in the pool and each waits for its own token; a second worker would only be refused.
+ADAPTER_WORKERS = {"youtube": 1, "loc": 1, "local": 2, "pexels": 1}
 DEFAULT_ADAPTER_WORKERS = 3
 UNCACHED = {"local"}  # in-memory index; its results change with the library
-_BLOCKED: dict[str, set[str]] = defaultdict(set)  # run id -> sources that answered with a bot check page
-_BLOCKED_LOCK = threading.Lock()
 SOURCE_NOTES = "source_notes.json"  # in ctx.work: search usage per run, read by judge/qa.py
 MAX_NOTE_RUNS = 10
 
@@ -76,7 +78,7 @@ def _factories() -> dict[str, Callable[[], SourceAdapter]]:
         return build
     return {"local": make("local", "LocalAdapter"), "youtube": make("youtube", "YoutubeAdapter"),
             "wikimedia": make("wikimedia", "WikimediaAdapter"), "archive": make("archive", "ArchiveAdapter"),
-            "loc": make("loc", "LocAdapter"), "nasa": make("nasa", "NasaAdapter"),
+            "loc": make("loc", "LocAdapter"), "nara": make("nara", "NaraAdapter"), "nasa": make("nasa", "NasaAdapter"),
             "pexels": make("pexels", "PexelsAdapter"), "pixabay": make("pixabay", "PixabayAdapter")}
 
 
@@ -155,7 +157,7 @@ def shot_queries(shot: Shot, queries: Optional[list[str]] = None) -> list[str]:
     return qs[:QUERIES_PER_SHOT]
 
 
-GENERATED = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
+GENERATED = GENERATED_SOURCES  # never sourced, never replaced by a re-run of sourcing
 
 
 def _has_sourced(shot: Shot) -> bool:
@@ -182,17 +184,32 @@ def _variant(hints: dict[str, Any]) -> str:
     return ",".join(f"{k}={v}" for k, v in sorted(hints.items()))
 
 
+def sent_query(adapter: SourceAdapter, query: str) -> str:
+    """The query the adapter actually sends (its keyword form when the engine matches every word). The
+    search cache is keyed on it, so long queries that shorten to the same request share one search."""
+    words = getattr(adapter, "keyword_words", 0)
+    return base.keyword_query(query, words) if words else query
+
+
 def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
                 ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]] = None) -> list[RawResult]:
     """One search: disk cache first, then the run budget (one per pass), then the adapter. Never raises.
-    A search the budget deferred or the host throttled is added to unsent as (shot, source, query)."""
-    with _BLOCKED_LOCK:
-        if adapter.name in _BLOCKED[run_id(ctx)]:
-            return []
+    A search the budget deferred or the host throttled is added to unsent as (shot, source, query).
+    The same request is never in flight twice: a second caller waits and reads the first one's cache."""
+    if adapter.name in UNCACHED:
+        return _search_sent(adapter, query, media, n, shot, ctx, unsent)
+    variant = _variant(search_hints(adapter, ctx))
+    with throttle.exclusive(f"search:{adapter.name}", f"{sent_query(adapter, query)}|{media}|{n}|{variant}"):
+        return _search_sent(adapter, query, media, n, shot, ctx, unsent)
+
+
+def _search_sent(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
+                 ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]]) -> list[RawResult]:
     cacheable = adapter.name not in UNCACHED
     hints = search_hints(adapter, ctx)
+    variant, key = _variant(hints), sent_query(adapter, query)
     if cacheable:
-        hit = cache_get(adapter.name, query, media, n, ctx.settings, _variant(hints))
+        hit = cache_get(adapter.name, key, media, n, ctx.settings, variant)
         if hit is not None:
             return _screen(adapter.name, query, hit, shot, ctx)  # the cache holds raw results: same screen
         if not throttle.take_budget(run_id(ctx), adapter.name, shot.id):
@@ -217,16 +234,17 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
                    source=adapter.name, error=str(e)[:200])
         return []
     except Exception as e:  # noqa: BLE001 - one failing source never stops sourcing
-        if base.is_challenge(e):
-            with _BLOCKED_LOCK:
-                _BLOCKED[run_id(ctx)].add(adapter.name)
-            _note_once(ctx, f"challenge_{adapter.name}", "source answered with a bot check page; skipped for this run",
-                       source=adapter.name)
+        if base.is_challenge(e):  # base cooled the host down; its searches are deferred until then
+            if unsent is not None:
+                unsent.add((shot.id, adapter.name, query))
+            _note_once(ctx, f"challenge_{adapter.name}", "source answered with a bot check page; host paused "
+                       "for its cool-down (the rest of this sourcing stage when the cool-down is longer)",
+                       source=adapter.name, error=str(e)[:120])
             return []
         ctx.log.warn("source search failed", source=adapter.name, query=query, shot=shot.id, error=str(e)[:200])
         return []
     if cacheable:
-        cache_put(adapter.name, query, media, n, results, ctx.settings, _variant(hints))
+        cache_put(adapter.name, key, media, n, results, ctx.settings, variant)
     return _screen(adapter.name, query, results, shot, ctx)
 
 
@@ -302,11 +320,11 @@ def _cache_path(adapter: str, query: str, media: str, n: int, settings: Any, var
 
 def cache_get(adapter: str, query: str, media: str, n: int, settings: Any,
               variant: str = "") -> Optional[list[RawResult]]:
-    """Cached search results younger than SEARCH_CACHE_TTL_S, or None. variant holds the search hints."""
+    """Cached search results younger than the source's TTL, or None. variant holds the search hints."""
     path = _cache_path(adapter, query, media, n, settings, variant)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if time.time() - float(data.get("ts", 0)) > SEARCH_CACHE_TTL_S:
+        if time.time() - float(data.get("ts", 0)) > SEARCH_CACHE_TTL_BY_SOURCE.get(adapter, SEARCH_CACHE_TTL_S):
             return None
         return [RawResult(**r) for r in data.get("results") or []]
     except (OSError, ValueError, TypeError):
@@ -504,7 +522,9 @@ def _blocklist(ctx: "StageContext") -> Blocklist:
 
 
 def _workers() -> int:
-    return max(2, min(6, os.cpu_count() or 2))
+    """Shots fetched at once: more than the YouTube download slots, so a slot freed while one shot
+    runs scene detection is taken by another shot's download."""
+    return max(2, min(8, os.cpu_count() or 2))
 
 
 # ---------------------------------------------------------------- entry points
@@ -592,6 +612,7 @@ def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str,
     for a in adapters if retry is None else ():  # a shot shares only the budgets of the sources that serve its media
         throttle.register_shots(rid, [a.name], [s.id for s in shots if shot_media(s) in a.media])
     pending = list(shots)
+    asked: set[tuple[str, str, str]] = set()  # (shot, source, sent query): a shot never sends one request twice
     for k in range(QUERIES_PER_SHOT):
         jobs: list[tuple[str, str, Future]] = []
         for s in pending:
@@ -601,6 +622,9 @@ def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str,
             for a in adapters:
                 if media not in a.media or (retry is not None and (s.id, a.name, q) not in retry):
                     continue
+                if (s.id, a.name, sent_query(a, q)) in asked:
+                    continue
+                asked.add((s.id, a.name, sent_query(a, q)))
                 if allowance is not None:
                     if allowance[a.name] <= 0:
                         continue

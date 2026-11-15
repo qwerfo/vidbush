@@ -1,0 +1,158 @@
+{
+ "body": {
+  "hits": {
+   "total": {
+    "value": 144,
+    "relation": "eq"
+   },
+   "hits": [
+    {
+     "_id": "5834",
+     "_source": {
+      "record": {
+       "levelOfDescription": "item",
+       "useRestriction": {
+        "note": "Some or all of this material may be restricted by copyright or other intellectual property restrictions.",
+        "status": "Restricted - Possibly"
+       },
+       "title": "One Man's Alaska",
+       "accessRestriction": {
+        "status": "Unrestricted"
+       },
+       "generalRecordsTypes": [
+        "Moving Images",
+        "Textual Records"
+       ],
+       "productionDates": [
+        {
+         "year": 1977,
+         "logicalDate": "1977-01-01"
+        }
+       ],
+       "digitalObjects": [
+        {
+         "objectFilename": "79-hfc-20.mp4",
+         "objectCreatedDate": "2026-08-31 18:39:25.000000",
+         "objectUrl": "https://catalog.archives.gov/medialz/mopix/079/hfc/79-hfc-20.mp4",
+         "objectFileSize": 478281696,
+         "objectId": "18556248",
+         "objectType": "Audio/Visual File (MP4)"
+        }
+       ],
+       "scopeAndContentNote": "This film is a documentary profile of conservationist and wildlife photographer, Dick Proenneke, at his home in the Lake Clark area of Alaska. It features close-up scenes of native wildlife, dramatic panoramas of the change of seasons and clips of Proenneke carving his log cabin out of the wildernes",
+       "naId": 5834
+      }
+     }
+    },
+    {
+     "_id": "12366",
+     "_source": {
+      "record": {
+       "levelOfDescription": "item",
+       "useRestriction": {
+        "status": "Undetermined"
+       },
+       "title": "MATANUSKA, ALASKA",
+       "accessRestriction": {
+        "status": "Unrestricted"
+       },
+       "generalRecordsTypes": [
+        "Moving Images"
+       ],
+       "productionDates": [
+        {
+         "year": 1937,
+         "logicalDate": "1937-01-01"
+        }
+       ],
+       "digitalObjects": [
+        {
+         "objectFilename": "69-52.mp4",
+         "objectUrl": "https://catalog.archives.gov/medialz/mopix/069/69-52.mp4",
+         "objectFileSize": 637572,
+         "objectId": "14870171",
+         "objectDescription": "Download this film.",
+         "objectType": "Audio/Visual File (MP4)"
+        }
+       ],
+       "scopeAndContentNote": "On the town of Matanuska. Reel 1, a train arrives and passengers detrain. Reel 2 shows a house under construction, a farmer plowing, and views of cafes, a store, and the post office. Reel 3 shows views of the post office and a grocery store. Reel 4 shows the Matanuska Valley Pioneer office. Twin bab",
+       "naId": 12366
+      }
+     }
+    },
+    {
+     "_id": "78857",
+     "_source": {
+      "record": {
+       "levelOfDescription": "item",
+       "useRestriction": {
+        "status": "Unrestricted"
+       },
+       "title": "Kiska, Aleutian Islands, Alaska",
+       "accessRestriction": {
+        "status": "Unrestricted"
+       },
+       "generalRecordsTypes": [
+        "Moving Images"
+       ],
+       "productionDates": [
+        {
+         "month": 9,
+         "year": 1943,
+         "logicalDate": "1943-09-01"
+        }
+       ],
+       "digitalObjects": [
+        {
+         "objectFilename": "428-npc-10190.mp4",
+         "objectUrl": "https://catalog.archives.gov/medialz/mopix/428/NPC/428-npc-10190.mp4",
+         "objectFileSize": 76915,
+         "objectId": "14910629",
+         "objectDescription": "Download this film.",
+         "objectType": "Audio/Visual File (MP4)"
+        }
+       ],
+       "naId": 78857
+      }
+     }
+    },
+    {
+     "_id": "78882",
+     "_source": {
+      "record": {
+       "levelOfDescription": "item",
+       "useRestriction": {
+        "status": "Unrestricted"
+       },
+       "title": "Kiska (Aleutian Islands, Alaska)",
+       "accessRestriction": {
+        "status": "Unrestricted"
+       },
+       "generalRecordsTypes": [
+        "Moving Images"
+       ],
+       "productionDates": [
+        {
+         "year": 1943,
+         "logicalDate": "1943-01-01"
+        }
+       ],
+       "digitalObjects": [
+        {
+         "objectFilename": "428-npc-10293.mp4",
+         "objectUrl": "https://catalog.archives.gov/medialz/mopix/428/NPC/428-npc-10293.mp4",
+         "objectFileSize": 142959328,
+         "objectDesignator": "Reel 1 of 1",
+         "objectId": "183893885",
+         "objectType": "Audio/Visual File (MP4)"
+        }
+       ],
+       "naId": 78882
+      }
+     }
+    }
+   ]
+  }
+ },
+ "statusCode": 200
+}

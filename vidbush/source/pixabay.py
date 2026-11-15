@@ -1,4 +1,8 @@
-"""Pixabay adapter: stock videos and photos (needs PIXABAY_API_KEY). Licence "Pixabay Content License"."""
+"""Pixabay adapter: stock videos and photos (needs PIXABAY_API_KEY). Licence "Pixabay Content License".
+
+Every hit's tags go to RawResult.extra["tags"], which base.relevance reads with the title. Pixabay allows
+100 requests per 60 s per key (throttle.DEFAULT_RATES) and its image links expire after 24 hours, so its
+search cache lives shorter than that (registry.SEARCH_CACHE_TTL_BY_SOURCE)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,8 +19,12 @@ VIDEOS = "https://pixabay.com/api/videos/"
 LICENCE = "Pixabay Content License"
 
 
+def _tags(hit: dict[str, Any]) -> list[str]:
+    return [t.strip() for t in str(hit.get("tags", "")).split(",") if t.strip()]
+
+
 def _title(hit: dict[str, Any], kind: str) -> str:
-    tags = [t.strip() for t in str(hit.get("tags", "")).split(",") if t.strip()]
+    tags = _tags(hit)
     return (", ".join(tags[:3]).capitalize() if tags else f"Pixabay {kind} {hit.get('id')}")
 
 
@@ -32,7 +40,8 @@ def parse_videos(data: dict[str, Any], settings: Settings) -> list[RawResult]:
         out.append(RawResult(source="pixabay", url=hit.get("pageURL", ""), page_url=hit.get("pageURL", ""),
                              title=_title(hit, "video"), author=hit.get("user", ""), licence=LICENCE, media="video",
                              width=int(best.get("width") or 0), height=int(best.get("height") or 0),
-                             duration=float(hit.get("duration") or 0), download_url=best["url"], score=0.6))
+                             duration=float(hit.get("duration") or 0), download_url=best["url"], score=0.6,
+                             extra={"tags": _tags(hit)}))  # every tag counts for relevance, not only the title's three
     return out
 
 
@@ -46,7 +55,8 @@ def parse_photos(data: dict[str, Any]) -> list[RawResult]:
         scale = min(1.0, 1920 / w) if w else 1.0
         out.append(RawResult(source="pixabay", url=hit.get("pageURL", ""), page_url=hit.get("pageURL", ""),
                              title=_title(hit, "photo"), author=hit.get("user", ""), licence=LICENCE, media="image",
-                             width=int(w * scale), height=int(h * scale), download_url=url, score=0.6))
+                             width=int(w * scale), height=int(h * scale), download_url=url, score=0.6,
+                             extra={"tags": _tags(hit)}))
     return out
 
 

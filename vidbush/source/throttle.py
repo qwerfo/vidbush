@@ -22,10 +22,17 @@ semaphore (separate from the serial search slot), paced(host) takes the
 host's rate token without its serial lock, and exclusive(host, key) makes
 sure one asset (a video URL) is never downloaded twice at the same time.
 
-Defaults follow the published limits: loc.gov about 1 search per 3 s,
-Pexels 200 per hour, Pixabay 100 per minute, YouTube one yt-dlp call at a
-time with a small gap. configure(settings) reads optional overrides from
-settings.sources (rate_limits, max_concurrency, query_budget) when present.
+Defaults follow the published limits: loc.gov 20 per minute, Pexels 200 per
+hour, Pixabay 100 per minute, YouTube one yt-dlp call at a time with a small
+gap. A bucket's burst plus what it refills in the window never exceeds the
+window's limit (window_rate). A request waits for the host's next token even
+when that is longer than MAX_WAIT_S (one interval of a slow host such as
+Pexels), so a budget larger than the hourly limit is paced, not refused; a
+request that would queue behind it is refused before it is sent (Throttled),
+so the registry refunds it and sends it later in the run. The registry gives such a host one search
+worker (registry.ADAPTER_WORKERS), so its searches queue in the pool and none queues inside the bucket.
+configure(settings) reads optional overrides from settings.sources
+(rate_limits, max_concurrency, query_budget) when present.
 """
 from __future__ import annotations
 
@@ -36,18 +43,30 @@ from typing import Any, Iterator, Optional
 from urllib.parse import urlparse
 
 MAX_WAIT_S = 15.0
+
+
+def window_rate(limit: int, window_s: float, burst: int) -> tuple[float, float]:
+    """(rate, burst) of a bucket that never sends more than limit in any window_s: burst + rate * window."""
+    return (limit - burst) / window_s, float(burst)
+
+
 # host: (requests per second, burst)
 DEFAULT_RATES: dict[str, tuple[float, float]] = {
     "www.loc.gov": (1 / 3, 1), "loc.gov": (1 / 3, 1),
-    "api.pexels.com": (200 / 3600, 40),
-    "pixabay.com": (100 / 60, 20),
+    "api.pexels.com": window_rate(200, 3600, 40),
+    "pixabay.com": window_rate(100, 60, 20),
     "youtube": (0.5, 1),  # pseudo host for yt-dlp calls
     "commons.wikimedia.org": (5.0, 5), "archive.org": (2.0, 4), "images-api.nasa.gov": (2.0, 4),
+    "catalog.archives.gov": (1.0, 2),  # no published limit: one request a second
 }
 SERIAL_HOSTS = {"youtube"}
+# Pause after a bot check page. loc.gov blocks for an hour and restarts the hour on any request made
+# during the block, so it waits longer than that before one more try.
+CHALLENGE_COOLDOWN_S: dict[str, float] = {"www.loc.gov": 3900.0, "loc.gov": 3900.0, "*": 900.0}
 DEFAULT_MAX_CONCURRENCY = 6
+OTHER_HOST_SLOTS = 2  # global slots always left over the YouTube download slots
 # searches per run (one pipeline run of one project) and adapter; "*" is every other adapter
-DEFAULT_BUDGET: dict[str, int] = {"pexels": 150, "pixabay": 600, "loc": 300, "youtube": 250, "*": 800}
+DEFAULT_BUDGET: dict[str, int] = {"pexels": 300, "pixabay": 600, "loc": 300, "nara": 300, "youtube": 500, "*": 800}
 
 
 class Throttled(Exception):
@@ -67,13 +86,14 @@ class TokenBucket:
         self.lock = threading.Lock()
 
     def reserve(self, max_wait: float) -> float:
-        """Seconds to wait before sending; raises Throttled when that exceeds max_wait."""
+        """Seconds to wait before sending; raises Throttled when that exceeds max_wait, or one token
+        interval when that is longer (the next token is always waited for, a queue behind it is not)."""
         with self.lock:
             now = time.monotonic()
             self.tokens = min(self.burst, self.tokens + (now - self.stamp) * self.rate)
             self.stamp = now
             wait = 0.0 if self.tokens >= 1 else (1 - self.tokens) / self.rate
-            if wait > max_wait:
+            if wait > max(max_wait, 1.0 / self.rate + 1e-6):
                 raise Throttled(f"rate limit: next slot in {wait:.0f}s")
             self.tokens -= 1
             return wait
@@ -118,6 +138,9 @@ def configure(sources: Any) -> None:
             STATE.rates[str(host).lower()] = (float(rate), float(burst))
             STATE.buckets.pop(str(host).lower(), None)
         cap = int(getattr(sources, "max_concurrency", 0) or DEFAULT_MAX_CONCURRENCY)
+        # yt-dlp downloads hold a global slot for their whole length: the cap stays above the YouTube
+        # download slots, so stills and film sections from other hosts are never all blocked behind them
+        cap = max(cap, int(getattr(sources, "youtube_download_workers", 0) or 0) + OTHER_HOST_SLOTS)
         if cap != STATE.max_concurrency:
             STATE.max_concurrency, STATE.slots = cap, threading.BoundedSemaphore(cap)
         STATE.budget.update({str(k): int(v) for k, v in (getattr(sources, "query_budget", None) or {}).items()})
@@ -136,6 +159,11 @@ def cool_down(host: str, seconds: float) -> None:
     """Send nothing to host for seconds (after a 429)."""
     with STATE.lock:
         STATE.cool_until[host] = max(STATE.cool_until.get(host, 0.0), time.monotonic() + seconds)
+
+
+def challenge_cooldown(host: str) -> float:
+    """Seconds a host stays paused after answering with a bot check page."""
+    return CHALLENGE_COOLDOWN_S.get(host, CHALLENGE_COOLDOWN_S["*"])
 
 
 def _wait_cooldown(host: str, max_wait: float) -> None:
