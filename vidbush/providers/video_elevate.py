@@ -37,7 +37,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from .base import CallResult, ProviderSpec, RefusalError, TransportError
+from .base import CallResult, ProviderError, ProviderSpec, RefusalError, TransportError
 from .http import get_json
 from .tts_elevate import _call, _json, unwrap
 
@@ -49,6 +49,7 @@ TIMEOUT_S = 900.0
 POLL_S = 10.0
 CAPACITY_WAIT_S = 1200.0
 NATIVE_SECONDS = 8.0
+PENDING_ROUNDS = 3  # poll deadlines one request waits for a running task before handing it to a later call
 _TERMINAL = {"completed", "failed", "cancelled", "canceled", "error"}
 
 
@@ -74,8 +75,23 @@ def _model(spec: ProviderSpec) -> str:
     return m if m and not m.startswith("your-") else DEFAULT_MODEL
 
 
+MAX_SOURCE_BYTES = 3_500_000  # Elevate refuses a source_image over 5 MB (live 2026-11-15); base64 adds a third
+
+
 def _still_uri(still: Path) -> str:
+    """The still as a data URL. A file too big for the provider is sent as a high quality JPEG of the same
+    pixels: the clip's first frame stays the still, only the container changes."""
     raw = still.read_bytes()
+    if len(raw) > MAX_SOURCE_BYTES:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(raw)).convert("RGB")
+        for q in (92, 85, 75):
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=q)
+            if buf.tell() <= MAX_SOURCE_BYTES:
+                break
+        raw = buf.getvalue()
     mime = "image/png" if raw[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
     return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
@@ -161,7 +177,7 @@ def _poll(spec: ProviderSpec, task_id: str, sleep: Any = None, clock: Any = None
             r = _call(spec, "GET", f"{_base(spec)}/v2/media/{task_id}?type=video", 120.0, sleep=sleep, clock=clock)
             task = unwrap(_json(r), "get video task")
         except RefusalError as e:
-            if "404" in str(e) or "not found" in str(e).lower():
+            if str(e).startswith("http 404") or "not found" in str(e).lower():
                 return "unknown", {}
             raise
         except TransportError:
@@ -183,23 +199,31 @@ def generate_video(spec: ProviderSpec, prompt: str, still: Optional[Path], out_p
     body = request_body(spec, prompt, Path(still) if still is not None else None)
     req = _request_hash(body)
     task_id = _remembered(out_path, req)
+    # Errors that end this request are plain ProviderError: the client neither retries them (a retry would
+    # submit and pay again) nor marks the seat down (a slow or failed task says nothing about the lane).
     for attempt in range(2):
         if task_id is None:
             wait_for_slot(spec)
             task_id = _submit(spec, body)
             _remember(out_path, req, task_id)
-        status, task = _poll(spec, task_id)
+        status, task = None, {}
+        for _round in range(int(_opt(spec, "pending_rounds", PENDING_ROUNDS))):
+            status, task = _poll(spec, task_id)
+            if status is not None:
+                break
         if status is None:
-            raise TransportError(f"Elevate video task {task_id} still running after "
-                                 f"{_opt(spec, 'timeout_s', TIMEOUT_S):.0f} s; the retry resumes it")
+            raise ProviderError(f"Elevate video task {task_id} still running after {PENDING_ROUNDS} x "
+                                f"{_opt(spec, 'timeout_s', TIMEOUT_S):.0f} s; it stays recorded and a later call resumes it")
         if status == "completed" and task.get("result_url"):
             break
+        if status == "completed":
+            raise ProviderError(f"Elevate video task {task_id} completed without result_url; a later call polls it again")
         _remember(out_path, req, None)  # dead task: forget it; one fresh submit, as a first call would make
         error = str(task.get("error") or status)[:300]
         if any(w in error.lower() for w in ("policy", "safety", "moderat", "invalid", "refus")):
             raise RefusalError(f"Elevate video task {task_id} {status}: {error}")  # a refusal is never resubmitted
         if attempt == 1 or status not in ("unknown", "error", "failed"):
-            raise TransportError(f"Elevate video task {task_id} {status}: {error}")
+            raise ProviderError(f"Elevate video task {task_id} {status}: {error}")
         task_id = None
     video = _call(spec, "GET", str(task["result_url"]), 300.0, auth=False).content
     if len(video) < 2048:

@@ -74,7 +74,8 @@ def test_no_reference_key_without_references(monkeypatch, tmp_path):
     r = E.generate(_spec(), "paint", tmp_path / "o.png")
     assert "reference_images" not in w.bodies[0] and "seed" not in w.bodies[0]
     assert w.bodies[0]["model"] == "nano_banana_pro"
-    assert r.units == max(E.CREDITS.values())  # unknown cost counts as the dearest known
+    assert r.units == 5.0  # measured nano_banana_pro credits
+    assert E.credits("some_new_model") == max(E.CREDITS.values())  # unknown cost counts as the dearest known
 
 
 def test_poll_timeout_resumes_without_new_submit(monkeypatch, tmp_path):

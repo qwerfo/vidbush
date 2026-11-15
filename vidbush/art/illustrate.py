@@ -32,9 +32,10 @@ GENERATED = {SourceKind.ai_image, SourceKind.ai_video}  # photo-style AI fill ma
 DEFAULT_STYLE = ("Hand-painted illustration with visible brush texture, muted natural palette, soft light, "
                  "simplified shapes; clearly a painting, never a photograph.")
 RULES = ("Clearly an illustration, not a photograph. No text, letters, numbers, signs, captions or logos. "
-         "No recognisable real person. One single scene, no split panels, no collage. 16:9 landscape "
-         "composition with the subject in the middle band; nothing important in the top or bottom 12 percent "
-         "(the film is letterboxed).")
+         "No recognisable real person. One single scene, no split panels, no collage. A full-bleed 16:9 "
+         "landscape picture that fills the frame edge to edge, with no borders, frame or bars; the subject sits "
+         "in the middle band, nothing important near the top or bottom edge.")
+EDGE_TRIM = 0.04  # crops the provider's small corner mark; an illustration has no geometry to keep
 
 ILLUSTRATE_SYSTEM = """You pick moments of a documentary that should be shown as an illustration.
 An illustration is for what no footage or photograph can show: a process (how something works or
@@ -168,11 +169,11 @@ def illustrate(shot: Shot, pick: dict, ctx: Any, out_dir: Path, window: str) -> 
                 seed = int(stable_hash(shot.id, i), 16) % 2147483647
                 common.call_image(ctx, spec, lambda sp, r=raw, sd=seed: generate(
                     sp, prompt, r, model=art.illustration_model, seed=sd), "art illustration")
-            fitted = fit_16x9(raw.read_bytes(), out_dir / f"{shot.id}_ill_{i}_16x9.png", trim=0)
+            fitted = fit_16x9(raw.read_bytes(), out_dir / f"{shot.id}_ill_{i}_16x9.png", trim=EDGE_TRIM)
             row["path"] = str(fitted)
             row["text"] = common.find_text(fitted)
-            if row["text"]:
-                row["reject"] = "text in picture"
+            if row["text"] or common.has_bars(fitted):
+                row["reject"] = "text in picture" if row["text"] else "bars painted at the frame edge"
                 variants.append(row)
                 continue
             cand = Candidate(id=f"{shot.id}_ill_{i}", source=SourceKind.illustration, local_path=str(fitted),

@@ -92,6 +92,10 @@ class SourceKind(str, Enum):
     art_video = "art_video"  # generated clip whose first frame is an illustration or painted map
 
 
+# AI generated designed animation (vidbush/art): disclosed as AI generated, never credited to a third party
+DESIGNED_SOURCES = {SourceKind.illustrated_map, SourceKind.illustration, SourceKind.art_video}
+
+
 class StageStatus(str, Enum):
     pending = "pending"
     running = "running"
@@ -626,7 +630,6 @@ class ArtProfile(Model):
     map_model: str = "nano_banana_pro"
     map_fallback_model: str = "gemini_flash_image"
     illustration_model: str = "nano_banana_pro"
-    clip_resolution: str = "1080p"
     clip_from_ai_stills: bool = True  # photo-style AI stills may come alive; real photographs never do
     hour_credit_cap: float = 0.0  # skip new art while the key has used this many image credits this hour (0 = none)
 

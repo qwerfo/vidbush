@@ -113,8 +113,9 @@ class Prove:
         from ..util import read_model
         self.shotlist = read_model(self.root / "work" / "shotlist.json", ShotList)
         self.spec = common.elevate_spec(self.ctx)
-        self.stop_clips = datetime.fromisoformat(args.stop_clips_at).replace(tzinfo=timezone.utc) \
-            if args.stop_clips_at else None
+        stop = datetime.fromisoformat(args.stop_clips_at) if args.stop_clips_at else None
+        # an offset given is kept; a time without one is UTC (the key's budgets reset on the UTC hour)
+        self.stop_clips = (stop if stop.tzinfo else stop.replace(tzinfo=timezone.utc)) if stop else None
 
     def _context(self) -> Any:
         from ..jobs.context import build_context
@@ -133,7 +134,7 @@ class Prove:
         ctx = build_context(settings, project, echo=False)
         ctx.stage = "art_prove"
         a = ctx.profile.art
-        a.map_variants, a.illustration_variants, a.clip_resolution = 3, 2, "1080p"
+        a.map_variants, a.illustration_variants = 3, 2
         return ctx
 
     def add(self, item: dict[str, Any]) -> None:
@@ -215,8 +216,9 @@ class Prove:
         ok, f = cap.read()
         cap.release()
         jpg = out / f"{tag}_frame.jpg"
-        if ok:
-            cv2.imwrite(str(jpg), f, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        if not ok:
+            return ""
+        cv2.imwrite(str(jpg), f, [cv2.IMWRITE_JPEG_QUALITY, 92])
         return str(jpg)
 
     # ------------------------------------------------------------ illustrations

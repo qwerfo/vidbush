@@ -123,7 +123,7 @@ def test_map_prompt_from_narration_strips_names_and_digits():
     assert "Juneau" not in prompt and "3" not in prompt
     assert "rainforest" in prompt and "whales" in prompt
     assert "No text" in prompt and "no borders" in prompt
-    assert "—" not in prompt
+    assert chr(0x2014) not in prompt
     assert "Juneau" in ctx.seats.calls[0][2]  # the art director sees the places; the painter never does
 
 
@@ -252,3 +252,32 @@ def test_clip_kind_never_animates_real_photographs(tmp_path):
         s.candidates = [Candidate(id="c", source=src, local_path=str(still), media="image")]
         s.selected = "c"
         assert plan._clip_kind(s) == want
+
+
+def test_repeat_window_checks_every_showing(tmp_path, monkeypatch):
+    p = MapPayload(center=[58.5, -135.0], zoom=5.0, markers=[MapMarker(lat=58.3, lon=-134.4, label="Juneau")])
+    shots = [_map_shot("a", 0, p), _map_shot("c", 400, p), _map_shot("i", 150, p, full=False)]
+    sl = ShotList(project_id="p", duration=600, shots=shots)
+    monkeypatch.setattr(plan.P, "paint_map", lambda payload, w, ctx, out, tag, variants=0: {"base": str(tmp_path / f"{tag}.png")})
+    monkeypatch.setattr(plan.common, "elevate_spec", lambda ctx: None)
+    ctx = _ctx(tmp=tmp_path, profile=StyleProfile(id="t", art=ArtProfile(illustrated_maps=1.0, map_repeat_s=180)))
+    plan.paint_maps(sl, ctx, None, {"maps": [], "illustrations": [], "clips": []})
+    assert shots[1].motion.payload["art_base"]  # 400 s after the first showing
+    assert not shots[2].overlay.payload.get("art_base")  # 150 s after t=0, although 250 s from t=400
+
+
+def test_rerun_clears_stale_art_and_keeps_existing_illustrations(tmp_path, monkeypatch):
+    from vidbush.models import Candidate, SourceKind
+    p = MapPayload(center=[58.5, -135.0], zoom=5.0, routes=[MapRoute(points=[[58, -135], [59, -136]], via="sea")],
+                   art_base="old.png", art_clip="old.mp4")
+    m = _map_shot("m", 0, p)
+    s = Shot(id="s", beat_id="b", start=10, end=15, duration=5, type=ShotType.ai_image, intent="x",
+             candidates=[Candidate(id="ill", source=SourceKind.illustration)], selected="ill")
+    sl = ShotList(project_id="p", duration=20, shots=[m, s])
+    monkeypatch.setattr(plan.common, "elevate_spec", lambda ctx: None)
+    monkeypatch.setattr(plan.IL, "choose", lambda *a, **k: pytest.fail("no new picks when the budget is met"))
+    ctx = _ctx(tmp=tmp_path, profile=StyleProfile(id="t", art=ArtProfile(illustrated_maps=1.0, illustrations=0.5)))
+    rep = {"maps": [], "illustrations": [], "clips": []}
+    plan.paint_maps(sl, ctx, None, rep)
+    assert m.motion.payload["art_base"] == "" and m.motion.payload["art_clip"] == ""  # a route map is plain now
+    assert plan.add_illustrations(sl, ctx, None, rep) == 1

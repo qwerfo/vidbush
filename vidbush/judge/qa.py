@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import (SHOT_TYPES, STATIC_CARD_KINDS, FallbackNote, MotionKind, Narration, QAReport, QAShot, Shot,
+from ..models import (DESIGNED_SOURCES, SHOT_TYPES, STATIC_CARD_KINDS, FallbackNote, MotionKind, Narration, QAReport, QAShot, Shot,
                       ShotList, ShotType, SourceKind, Word)
 from ..shots import ideas as I
 from ..util import ToolError, media_duration, read_json, run, write_json
@@ -35,7 +35,7 @@ OVERLAY_TIMING_MAX_S = 0.5  # median gap between a text overlay and its anchor w
 MIX_TOLERANCE_PTS = 5.0
 OVERLAY_SIBLING = {"footage": "footage_overlay", "image": "image_overlay"}
 FRAMES_PER_SHOT = 3
-NO_ATTRIBUTION = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
+NO_ATTRIBUTION = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video} | DESIGNED_SOURCES
 
 QA_REJECTS = ("burned_in_captions", "watermark", "channel_logo", "talking_head", "black_frame", "frozen_frame")
 QA_SYSTEM = (

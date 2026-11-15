@@ -67,6 +67,18 @@ def find_text(path: str | Path) -> list[str]:
     return out
 
 
+def has_bars(path: str | Path, band: float = 0.06, max_std: float = 6.0) -> bool:
+    """True when a picture has flat bands painted along its top and bottom (or left and right) edges: a model
+    that heard "letterbox" paints bars, which then stack on the film's own letterbox."""
+    a = np.asarray(Image.open(path).convert("L").resize((320, 180)), np.float32)
+    h, w = a.shape
+    bh, bw = max(2, int(band * h)), max(2, int(band * w))
+    flat = lambda x: float(x.std()) < max_std  # noqa: E731
+    if flat(a[bh:-bh, bw:-bw]):
+        return False  # a flat picture has no bars, only a flat picture
+    return (flat(a[:bh]) and flat(a[-bh:])) or (flat(a[:, :bw]) and flat(a[:, -bw:]))
+
+
 def elevate_spec(ctx: Any) -> Optional[ProviderSpec]:
     """The first configured Elevate provider of the image seat (the art layer needs reference images, which
     only Elevate's media API takes here), or None: no art without it, never a mock."""

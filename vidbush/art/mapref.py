@@ -42,6 +42,9 @@ class _RefBase(M.MapBase):
     """MapBase with a flat, text free reference look; geometry code is the renderer's own."""
 
     def _render(self) -> np.ndarray:  # noqa: D401
+        # the coast layer the renderer will draw: 50 m when the push-in reaches zoom 3, like MapBase
+        detail = getattr(self.c, "detail_zoom", self.z_lo) >= 3
+        self.countries = M.load_layer("ne_50m_admin_0_countries.geojson" if detail else "ne_110m_admin_0_countries.geojson")
         k = max(1.0, self.k)
         img = np.empty((self.bh, self.bw, 3), np.uint8)
         img[...] = REF_WATER
@@ -67,6 +70,16 @@ class _RefBase(M.MapBase):
         layer = [f for f in M.load_layer(M.RIVERS) if (f[0].get("scalerank") or 9) <= M.RIVER_RANK]
         return self.rings(layer)
 
+    def inland_water(self) -> np.ndarray:
+        """True lakes and major rivers (255) at the base size: the only places painted inland water may be."""
+        m = np.zeros((self.bh, self.bw), np.uint8)
+        lakes = self._lakes()
+        if lakes:
+            cv2.fillPoly(m, [np.round(r * 16).astype(np.int32) for r in lakes], 255, cv2.LINE_AA, 4)
+        for r in self._rivers():
+            cv2.polylines(m, [np.round(r * 16).astype(np.int32)], False, 255, max(1, int(3 * self.k)), cv2.LINE_AA, 4)
+        return m
+
     def mask(self, lakes: bool = False) -> np.ndarray:
         """Land 255, sea 0 (lakes 0 too when asked), at the base size."""
         m = np.zeros((self.bh, self.bw), np.uint8)
@@ -82,8 +95,9 @@ class _RefBase(M.MapBase):
 def _base(p: MapPayload, width: int, height: int, zoom: float) -> _RefBase:
     v = view_key(p)
     proj = M.Projection(v["lat"], v["lon"], width, height)
+    z_hi = max(float(p.zoom), float(p.zoom_end if p.zoom_end is not None else p.zoom))
     comp = SimpleNamespace(W=width, H=height, proj=proj, pal=get_palette("documentary_warm"),
-                           k=min(width / 1920.0, height / 1080.0), C=3,
+                           k=min(width / 1920.0, height / 1080.0), C=3, detail_zoom=z_hi,
                            p=SimpleNamespace(shaded_regions=[]))
     # zoom >= 3 picks the 50 m countries like the renderer does for a detailed push-in
     return _RefBase(comp, zoom, zoom)  # type: ignore[arg-type]
@@ -107,6 +121,10 @@ def land_mask(p: MapPayload, width: int = 768, height: int = 432) -> np.ndarray:
     the outline a viewer reads as the place; lakes and rivers are inland detail the painting follows
     from the reference and the renderer labels."""
     return _base(p, width, height, view_key(p)["zoom"]).mask()
+
+
+def inland_water(p: MapPayload, width: int = 768, height: int = 432) -> np.ndarray:
+    return _base(p, width, height, view_key(p)["zoom"]).inland_water()
 
 
 def checkable(mask: np.ndarray) -> bool:
@@ -245,23 +263,31 @@ def register(painted: np.ndarray, p: MapPayload) -> dict[str, Any]:
     # compare at the same level of detail: the painting's mask lost islets and inlets to smoothing
     h, w = ref.shape
     ref_s = _drop_specks(cv2.medianBlur(ref, 5), max(4, int(0.0005 * h * w)))
-    out.update(measure(inland_as_land(pred_w, ref_s), ref_s))
+    out.update(measure(inland_as_land(pred_w, ref_s, inland_water(p, *REG_SIZE)), ref_s))
     out["ok"], out["reason"] = judge_metrics(out)
     return out
 
 
 INLAND = 0.03  # water this far (share of frame width) inside the true land is a lake or river, not a coast
+NEAR_WATER = 0.02  # painted inland water within this share of the width of a true lake or river is that water
 
 
-def inland_as_land(pred: np.ndarray, ref: np.ndarray) -> np.ndarray:
-    """Painted water deep inside the true land counts as land: lakes and rivers are inland detail the
-    painting follows from the reference, not the sea coast this check is about. A moved coast still
-    shows within INLAND of the true one, so drift is still seen; land painted deep in the sea is kept
-    (an invented island is wrong geography)."""
+def inland_as_land(pred: np.ndarray, ref: np.ndarray, allowed: Optional[np.ndarray] = None) -> np.ndarray:
+    """Painted water deep inside the true land counts as land where a true lake or river is near: lakes and
+    rivers are inland detail the painting follows loosely from the reference, not the sea coast. Painted water
+    far from any true one stays water, so an invented lake or sea inlet is a wrong patch (small ones are thinner
+    than THICK and do not count). A moved coast still shows within INLAND of the true one; land painted deep in
+    the sea is kept (an invented island is wrong geography)."""
     w = ref.shape[1]
     dist = cv2.distanceTransform((ref > 127).astype(np.uint8), cv2.DIST_L2, 3)
+    deep = dist > INLAND * w
+    if allowed is not None:
+        r = max(1, int(round(NEAR_WATER * w)))
+        near = cv2.dilate((allowed > 127).astype(np.uint8),
+                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))) > 0
+        deep &= near
     out = pred.copy()
-    out[dist > INLAND * w] = 255
+    out[deep] = 255
     return out
 
 

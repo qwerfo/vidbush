@@ -46,7 +46,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
 
-from ..models import FOOTAGE_TYPES, Candidate, Shot, ShotList, ShotType, SourceKind
+from ..models import FOOTAGE_TYPES, Candidate, Shot, ShotList, ShotType, SourceKind, DESIGNED_SOURCES
 from . import base, throttle
 from .base import Media, RawResult, SourceAdapter
 from .blocklist import Blocklist
@@ -155,7 +155,7 @@ def shot_queries(shot: Shot, queries: Optional[list[str]] = None) -> list[str]:
     return qs[:QUERIES_PER_SHOT]
 
 
-GENERATED = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
+GENERATED = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video} | DESIGNED_SOURCES
 
 
 def _has_sourced(shot: Shot) -> bool:

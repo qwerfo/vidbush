@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import io
 import threading
 from pathlib import Path
@@ -38,7 +39,8 @@ DEFAULT_BASE = "https://public-api.elevate.uno"
 # Credits per image, from Elevate's /v2/media/types text (gpt-image) and measured from the usage counter
 # on 2026-11-15 (nano_banana and gemini models; docs/PROVIDER_NOTES.md). Unknown models count as the
 # dearest known, the safe side for a budget.
-CREDITS = {"gpt-image-2.5-fast": 4.0, "gpt-image-2.5-thinking": 7.0}
+CREDITS = {"gpt-image-2.5-fast": 4.0, "gpt-image-2.5-thinking": 7.0, "nano_banana_pro": 5.0, "nano_banana_2": 5.0,
+           "gemini_flash_image": 3.0}
 REF_MODELS = ("nano_banana_pro", "nano_banana_2", "gemini_flash_image", "gpt-image-2.5-fast",
               "gpt-image-2.5-thinking")
 _PENDING: dict[str, str] = {}
@@ -66,9 +68,9 @@ def _base(spec: ProviderSpec) -> str:
     return (spec.base_url or DEFAULT_BASE).rstrip("/")
 
 
-def _key(spec: ProviderSpec, model: str, prompt: str, refs: Sequence[str]) -> str:
+def _key(spec: ProviderSpec, model: str, prompt: str, refs: Sequence[str], seed: Optional[int] = None) -> str:
     h = hashlib.sha256()
-    for part in (spec.name, model, prompt, *refs):
+    for part in (spec.name, model, prompt, str(seed), *refs):
         h.update(part.encode("utf-8"))
         h.update(b"\0")
     return h.hexdigest()
@@ -81,9 +83,16 @@ def generate(spec: ProviderSpec, prompt: str, out_path: Path, model: str = "",
     model = model or spec.model
     refs = [data_uri(r) for r in references]
     headers = {"Authorization": f"Bearer {spec.api_key}"}
-    key = _key(spec, model, prompt, refs)
+    key = _key(spec, model, prompt, refs, seed)
+    side = out_path.with_suffix(".task.json")
     with _LOCK:
         task_id = _PENDING.pop(key, None)
+    if task_id is None and side.exists():  # a task accepted by an earlier process: poll it, never pay twice
+        try:
+            data = json.loads(side.read_text(encoding="utf-8"))
+            task_id = data.get("task_id") if data.get("key") == key else None
+        except (OSError, ValueError):
+            task_id = None
     if task_id is None:
         body: dict[str, Any] = {"type": "image", "prompt": prompt, "model": model, "aspect_ratio": aspect_ratio,
                                 "params": dict(params or {})}
@@ -96,6 +105,8 @@ def generate(spec: ProviderSpec, prompt: str, out_path: Path, model: str = "",
         task_id = str(task.get("id") or "")
         if not task_id:
             raise TransportError(f"Elevate art submit returned no task id: {str(task)[:200]}")
+        side.parent.mkdir(parents=True, exist_ok=True)
+        side.write_text(json.dumps({"key": key, "task_id": task_id}), encoding="utf-8")
     url = f"{_base(spec)}/v2/media/{task_id}?type=image"
     try:
         task = image_mod._poll(spec, url, headers, lambda r: image_mod._elevate_data(r, f"Elevate art task {task_id}"),
@@ -105,12 +116,14 @@ def generate(spec: ProviderSpec, prompt: str, out_path: Path, model: str = "",
             with _LOCK:
                 _PENDING[key] = task_id  # still running server side: the retry polls it, never pays twice
             raise TransportError(str(e)) from e
+        side.unlink(missing_ok=True)  # a failed task is over: the next call submits afresh
         raise
     if not task.get("result_url"):
         raise TransportError(f"Elevate art task {task_id} completed without result_url")
     raw = get_bytes(task["result_url"])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(raw)
+    side.unlink(missing_ok=True)
     return CallResult(value=out_path, provider=spec, mock=False, cost_usd=0.0, units=credits(model),
                       unit_kind="credits")
 

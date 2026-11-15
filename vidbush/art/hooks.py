@@ -21,6 +21,13 @@ import cv2
 import numpy as np
 
 CLIP_MAX_PUSH = 1.5  # a clip covers the widest view at clip resolution; deeper push-ins would blur it
+CLIP_MIN_S, CLIP_MAX_S = 3.0, 5.0  # the map holds its painting, then moves for this long at the end of the shot
+
+
+def clip_allowed(p: Any) -> bool:
+    """A painted map may play a clip as its base: no shaded region and a push-in of at most CLIP_MAX_PUSH."""
+    z1 = p.zoom_end if p.zoom_end is not None else p.zoom
+    return not p.shaded_regions and 2 ** abs(z1 - p.zoom) <= CLIP_MAX_PUSH + 1e-6
 
 
 def sidecar(path: str | Path) -> Path:
@@ -108,9 +115,7 @@ def _clip_usable(comp: Any) -> bool:
     clip = getattr(p, "art_clip", "") or ""
     if not clip or not Path(clip).exists() or getattr(comp.base, "art_overlay", None) is None:
         return False
-    if p.shaded_regions:
-        return False
-    return 2 ** (abs(comp.z1 - comp.z0)) <= CLIP_MAX_PUSH + 1e-6
+    return clip_allowed(p)
 
 
 def moving_base(comp: Any, i: int, frame: np.ndarray) -> np.ndarray:
@@ -120,7 +125,13 @@ def moving_base(comp: Any, i: int, frame: np.ndarray) -> np.ndarray:
     reader = getattr(comp, "_art_reader", None)
     if reader is None:
         reader = comp._art_reader = _ClipReader(comp.p.art_clip)
-    raw = reader.get(int(i / comp.fps * reader.fps))
+    # hold the painting, then move for CLIP_MIN_S to CLIP_MAX_S at the end (the clip's first frame is the painting)
+    clip_s = reader.count / reader.fps if reader.count else CLIP_MAX_S
+    length = min(max(comp.dur, CLIP_MIN_S), CLIP_MAX_S, clip_s)
+    t_clip = i / comp.fps - max(0.0, comp.dur - length)
+    if t_clip < 0:
+        return frame
+    raw = reader.get(int(t_clip * reader.fps))
     if raw is None:
         return frame
     base = comp.base

@@ -17,6 +17,7 @@ Principles, each for a reason:
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import subprocess
 from pathlib import Path
@@ -115,7 +116,9 @@ def motion_prompt(kind: str, subject: str, window: str = "") -> str:
 def generate(shot: Shot, still: Path, kind: str, ctx: Any, out_dir: Path, window: str = "",
              subject: str = "") -> Optional[Path]:
     """Raw clip from the video seat (kept on disk: a rerun reuses it). None on any failure."""
-    out = Path(out_dir) / f"{shot.id}_clip_raw.mp4"
+    # the raw clip is tied to its still: a different still never reuses a clip of the old one
+    tag = hashlib.sha256(Path(still).read_bytes()).hexdigest()[:8] if Path(still).exists() else "nostill"
+    out = Path(out_dir) / f"{shot.id}_{tag}_clip_raw.mp4"
     if out.exists() and out.stat().st_size > 2048:
         return out
     try:
@@ -167,6 +170,32 @@ def _read_rgb(path: Path) -> np.ndarray:
     return cv2.cvtColor(cv2.imread(str(path)), cv2.COLOR_BGR2RGB)
 
 
+CLIP_MAX_SCALE = 0.01  # a map clip frame may differ from the true view by 1 percent of scale
+CLIP_MAX_SHIFT = 0.005  # and half a percent of the frame in position: it plays under the true labels unwarped
+
+
+def map_frames_hold(frames_rgb: list[np.ndarray], payload: Any, reasons: list[str]) -> dict[str, Any]:
+    """Register the clip's middle and last frames: each must pass, and with a near identity refit, because the
+    renderer plays the clip as it is under the true borders, labels and markers (a still is warped onto the
+    view once; a clip frame is not), so a camera drift that registration would correct is wrong on screen."""
+    from . import mapref
+    out: dict[str, Any] = {}
+    for name, f in zip(("mid", "last"), frames_rgb):
+        reg = mapref.register(f, payload)
+        out[name] = {k: v for k, v in reg.items() if k != "warp"}
+        if not reg.get("ok"):
+            reasons.append(f"{name} frame map registration: {reg.get('reason') or 'failed'}")
+            continue
+        w = np.asarray(reg["warp"], np.float64)
+        rw, rh = mapref.REG_SIZE
+        drift = max(abs(w[0, 0] - 1), abs(w[1, 1] - 1))
+        shift = max(abs(w[0, 2]) / rw, abs(w[1, 2]) / rh)
+        out[name]["drift"], out[name]["shift"] = round(float(drift), 4), round(float(shift), 4)
+        if drift > CLIP_MAX_SCALE or shift > CLIP_MAX_SHIFT:
+            reasons.append(f"{name} frame moved off the view (scale {drift:.3f}, shift {shift:.3f})")
+    return out
+
+
 def check(raw: Path, still: Path, kind: str, ctx: Any, payload: Any = None) -> dict[str, Any]:
     """First-frame match, fixed yes or no vision questions, and map registration on the last frame."""
     raw = Path(raw)
@@ -205,11 +234,7 @@ def check(raw: Path, still: Path, kind: str, ctx: Any, payload: Any = None) -> d
         if answers.get(q) is not good:
             out["reasons"].append(f"{q}: {answers.get(q)}")
     if kind == "illustrated_map" and payload is not None:
-        from . import mapref
-        reg = mapref.register(fr[2], payload)
-        out["map"] = {k: v for k, v in reg.items() if k != "warp"}
-        if reg.get("checkable") and not reg.get("ok"):
-            out["reasons"].append(f"last frame map registration: {reg.get('reason')}")
+        out["map"] = map_frames_hold(fr[1:], payload, out["reasons"])
     out["ok"] = not out["reasons"]
     return out
 

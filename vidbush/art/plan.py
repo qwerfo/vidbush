@@ -48,9 +48,12 @@ def paint_maps(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str, Any]) 
         return 0
     budget = max(1, round(a.illustrated_maps * len(maps)))
     spec_e = common.elevate_spec(ctx)
-    painted: dict[str, tuple[str, float]] = {}  # view -> (base path, last time on screen)
+    painted: dict[str, tuple[str, list[float]]] = {}  # view -> (base path, every time it is on screen)
     done = 0
     out = common.art_dir(ctx) / "maps"
+    for s, spec, _where in maps:  # a rerun decides again from a clean map (paid files are reused)
+        if spec.payload.get("art_base") or spec.payload.get("art_clip"):
+            spec.payload = {**spec.payload, "art_base": "", "art_clip": ""}
     for s, spec, where in sorted(maps, key=lambda m: (m[2] != "full", m[0].start)):
         row: dict[str, Any] = {"shot": s.id, "where": where}
         report["maps"].append(row)
@@ -62,13 +65,14 @@ def paint_maps(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str, Any]) 
         p = spec.typed_payload()
         vk = json.dumps(view_key(p), sort_keys=True)
         if vk in painted:
-            base, last = painted[vk]
-            if abs(s.start - last) < a.map_repeat_s:
-                row["plain"] = f"same view illustrated {abs(s.start - last):.0f} s away"
+            base, times = painted[vk]
+            near = min(abs(s.start - t) for t in times)
+            if near < a.map_repeat_s:  # against every showing, not only the latest
+                row["plain"] = f"same view illustrated {near:.0f} s away"
                 continue
             p.art_base = base
             spec.payload = p.model_dump()
-            painted[vk] = (base, s.start)
+            times.append(s.start)
             row["base"], row["reused"] = base, True
             continue
         if done >= budget:
@@ -87,7 +91,7 @@ def paint_maps(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str, Any]) 
         if rep.get("base"):
             p.art_base = rep["base"]
             spec.payload = p.model_dump()
-            painted[vk] = (rep["base"], s.start)
+            painted[vk] = (rep["base"], [s.start])
             row["base"] = rep["base"]
         else:
             row["plain"] = "no variant passed registration and the text check"
@@ -99,13 +103,27 @@ def add_illustrations(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str,
     if a.illustrations <= 0:
         return 0
     budget = max(1, round(a.illustrations * len(shotlist.shots)))
+    have = [s for s in shotlist.shots if _selected_source(s) == SourceKind.illustration]
+    if len(have) >= budget:  # a rerun keeps what it made and pays for nothing new
+        return len(have)
     spec_e = common.elevate_spec(ctx)
     out = common.art_dir(ctx) / "illustrations"
-    n = 0
-    for pick in IL.choose(shotlist, ctx, budget):
+    picks_file = out / "illustration_picks.json"
+    if picks_file.exists():  # the director's picks are kept, so a rerun reuses its paid illustrations
+        picks = json.loads(picks_file.read_text(encoding="utf-8"))
+    else:
+        picks = IL.choose(shotlist, ctx, budget)
+        out.mkdir(parents=True, exist_ok=True)
+        picks_file.write_text(json.dumps(picks, indent=1), encoding="utf-8")
+    n = len(have)
+    for pick in picks:
+        if n >= budget:
+            break
         try:
             shot = shotlist.by_id(pick["shot_id"])
         except KeyError:
+            continue
+        if shot in have:
             continue
         if spec_e is not None and common.over_hour_cap(ctx, spec_e):
             report["illustrations"].append({"shot": shot.id, "skipped": "hour credit cap reached"})
@@ -123,10 +141,17 @@ def add_illustrations(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str,
     return n
 
 
+def _selected_source(shot: Shot) -> Optional[SourceKind]:
+    c = shot.selected_candidate()
+    return c.source if c is not None else None
+
+
 def _clip_kind(shot: Shot) -> Optional[str]:
     spec, where = _map_spec(shot)
     if spec is not None:
-        return "illustrated_map" if where == "full" and spec.payload.get("art_base") else None
+        from .hooks import clip_allowed
+        ok = where == "full" and spec.payload.get("art_base") and clip_allowed(MapPayload(**spec.payload))
+        return "illustrated_map" if ok else None  # a clip the renderer would not play is never paid for
     c = shot.selected_candidate()
     if c is None or c.media != "image" or not c.local_path or not Path(c.local_path).exists():
         return None
@@ -143,8 +168,12 @@ def add_clips(shotlist: ShotList, ctx: Any, narr: Any, report: dict[str, Any]) -
         return 0
     eligible = {s.id: k for s in shotlist.shots if (k := _clip_kind(s))}
     out = common.art_dir(ctx) / "clips"
+    # clips already on screen from an earlier run count against the budget (map clips were cleared above and
+    # are decided again, their raw files reused)
+    have = sum(1 for s in shotlist.shots if (c := s.selected_candidate()) is not None and c.id.endswith("_art_clip"))
+    budget = max(1, int(shotlist.duration // a.clip_every_s)) - have
     n = 0
-    for sid in C.plan_clips(shotlist, a, eligible):
+    for sid in C.plan_clips(shotlist, a, eligible)[:max(0, budget)]:
         shot, kind = shotlist.by_id(sid), eligible[sid]
         try:
             if kind == "illustrated_map":
@@ -180,7 +209,10 @@ def apply_art(shotlist: ShotList, ctx: Any) -> dict[str, int]:
         except Exception as e:  # noqa: BLE001  art is decoration: a broken step never stops the video
             ctx.log.warn("art step failed, continuing without it", step=key, error=f"{type(e).__name__}: {str(e)[:300]}")
     report["counts"] = counts
-    common.write_report(ctx, "art_report.json", report)
+    try:
+        common.write_report(ctx, "art_report.json", report)
+    except OSError as e:  # a report is never worth the video
+        ctx.log.warn("art report not written", error=str(e)[:200])
     ctx.log.info("art layer", **counts)
     return counts
 

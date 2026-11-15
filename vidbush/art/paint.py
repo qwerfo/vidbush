@@ -46,7 +46,7 @@ PAINT_SYSTEM = (
 
 # Phrased as a repaint of the given image: models keep the outlines of an image they edit far better than of
 # one they take as loose inspiration (run 3 probe: regional views were redrawn when asked for "a map of").
-PROMPT_VERSION = "p2"  # in variant file names: a changed prompt never reuses paintings of the old one
+PROMPT_VERSION = "p3"  # in variant file names: a changed prompt never reuses paintings of the old one
 LEAD = ("Repaint this exact map image. It is a map seen from directly above: the tan shapes are land, the blue "
         "shapes are sea, lakes and rivers. Trace every outline exactly where it is in the image, same framing and "
         "scale; do not move, add or remove any coast, island, bay, lake or river.")
@@ -175,6 +175,10 @@ def paint_map(p: MapPayload, window: str, ctx: Any, out_dir: Path, tag: str, var
     view = mapref.view_key(p)
     key = hashlib.sha256(json.dumps(view, sort_keys=True).encode()).hexdigest()[:10]
     out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"map_{key}_base.png"
+    from .hooks import _matches
+    if out.exists() and _matches(p, str(out)):  # resume: a finished painting of this view is never redone
+        return {"tag": tag, "view": view, "window": window, "variants": [], "base": str(out), "reused": True}
     ref = mapref.reference(p)
     ref_path = out_dir / f"map_{key}_ref.png"
     cv2.imwrite(str(ref_path), cv2.cvtColor(ref, cv2.COLOR_RGB2BGR))
@@ -182,7 +186,9 @@ def paint_map(p: MapPayload, window: str, ctx: Any, out_dir: Path, tag: str, var
     if cache.exists():  # a resumed stage reuses the art director's prompt, so the paintings on disk still match
         prompt, from_llm = json.loads(cache.read_text(encoding="utf-8"))
     else:
-        prompt, from_llm = map_prompt(p, window, ctx, getattr(ctx.brand, "illustration_style", "") or "")
+        # maps keep the documentary map style, not the brand's illustration line: the probe's plain documentary
+        # map style was richer, and a map reads as a map in any set
+        prompt, from_llm = map_prompt(p, window, ctx)
         cache.write_text(json.dumps([prompt, from_llm]), encoding="utf-8")
     report: dict[str, Any] = {"tag": tag, "view": view, "window": window, "prompt": prompt, "prompt_from_llm": from_llm,
                               "reference": str(ref_path), "variants": [], "base": None}
@@ -200,12 +206,17 @@ def paint_map(p: MapPayload, window: str, ctx: Any, out_dir: Path, tag: str, var
         ctx.log.info("illustrated map: no variant passed, plain map kept", view=view)
         return report
     scores = _appeal([r["path"] for r in passed], window, ctx)
-    for r, s in zip(passed, scores):
-        r["appeal"] = s
-        r["rank"] = (0 if (s.get("text") or s.get("lines")) else 1,
-                     float(s.get("appeal") or 50) + float(s.get("fit") or 50), -float(r["registration"]["worst_patch"]))
+    for r, sc in zip(passed, scores):
+        r["appeal"] = sc
+        if sc.get("text") or sc.get("lines"):  # lettering or painted border or grid lines: never on screen
+            r["ok"] = False
+            r["reason"] = "vision: " + ("text painted in" if sc.get("text") else "lines painted in")
+        r["rank"] = (float(sc.get("appeal") or 50) + float(sc.get("fit") or 50), -float(r["registration"]["worst_patch"]))
+    passed = [r for r in passed if r["ok"]]
+    if not passed:
+        ctx.log.info("illustrated map: every registered variant had text or lines, plain map kept", view=view)
+        return report
     best = max(passed, key=lambda r: r["rank"])
-    out = out_dir / f"map_{key}_base.png"
     save_base(Path(best["path"]), p, best["registration"], out,
               {"model": best["model"], "prompt": prompt, "source": best["path"]})
     report["base"] = str(out)

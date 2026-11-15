@@ -47,13 +47,13 @@ def _line(text: str, n: int = 150) -> str:
 def stills(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for it in items:
-        if it.get("type") == "illustrated_map" and it.get("ok") and it.get("frame"):
+        if it.get("type") == "illustrated_map" and it.get("ok") and it.get("frame") and Path(it["frame"]).exists():
             chosen = next((v for v in it["report"]["variants"] if v.get("path") == it["report"].get("chosen")), {})
             ap = chosen.get("appeal") or {}
             score = (float(ap.get("appeal") or 60) + float(ap.get("fit") or 60)) / 2
             out.append({"kind": "illustrated map", "path": it["frame"], "start": it["start"], "line": it["window"],
                         "score": score})
-        elif it.get("type") == "illustration" and it.get("ok") and it.get("still"):
+        elif it.get("type") == "illustration" and it.get("ok") and it.get("still") and Path(it["still"]).exists():
             out.append({"kind": "illustration", "path": it["still"], "start": it["start"], "line": it["window"],
                         "score": float(it.get("score") or 0)})
     return out

@@ -12,7 +12,7 @@ import pytest
 
 from vidbush.providers import probe as probe_mod, seats as seats_mod, tts_elevate, video as video_mod
 from vidbush.providers import video_elevate as V
-from vidbush.providers.base import CallResult, ProviderSpec, RefusalError, TransportError
+from vidbush.providers.base import ProviderError, CallResult, ProviderSpec, RefusalError, TransportError
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 4096
@@ -158,8 +158,9 @@ def test_sidecar_for_other_request_ignored(monkeypatch, clock, tmp_path):
 def test_deadline_keeps_sidecar(monkeypatch, clock, tmp_path):
     out = tmp_path / "clip.mp4"
     Server(monkeypatch, {"slow": [{"status": "processing"}]})
-    with pytest.raises(TransportError, match="still running"):
+    with pytest.raises(ProviderError, match="still running") as exc:
         V.generate_video(_spec(timeout_s=60, poll_s=10), "p", _still(tmp_path), out, 4.0)
+    assert not isinstance(exc.value, TransportError)  # the client must not retry (and pay) or mark the seat down
     assert json.loads(V._sidecar(out).read_text())["task_id"] == "slow"
     assert not out.exists()
 
@@ -172,9 +173,21 @@ def test_dead_task_one_fresh_submit(monkeypatch, clock, tmp_path):
 
 def test_dead_twice_raises_after_two_submits(monkeypatch, clock, tmp_path):
     srv = Server(monkeypatch, {"a": [{"status": "failed"}], "b": [{"status": "failed"}]})
-    with pytest.raises(TransportError):
+    with pytest.raises(ProviderError) as exc:
         V.generate_video(_spec(), "p", _still(tmp_path), tmp_path / "c.mp4", 4.0)
+    assert not isinstance(exc.value, TransportError)
     assert srv.count("POST") == 2
+
+
+def test_client_never_retries_a_dead_clip(monkeypatch, clock, tmp_path):
+    from vidbush.providers.base import CostTracker, ProviderClient
+    srv = Server(monkeypatch, {"a": [{"status": "failed"}], "b": [{"status": "failed"}]})
+    client = ProviderClient(CostTracker("t", tmp_path / "cost.json"), sleep=lambda s: None)
+    spec = _spec()
+    with pytest.raises(ProviderError):
+        client.call("video", "visuals", [spec], lambda sp: V.generate_video(sp, "p", _still(tmp_path),
+                                                                            tmp_path / "c.mp4", 4.0))
+    assert srv.count("POST") == 2  # the adapter's one fresh submit, never multiplied by client retries
 
 
 def test_policy_failure_is_refusal_without_resubmit(monkeypatch, clock, tmp_path):
@@ -290,3 +303,14 @@ def test_seat_other_types_use_video_py(monkeypatch, tmp_path):
 def test_probe_spec_routes_elevate_video(monkeypatch):
     monkeypatch.setattr(V, "probe", lambda spec, timeout=0: "video probed")
     assert probe_mod.probe_spec("video", _spec()) == "video probed"
+
+
+def test_large_still_sent_as_jpeg_under_limit(tmp_path):
+    import numpy as np
+    from PIL import Image
+    p = tmp_path / "big.png"
+    Image.fromarray(np.random.default_rng(1).integers(0, 255, (1500, 2600, 3), dtype=np.uint8)).save(p)
+    assert p.stat().st_size > V.MAX_SOURCE_BYTES
+    uri = V._still_uri(p)
+    assert uri.startswith("data:image/jpeg;base64,")
+    assert len(uri) * 3 / 4 < 5_000_000
