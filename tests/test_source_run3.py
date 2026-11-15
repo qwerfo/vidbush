@@ -262,10 +262,10 @@ def test_a_straggler_stops_once_most_sources_are_done(make_ctx, monkeypatch) -> 
     class Slow(_ShortAdapter):
         name, keyword_words = "pexels", 0
 
-        def search(self, query: str, *a: Any, **k: Any) -> list[RawResult]:
+        def search(self, query: str, media: str, *a: Any, **k: Any) -> list[RawResult]:
             self.sent.append(query)
             _t.sleep(0.5)
-            return []
+            return [RawResult(source="pexels", url=f"https://px/{query}", media=media, title=query)]
 
     fast, fast2, slow = Fast(), Fast2(), Slow()
     shots = [Shot(id=f"s{i}", index=i, beat_id="b", start=i, end=i + 1, duration=1, type=ShotType.image,
@@ -276,3 +276,6 @@ def test_a_straggler_stops_once_most_sources_are_done(make_ctx, monkeypatch) -> 
     assert _t.monotonic() - t0 < 2.5  # 8 slow searches would take 4 s
     assert len(slow.sent) < 8
     assert all(found[s.id]["wikimedia"] and found[s.id]["archive"] for s in shots)
+    assert sum(len(found[s.id].get("pexels", [])) for s in shots) == len(slow.sent)  # results so far are kept
+    assert len(set(slow.sent)) == len(slow.sent)  # cancelled searches are not re-sent by the retry pass
+    assert throttle.usage(registry.run_id(ctx))["pexels"]["used"] == len(slow.sent)  # cancelled ones are free

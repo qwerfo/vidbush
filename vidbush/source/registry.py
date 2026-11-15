@@ -618,33 +618,42 @@ def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str,
     another host's round k + 1, and its own next round goes only to shots still short on every result
     in by then. The pass returns when every adapter's rounds are done, so no result is lost.
 
-    Stragglers never hold the stage: once most adapters are done, the ones still searching get
-    straggler_grace(elapsed) more, so they at most double the search time, then their searches not yet
-    started are cancelled (never charged to the budget). Run 3 evidence: Pexels at 200 an hour kept
-    sourcing searching 45 minutes after every other source had finished."""
+    Stragglers never hold the stage: once at least half of the adapters with work in this pass are
+    done, the ones still searching get straggler_grace(elapsed) more, so they at most double the search
+    time (the 300 s floor when the others finished at once, as on a resume from the search cache), then
+    their searches not yet started are cancelled: never charged, never put in unsent. A retry pass
+    (retry set) gets STRAGGLER_MIN_S in all, whatever the adapter count. Run 3 evidence: Pexels at 200 an
+    hour kept sourcing searching 45 minutes after every other source had finished."""
     lock = threading.Lock()  # merged is read by every adapter's rounds
     stop = threading.Event()
     t0 = time.monotonic()
-    with ThreadPoolExecutor(max_workers=max(1, len(adapters))) as drivers:
+    # an adapter with no shot of its media (or no retry entry) has no work and never counts as done
+    busy = [a for a in adapters if any(shot_media(s) in a.media and (retry is None or any(
+        (s.id, a.name, q) in retry for q in queries[s.id])) for s in shots)]
+    with ThreadPoolExecutor(max_workers=max(1, len(busy))) as drivers:
         futs = {drivers.submit(_adapter_rounds, a, shots, queries, merged, ctx, pools, unsent, retry, allowance,
-                               lock, stop): a.name for a in adapters}
+                               lock, stop): a.name for a in busy}
         not_done = set(futs)
-        while not_done:
-            done, not_done = wait(not_done, return_when=FIRST_COMPLETED)
-            for f in done:
-                f.result()
-            if not_done and len(not_done) <= len(futs) // 2:
-                rest = wait(not_done, timeout=straggler_grace(time.monotonic() - t0))
+        try:
+            while not_done:
+                if retry is not None:  # a retry pass has one fixed allowance of time
+                    rest = wait(not_done, timeout=STRAGGLER_MIN_S)
+                elif len(not_done) <= len(futs) // 2:
+                    rest = wait(not_done, timeout=straggler_grace(time.monotonic() - t0))
+                else:
+                    done, not_done = wait(not_done, return_when=FIRST_COMPLETED)
+                    for f in done:
+                        f.result()
+                    continue
                 if rest.not_done:
                     stop.set()
                     ctx.log.info("slow source stopped searching after the others finished; its later "
                                  "searches are skipped", sources=sorted(futs[f] for f in rest.not_done))
-                for f in rest.done:
-                    f.result()
-                not_done = rest.not_done
-                for f in not_done:
+                for f in list(rest.done) + list(rest.not_done):
                     f.result()
                 not_done = set()
+        finally:
+            stop.set()  # an error in one driver must not leave the others running every round
 
 
 STRAGGLER_MIN_S = 300.0
