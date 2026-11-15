@@ -8,6 +8,15 @@ judge_and_select(shotlist, ctx) -> ShotList.
              readable text (map, headline, document) is never converted: it is flagged needs_motion_graphic
 After settings.judge.max_attempts the best available candidate is accepted
 with flag no_match_accepted. motion_graphic shots are left to the motion stage.
+
+Real first: a real candidate (footage or photograph, judge.picture_kind) at or above REAL_BAR beats
+a photo-style AI still, and a shot that has one is never converted to an AI still.
+Floor: a candidate below FLOOR, or whose judge notes carry subscribe, channel branding, end screen,
+watermark or logo notes, is never shipped while anything else exists. Such a slot takes the best real
+candidate of another shot in the same beat, then a generated still. When nothing meets the floor and
+generation fails, the least bad candidate is kept (not branded first, then not hard rejected, then by
+score), flagged below_floor and logged as a warning, so a shot is never empty.
+After every selection sync_type leaves shot.type consistent with the pick.
 """
 from __future__ import annotations
 
@@ -16,11 +25,12 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
-from ..models import Candidate, Script, Shot, ShotList, ShotType, SourceKind
+from ..models import OVERLAY_TYPES, Candidate, Script, Shot, ShotList, ShotType, SourceKind
 from ..visuals.ai_images import needs_readable_text
-from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, score_many
+from .judge import (AI_PHOTO, DESIGNED, GRAPHIC, JUDGE_MOCK_FLAG, JUDGE_WORKERS, candidate_branding, is_real,
+                    picture_kind, score_many, source_value)
 from .prefilter import apply_prefilter
 
 SOURCED_TYPES = {ShotType.footage, ShotType.footage_overlay, ShotType.image, ShotType.image_overlay}
@@ -32,8 +42,14 @@ RECENT_PENALTY = 10.0  # extra when the earlier use is within RECENT_S
 SEGMENT_GAP_S = 3.0  # video ranges that overlap or start closer than this are the same segment
 CROSS_SCENE_SEGMENT_PENALTY = 40.0  # same segment again in another scene (banned within a scene and next shot)
 NEEDS_MOTION_FLAG = "needs_motion_graphic"  # readable text subject that no sourced candidate covered
-SHOT_FLAGS = {"mock", "low_res", "nc_nd", "anachronism", "no_match_accepted", "standard_youtube_licence",
-              NEEDS_MOTION_FLAG}
+REAL_BAR = 55.0  # a real candidate at or above this beats a photo-style AI still
+FLOOR = 50.0  # nothing below this ships while an alternative exists
+BELOW_FLOOR_FLAG = "below_floor"  # nothing met the floor and generation failed: least bad candidate kept
+BORROWED_FLAG = "borrowed_from_beat"  # a real candidate taken from another shot of the same beat
+BORROW_TRIES = 3  # beat candidates tried for one floor slot (each may cost a judge call)
+DESIGNED_FLAG = "designed_animation"  # marker on an ai_image shot whose pick is designed animation
+SHOT_FLAGS = {"mock", "low_res", "small_archival", "nc_nd", "anachronism", "no_match_accepted",
+              "standard_youtube_licence", NEEDS_MOTION_FLAG, BELOW_FLOOR_FLAG, BORROWED_FLAG, DESIGNED_FLAG}
 MAX_QUERIES = 6
 
 REQUERY_SYSTEM = (
@@ -65,7 +81,8 @@ def judge_and_select(shotlist: ShotList, ctx: Any) -> ShotList:
         s.attempts = max(s.attempts, 1)
     failing = [s for s in active if not _passing(s, threshold)]
     with ThreadPoolExecutor(max_workers=RESOLVE_WORKERS) as pool:
-        notes = dict(zip([s.id for s in failing], pool.map(lambda s: _resolve(s, ctx, threshold), failing)))
+        notes = dict(zip([s.id for s in failing], pool.map(
+            lambda s: _resolve(s, ctx, threshold, _beat_siblings(shotlist.shots, s)), failing)))
     _select_all(shotlist, ctx, threshold, notes)
     for s in active:
         if s.type == ShotType.ai_video:
@@ -84,17 +101,32 @@ def _prefilter_and_score(pairs: list[tuple[Shot, Candidate]], ctx: Any, workers:
     score_many([(s, c) for s, c in pairs if c.score is None], ctx, workers=workers)
 
 
-def _ok(c: Candidate, threshold: float) -> bool:
-    return c.reject_reason is None and c.score is not None and c.score >= threshold
+def _clean(c: Candidate, shot: Shot) -> bool:
+    """No hard reject and no branding note (subscribe, channel, end screen, watermark, logo)."""
+    return c.reject_reason is None and not candidate_branding(c, shot)
+
+
+def _ok(c: Candidate, shot: Shot, threshold: float) -> bool:
+    return _clean(c, shot) and c.score is not None and c.score >= threshold
 
 
 def _passing(shot: Shot, threshold: float) -> bool:
-    return any(_ok(c, threshold) for c in shot.candidates)
+    return any(_ok(c, shot, threshold) for c in shot.candidates)
+
+
+def _real_ok(shot: Shot) -> bool:
+    """A clean real candidate at or above REAL_BAR: the shot keeps real material, no AI still."""
+    return any(is_real(c) and _ok(c, shot, REAL_BAR) for c in shot.candidates)
+
+
+def _ai_tried(shot: Shot) -> bool:
+    return any(picture_kind(c) == AI_PHOTO for c in shot.candidates)
 
 
 def _ranked(shot: Shot) -> list[Candidate]:
-    """Best first: candidates without a hard reject, then by score."""
-    return sorted(shot.candidates, key=lambda c: (c.reject_reason is None, c.score or 0.0), reverse=True)
+    """Best first: clean candidates, then those without a hard reject, then by score."""
+    return sorted(shot.candidates, key=lambda c: (_clean(c, shot), c.reject_reason is None, c.score or 0.0),
+                  reverse=True)
 
 
 def asset_key(c: Candidate) -> str:
@@ -106,7 +138,7 @@ def asset_key(c: Candidate) -> str:
 
 def _seed_ai(shots: list[Shot], ctx: Any) -> None:
     """Director planned ai_image / ai_video shots get a generated still when they have none."""
-    todo = [s for s in shots if s.type in AI_TYPES and not any(c.source == SourceKind.ai_image for c in s.candidates)]
+    todo = [s for s in shots if s.type in AI_TYPES and not _ai_tried(s)]
     if not todo:
         return
     with ThreadPoolExecutor(max_workers=RESOLVE_WORKERS) as pool:
@@ -134,27 +166,38 @@ def add_ai(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Candidate:
         shot.candidates.append(cand)
         _prefilter_and_score([(shot, cand)], ctx, workers=1)
         takes.append(cand)
-        if _ok(cand, threshold) or JUDGE_MOCK_FLAG in cand.flags:
+        if _ok(cand, shot, threshold) or JUDGE_MOCK_FLAG in cand.flags:
             break
         problem = "; ".join(x for x in (cand.reject_reason, cand.judge_reason) if x)[:300] or "judged below threshold"
         ctx.log.info("AI still below threshold, regenerating", shot=shot.id, take=take + 1, score=cand.score)
-    return max(takes, key=lambda c: (c.reject_reason is None, c.score or 0.0))  # ties keep the earlier take
+    return max(takes, key=lambda c: (_clean(c, shot), c.score or 0.0))  # ties keep the earlier take
 
 
 # ---------------------------------------------------------------- attempts 2 and 3+
 
-def _resolve(shot: Shot, ctx: Any, threshold: float) -> list[str]:
-    """Run further attempts on a failing shot. Returns notes for judge_notes."""
+def _resolve(shot: Shot, ctx: Any, threshold: float, siblings: Sequence[Shot] = ()) -> list[str]:
+    """Run further attempts on a failing shot. Returns notes for judge_notes.
+
+    A shot with a real candidate at or above REAL_BAR may requery but is never converted to an AI still:
+    the real one wins selection anyway, so the still would only cost generation time and credits. Nor is
+    a shot with nothing at the floor while another shot of its beat holds such a real candidate: selection
+    borrows it (see _beat_pool), and still generates there when the borrow is refused (banned, recent, failed judge).
+    """
     notes: list[str] = []
-    original = shot.type
     try:
         while shot.attempts < ctx.settings.judge.max_attempts and not _passing(shot, threshold):
             shot.attempts += 1
             if shot.attempts == 2 and shot.type in SOURCED_TYPES:
                 notes.append(_requery(shot, ctx))
                 continue
-            if any(c.source == SourceKind.ai_image for c in shot.candidates):
+            if _ai_tried(shot):
                 break  # add_ai already spent the AI retries on this shot
+            if _real_ok(shot):
+                notes.append(f"real candidate at or above {REAL_BAR:g} kept, no AI still")
+                break
+            if not any(_shippable(c, shot) for c in shot.candidates) and _beat_real(shot, siblings):
+                notes.append("a real candidate of the same beat will be borrowed, no AI still")
+                break
             if shot.type not in AI_TYPES:
                 if needs_readable_text(shot):
                     notes.append("subject is readable text, kept the best sourced candidate for a motion graphic")
@@ -165,9 +208,6 @@ def _resolve(shot: Shot, ctx: Any, threshold: float) -> list[str]:
     except Exception as e:  # noqa: BLE001  keep what we have, selection still guarantees a pick
         ctx.log.warn("director loop attempt failed", shot=shot.id, error=str(e)[:300])
         notes.append(f"attempt {shot.attempts} failed: {type(e).__name__}")
-    best = _ranked(shot)[0] if shot.candidates else None
-    if shot.type != original and original in SOURCED_TYPES and best and best.source != SourceKind.ai_image:
-        shot.type = original  # the AI still lost to a sourced candidate, keep the planned type
     return notes
 
 
@@ -374,6 +414,10 @@ def _context_usage(context: ShotList, shot: Shot) -> _Usage:
     return usage
 
 
+def _beat_siblings(shots: list[Shot], shot: Shot) -> list[Shot]:
+    return [o for o in shots if o.beat_id == shot.beat_id and o.id != shot.id and o.type != ShotType.motion_graphic]
+
+
 def _select_all(shotlist: ShotList, ctx: Any, threshold: float, notes: dict[str, list[str]]) -> None:
     """Pick one candidate per shot: segment rule first, then reuse penalties anywhere in the video."""
     usage = _Usage()
@@ -381,8 +425,8 @@ def _select_all(shotlist: ShotList, ctx: Any, threshold: float, notes: dict[str,
         if shot.type == ShotType.motion_graphic:
             continue
         _ensure_usable(shot, ctx)
-        pick, accepted, repeat = _choose(shot, usage, threshold, ctx)
-        _apply(shot, pick, accepted, notes.get(shot.id, []), repeat)
+        pick, accepted, repeat, below = _choose(shot, usage, threshold, ctx, _beat_siblings(shotlist.shots, shot))
+        _apply(shot, pick, accepted, notes.get(shot.id, []), repeat, below)
         usage.add(pick, shot.start, shot.scene_id, shot.index)
 
 
@@ -397,38 +441,108 @@ def enforce_segment_rule(context: ShotList, shot: Shot, ctx: Any) -> bool:
     if pick is None or pick.source == SourceKind.upload or not usage.banned(pick, shot.scene_id):
         return False
     _ensure_usable(shot, ctx)
-    new, accepted, repeat = _choose(shot, usage, float(ctx.settings.judge.threshold), ctx)
-    _apply(shot, new, accepted, [], repeat)
+    new, accepted, repeat, below = _choose(shot, usage, float(ctx.settings.judge.threshold), ctx,
+                                           _beat_siblings(context.shots, shot))
+    _apply(shot, new, accepted, [], repeat, below)
     return True
 
 
-def _choose(shot: Shot, usage: _Usage, threshold: float, ctx: Any) -> tuple[Candidate, bool, bool]:
-    """(pick, accepted below threshold, repeats a banned segment), the segment ban applied before the threshold.
+def _choose(shot: Shot, usage: _Usage, threshold: float, ctx: Any,
+            siblings: Sequence[Shot] = ()) -> tuple[Candidate, bool, bool, bool]:
+    """(pick, accepted below threshold, repeats a banned segment, below floor), the segment ban and the
+    floor applied before the threshold.
 
-    Tiers: allowed passing, allowed usable (accepted), a fresh AI still, and only
-    then the least penalised banned candidate.
+    Tiers: allowed passing, allowed at or above the floor (accepted), a real candidate borrowed from the
+    same beat, a fresh AI still, and only then the least bad candidate (below floor). Among allowed
+    candidates a real one at or above REAL_BAR removes photo-style AI stills from the pool.
     """
     pinned = shot.selected_candidate()
     if pinned is not None and pinned.source == SourceKind.upload:
-        return pinned, False, False
-    allowed = _allowed_usable(shot, usage)
+        return pinned, False, False, False
+    allowed = _allowed_usable(shot, usage) or _borrow(shot, usage, siblings, ctx)
     if not allowed and _try_ai(shot, ctx):
         allowed = _allowed_usable(shot, usage)
     if allowed:
-        passing = [c for c in allowed if _ok(c, threshold)]
-        return _diverse(passing or allowed, usage, shot, ctx), not passing, False
+        if any(is_real(c) and (c.score or 0.0) >= REAL_BAR for c in allowed):
+            allowed = [c for c in allowed if picture_kind(c) != AI_PHOTO]
+        passing = [c for c in allowed if _ok(c, shot, threshold)]
+        return _diverse(passing or allowed, usage, shot, ctx), not passing, False, False
     ranked = _ranked(shot)
-    pick = _diverse([c for c in ranked if c.reject_reason is None] or ranked[:1], usage, shot, ctx)
-    return pick, True, usage.banned(pick, shot.scene_id)
+    tier = ([c for c in ranked if _clean(c, shot)] or [c for c in ranked if c.reject_reason is None] or ranked[:1])
+    pick = _diverse(tier, usage, shot, ctx)
+    below = not (_clean(pick, shot) and (pick.score or 0.0) >= FLOOR)
+    if below:
+        ctx.log.warn("no candidate meets the floor, least bad kept", shot=shot.id, pick=pick.id, score=pick.score,
+                     note=(pick.reject_reason or candidate_branding(pick, shot) or "")[:120])
+    return pick, True, usage.banned(pick, shot.scene_id), below
+
+
+def _shippable(c: Candidate, shot: Shot) -> bool:
+    return _ok(c, shot, FLOOR)
 
 
 def _allowed_usable(shot: Shot, usage: _Usage) -> list[Candidate]:
-    return [c for c in _ranked(shot) if c.reject_reason is None and not usage.banned(c, shot.scene_id)]
+    return [c for c in _ranked(shot) if _shippable(c, shot) and not usage.banned(c, shot.scene_id)]
+
+
+def _beat_pool(shot: Shot, siblings: Sequence[Shot]) -> list[tuple[Shot, Candidate]]:
+    """(donor, candidate) pairs a floor slot may borrow: real, clean, at or above REAL_BAR for the donor.
+
+    Never a sibling's own pick or best candidate: taking it moves the problem to that sibling (a banned
+    neighbour segment, or the same photo twice in a row). Never an asset the shot already holds: it was
+    judged on this shot's words and failed.
+    """
+    taken = {asset_key(c) for o in siblings for c in [*_ranked(o)[:1], o.selected_candidate()] if c is not None}
+    taken |= {asset_key(c) for c in list(shot.candidates)}
+    return [(o, c) for o in siblings for c in list(o.candidates)
+            if is_real(c) and _ok(c, o, REAL_BAR) and asset_key(c) not in taken]
+
+
+def _beat_real(shot: Shot, siblings: Sequence[Shot]) -> bool:
+    return bool(_beat_pool(shot, siblings))
+
+
+def _avoids_covered(shot: Shot, donor: Shot) -> bool:
+    """The donor's judge already checked every must_avoid item of shot."""
+    def norm(items: list[str]) -> set[str]:
+        return {x.strip().lower() for x in items}
+    return norm(shot.must_avoid) <= norm(donor.must_avoid)
+
+
+def _borrow(shot: Shot, usage: _Usage, siblings: Sequence[Shot], ctx: Any) -> list[Candidate]:
+    """A real candidate of another shot in the same beat (see _beat_pool), not a banned segment here and not
+    shown in the last minute, copied into shot, best first. Its score carries over when the donor's brief
+    covered this shot's must_avoid; otherwise the copy is judged for this shot (one vision call, cheaper than
+    a generated still) and must reach the floor."""
+    pool = [(o, c) for o, c in _beat_pool(shot, siblings) if not usage.banned(c, shot.scene_id)
+            and usage.penalty(c, shot.start) < DIVERSITY_GAP + RECENT_PENALTY]  # not shown in the last minute
+    pool.sort(key=lambda oc: (oc[1].score or 0.0) - usage.penalty(oc[1], shot.start), reverse=True)
+    for donor, best in pool[:BORROW_TRIES]:
+        ids, n = {c.id for c in shot.candidates}, 0
+        while f"{shot.id}_{source_value(best)}_b{n}" in ids:
+            n += 1
+        update: dict[str, Any] = {"id": f"{shot.id}_{source_value(best)}_b{n}",
+                                  "flags": sorted(set(best.flags) | {BORROWED_FLAG})}
+        rejudge = not _avoids_covered(shot, donor)
+        if rejudge:
+            update.update(score=None, judge_reason=None, reject_reason=None)
+        added = add_candidates(shot, [best.model_copy(deep=True, update=update)])
+        if not added:
+            continue
+        copy = added[0]
+        if rejudge:
+            _prefilter_and_score([(shot, copy)], ctx, workers=1)
+            if not _shippable(copy, shot):
+                continue
+        ctx.log.info("no own candidate meets the floor, real candidate borrowed from the beat", shot=shot.id,
+                     candidate=copy.id, origin=best.id, score=copy.score, rejudged=rejudge)
+        return [copy]
+    return []
 
 
 def _try_ai(shot: Shot, ctx: Any) -> bool:
     """Generate an AI still (never a segment) unless one was already tried. True when one was added."""
-    if any(c.source == SourceKind.ai_image for c in shot.candidates) or needs_readable_text(shot):
+    if _ai_tried(shot) or needs_readable_text(shot):
         return False
     try:
         add_ai(shot, ctx)
@@ -440,12 +554,13 @@ def _try_ai(shot: Shot, ctx: Any) -> bool:
 
 
 def _ensure_usable(shot: Shot, ctx: Any) -> None:
-    """Never empty: generate an AI still when there is no candidate or only hard rejected ones."""
-    if shot.candidates and any(c.reject_reason is None for c in shot.candidates):
+    """Never empty: generate an AI still when there is no candidate at all (a failure raises).
+
+    Candidates that only fail the floor are handled by _choose, which borrows from the beat first.
+    """
+    if shot.candidates:
         return
-    if any(c.source == SourceKind.ai_image for c in shot.candidates):
-        return  # an AI still was already tried; best available wins
-    ctx.log.info("no usable candidate, generating AI image", shot=shot.id)
+    ctx.log.info("no candidate, generating AI image", shot=shot.id)
     add_ai(shot, ctx)
 
 
@@ -468,22 +583,58 @@ def _diverse(pool: list[Candidate], usage: _Usage, shot: Shot, ctx: Any = None) 
     return pick
 
 
-def _apply(shot: Shot, pick: Candidate, accepted: bool, notes: list[str], repeat: bool = False) -> None:
+def _apply(shot: Shot, pick: Candidate, accepted: bool, notes: list[str], repeat: bool = False,
+           below: bool = False) -> None:
     shot.selected = pick.id
     shot.judge_score = pick.score
     shot.flags = [f for f in shot.flags if f not in SHOT_FLAGS and f != SEGMENT_REPEAT_FLAG]
     if "mock" in pick.flags or JUDGE_MOCK_FLAG in pick.flags:
         shot.flags.append("mock")
-    shot.flags += [f for f in ("low_res", "nc_nd", "anachronism", "standard_youtube_licence") if f in pick.flags]
+    shot.flags += [f for f in ("low_res", "small_archival", "nc_nd", "anachronism", "standard_youtube_licence",
+                               BORROWED_FLAG) if f in pick.flags]
     if accepted:
         shot.flags.append("no_match_accepted")
-    if needs_readable_text(shot) and (accepted or pick.source == SourceKind.ai_image):
+    if needs_readable_text(shot) and (accepted or picture_kind(pick) == AI_PHOTO):
         shot.flags.append(NEEDS_MOTION_FLAG)
     if repeat:
         shot.flags.append(SEGMENT_REPEAT_FLAG)
-    tail = (["best available accepted"] if accepted else []) + (["repeats a used segment"] if repeat else [])
+    if below:
+        shot.flags.append(BELOW_FLOOR_FLAG)
+    tail = (["best available accepted"] if accepted else []) + (["repeats a used segment"] if repeat else []) + \
+        (["nothing met the floor"] if below else [])
     reason = pick.reject_reason or pick.judge_reason or ""
     shot.judge_notes = " | ".join([reason] + notes + tail)
+    sync_type(shot)
+
+
+def sync_type(shot: Shot) -> None:
+    """Leave shot.type consistent with its pick, after any path that changes the pick.
+
+    A photo-style AI pick makes the shot ai_image (ai_video for a clip, a planned ai_video keeps its type
+    until it is animated); designed animation is ai_image plus the designed_animation marker until it
+    has a type of its own; a real pick is footage or image by its media, the overlay variant kept when
+    the shot has an overlay. The overlay spec is never touched. Motion graphics are left alone.
+    """
+    pick = shot.selected_candidate()
+    if pick is None or shot.type == ShotType.motion_graphic:
+        return
+    kind = picture_kind(pick)
+    shot.flags = [f for f in shot.flags if f != DESIGNED_FLAG]
+    if kind == GRAPHIC:
+        return
+    if kind in (AI_PHOTO, DESIGNED):
+        if pick.media == "video" and kind == AI_PHOTO:
+            shot.type = ShotType.ai_video
+        elif shot.type not in AI_TYPES:
+            shot.type = ShotType.ai_image
+        if kind == DESIGNED:
+            shot.flags.append(DESIGNED_FLAG)
+        return
+    overlay = shot.overlay is not None or shot.type in OVERLAY_TYPES
+    if pick.media == "video":
+        shot.type = ShotType.footage_overlay if overlay else ShotType.footage
+    else:
+        shot.type = ShotType.image_overlay if overlay else ShotType.image
 
 
 def _finish_ai_video(shot: Shot, ctx: Any) -> None:
@@ -498,3 +649,4 @@ def _finish_ai_video(shot: Shot, ctx: Any) -> None:
         return
     shot.candidates.append(clip)
     shot.selected = clip.id
+    sync_type(shot)

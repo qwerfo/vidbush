@@ -119,7 +119,7 @@ def test_regenerate_ai_appends_prompt_delta(settings, work, fake_ai):
 
 def test_regenerate_ai_without_delta_always_takes_the_new_batch(settings, work, fake_ai, monkeypatch):
     """An operator reroll overrides the judge: the old pick may be wrong in a way the judge missed."""
-    monkeypatch.setattr("vidbush.judge.judge.score_candidate", lambda shot, cand, ctx, narration="": (40.0, "x", None))
+    monkeypatch.setattr("vidbush.judge.judge.score_candidate", lambda shot, cand, ctx, narration="", spoken="": (40.0, "x", None))
     old = load_shotlist(work).by_id("shot_002").selected
     assert not run(settings, op("regenerate_ai", shot_id="shot_002")).errors
     shot = load_shotlist(work).by_id("shot_002")

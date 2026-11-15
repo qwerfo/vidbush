@@ -22,7 +22,7 @@ from ..config import Settings
 from ..models import Shot, SourceKind, StyleProfile
 from ..util import stable_hash
 
-RENDER_VERSION = "seg-5"
+RENDER_VERSION = "seg-6"
 KB_KEYS = ("zoom0", "zoom1", "x0", "y0", "x1", "y1")
 FP_BLOCK = 1 << 20  # bytes hashed at each end of a file
 _FP_MEMO: dict[tuple[str, int, int], str] = {}

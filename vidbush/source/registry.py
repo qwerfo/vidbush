@@ -463,7 +463,12 @@ MAX_STILL_ASPECT = 2.6  # wider stills (panoramas) lose too much to a 16:9 cover
 
 
 def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Iterable[str] = ()) -> list[Candidate]:
-    """Assign final ids f"{shot.id}_{source}_{n}", extract keyframes, flag low resolution."""
+    """Assign final ids f"{shot.id}_{source}_{n}", extract keyframes, flag low resolution.
+
+    A public domain archival still under 1280 px is flagged small_archival instead of low_res: the judge
+    accepts it down to judge.MIN_ARCHIVAL_WIDTH and the render frames it on a blurred fill, never upscaled.
+    """
+    from ..judge.judge import archival_still
     from .keyframes import extract_keyframes
     used = set(taken)
     counters: dict[str, int] = defaultdict(int)
@@ -485,7 +490,7 @@ def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Ite
                          size=f"{c.width}x{c.height}")
             continue
         if (c.media == "video" and min(c.width, c.height) < 720) or (c.media == "image" and c.width < 1280):
-            c.flags = sorted(set(c.flags) | {"low_res"})
+            c.flags = sorted(set(c.flags) | {"small_archival" if archival_still(c) else "low_res"})
         out.append(c)
     return out
 
