@@ -125,6 +125,21 @@
           ],
           "default": null,
           "title": "Crop"
+        },
+        "brief": {
+          "additionalProperties": true,
+          "title": "Brief",
+          "type": "object"
+        },
+        "prompt": {
+          "default": "",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "checks": {
+          "additionalProperties": true,
+          "title": "Checks",
+          "type": "object"
         }
       },
       "required": [
@@ -197,6 +212,16 @@
           "additionalProperties": true,
           "title": "Payload",
           "type": "object"
+        },
+        "anchor": {
+          "default": "",
+          "title": "Anchor",
+          "type": "string"
+        },
+        "start_at": {
+          "default": 0.0,
+          "title": "Start At",
+          "type": "number"
         }
       },
       "required": [

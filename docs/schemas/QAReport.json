@@ -90,6 +90,28 @@
           ],
           "default": null,
           "title": "Post Render Score"
+        },
+        "on_screen": {
+          "default": "",
+          "title": "On Screen",
+          "type": "string"
+        },
+        "window_text": {
+          "default": "",
+          "title": "Window Text",
+          "type": "string"
+        },
+        "checks_failed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Checks Failed",
+          "type": "array"
+        },
+        "failed": {
+          "default": false,
+          "title": "Failed",
+          "type": "boolean"
         }
       },
       "required": [
@@ -211,6 +233,46 @@
         "type": "string"
       },
       "title": "Standard Youtube Assets",
+      "type": "array"
+    },
+    "overlay_text": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Overlay Text",
+      "type": "object"
+    },
+    "screen_time": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Screen Time",
+      "type": "object"
+    },
+    "screen_time_s": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Screen Time S",
+      "type": "object"
+    },
+    "pct_fail_rendered": {
+      "default": 0.0,
+      "title": "Pct Fail Rendered",
+      "type": "number"
+    },
+    "worst": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Worst",
+      "type": "array"
+    },
+    "summary": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Summary",
       "type": "array"
     }
   },
