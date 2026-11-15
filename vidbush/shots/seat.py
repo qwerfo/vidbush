@@ -37,8 +37,10 @@ DISTANCE_TOLERANCE = 0.25  # a claimed distance further than this from the drawn
 PREVIOUS_CHUNKS = 2
 SUMMARY_FILE = "script_summary.json"
 SUMMARY_MAX_WORDS = 160
-OVERLAY_KINDS = {MotionKind.lower_third, MotionKind.callout, MotionKind.text_overlay, MotionKind.highlight_box,
-                 MotionKind.arrow, MotionKind.map, MotionKind.bar_chart, MotionKind.line_chart}
+# No highlight box or arrow: the seat never sees the picture, so a box or arrow at fixed coordinates points at
+# nothing (run 2 boxed a subscribe button as 'Town'). The kinds still render for old shot lists.
+OVERLAY_KINDS = {MotionKind.lower_third, MotionKind.callout, MotionKind.text_overlay, MotionKind.map,
+                 MotionKind.bar_chart, MotionKind.line_chart}
 
 SUMMARY_SYSTEM = (
     "You summarise documentary scripts for the visual director. Reply with strict JSON only: "
@@ -50,9 +52,11 @@ SUMMARY_SYSTEM = (
 DIRECTOR_RULES = [
     "For every beat give exactly 1 footage idea, 1 still idea and at most 1 motion idea.",
     "footage and still ideas: intent (what is on screen, no purpose clauses), must_show, must_avoid, 2 to 4 "
-    "search queries, most specific first, era correct. Optional overlay: a MotionSpec of an overlay kind, only "
-    "naming or drawing something the narration of that beat supports, with anchor set to the exact narration "
-    "words it belongs to: it appears the moment the narrator says them.",
+    "search queries, most specific first, era correct, and anchor: the exact narration words the picture "
+    "illustrates, because the picture is placed on those words; the two ideas of one beat anchor different "
+    "words. A lower third names only what must_show holds. Optional overlay: a MotionSpec of an overlay "
+    "kind, only naming or drawing something the narration of that beat supports, with anchor set to the "
+    "exact narration words it belongs to: it appears the moment the narrator says them.",
     "On-screen text never repeats the narration, because the captions already show every spoken word. A "
     "callout, text overlay or text card adds what the narrator does not say (a number, date, place or role "
     "label, a unit conversion, the source) or makes the point in different words, in 2 to 6 words. With "
@@ -76,8 +80,11 @@ DIRECTOR_RULES = [
     "In the first 60 seconds prefer footage with real activity (people working, machines, water, traffic): "
     "movement holds attention while the hook is made. opening_safe true only for footage with real activity, "
     "people or movement.",
-    "Use a map when the narration moves between places, so the viewer can follow the geography; a beat that "
-    "only names one place gets a lower third, not a map.",
+    "Plan a map wherever the narration describes a journey or a distance between named places (from X to Y, "
+    "as far as X then on to Y, N miles from X to Y), with the endpoints as from_place and to_place and the "
+    "mode as via, because the viewer follows geography on a map (a route with no line data still shows both "
+    "endpoints); a beat that only names one place gets a lower third, not a map. The code writes the map "
+    "title from what is drawn.",
     "A map names places, never coordinates: markers by place, routes by from_place, to_place and via. The code "
     "looks up every place, draws a route only along real rail, road or river lines (sea and air as a "
     "dashed arc, line tries rail then road) and checks distances itself, and drops anything it cannot find, "
@@ -113,7 +120,7 @@ MOTION_SCHEMA: dict[str, Any] = {
              "duration": "optional seconds, omit to fit the shot",
              "anchor": "overlays: the exact narration words this overlay belongs to"},
     "kinds": {
-        "map": {"center": [9.1, -79.7], "zoom": 6, "title": "Colon to Panama City",
+        "map": {"center": [9.1, -79.7], "zoom": 6,
                 "markers": [{"place": "Colon", "label": "Colon"}],
                 "routes": [{"from_place": "Colon", "to_place": "Panama City", "via": "rail",
                             "label": "Panama Railroad"}],
@@ -125,20 +132,18 @@ MOTION_SCHEMA: dict[str, Any] = {
                       "series": [{"name": "miles", "values": [13000, 5200]}], "units": "miles",
                       "_note": "only numbers that appear in the facts"},
         "line_chart": {"title": "...", "labels": ["1900", "1910", "1920"], "series": [{"values": [1, 2, 3]}]},
-        "number_card": {"number": "5,600", "label": "workers died", "sublabel": "1904 to 1914"},
+        "number_card": {"number": "5,600", "label": "workers died", "sublabel": "1904 to 1914",
+                        "_note": "label required: a bare number says nothing"},
         "title_card": {"title": "Chapter title", "subtitle": ""},
-        "lower_third": {"title": "Name or place", "subtitle": "role or country"},
+        "lower_third": {"title": "Name or place", "subtitle": "a person's role, or empty"},
         "callout": {"title": "2 to 6 words the narration does not say: a fact, number, date, place, unit or "
                              "source, or the point in other words; never the narration's own words",
                     "subtitle": ""},
         "text_overlay": {"title": "1914", "subtitle": "", "position": "upper_left",
                          "_note": "like callout: adds to the narration, never copies it"},
-        "highlight_box": {"x": 0.3, "y": 0.3, "w": 0.4, "h": 0.3, "label": "Gatun Locks"},
-        "arrow": {"x": 0.2, "y": 0.3, "to_x": 0.5, "to_y": 0.5, "label": ""},
     },
     "motion_kinds": ["map", "bar_chart", "line_chart", "number_card", "title_card", "text_overlay", "callout"],
-    "overlay_kinds": ["map", "bar_chart", "line_chart", "lower_third", "callout", "text_overlay", "highlight_box",
-                      "arrow"],
+    "overlay_kinds": ["map", "bar_chart", "line_chart", "lower_third", "callout", "text_overlay"],
     "_overlay_note": "a map or chart overlay is drawn as an inset panel over the footage or still",
 }
 
@@ -182,6 +187,9 @@ def director_ideas(script: Script, spans: dict[str, tuple[float, float]], resear
                                   anchors=anchors_so_far(out, research), next_beat=next_beat(chunks, k))
         try:
             ideas = _chunk_ideas(chunk, script, spans, research, profile, brand, seats, log, context)
+            if not ideas:  # an answer with nothing usable is asked once more before its beats go heuristic
+                log.warn("director answer had no usable ideas, asking once more", beats=len(chunk))
+                ideas = _chunk_ideas(chunk, script, spans, research, profile, brand, seats, log, context)
         except Exception as e:  # noqa: BLE001 - one failed chunk keeps heuristic ideas for its beats
             log.warn("director seat failed for a chunk, using heuristics", beats=len(chunk), error=str(e)[:300])
             errors.append(e)
@@ -364,8 +372,8 @@ def director_prompt(script: Script, spans: dict[str, tuple[float, float]], resea
         "full_screen_card_spacing_s": profile.pacing.card_spacing_s, "motion_spec_schema": MOTION_SCHEMA,
         "rules": DIRECTOR_RULES,
         "output": {"ideas": [{"beat_id": "b001", "family": "footage|still|motion", "intent": "...",
-                              "must_show": [], "must_avoid": [], "queries": [],
-                              "overlay": {"kind": "lower_third", "payload": {"title": "Colon", "subtitle": "Panama"},
+                              "must_show": ["Colon"], "must_avoid": [], "queries": [], "anchor": "reached Colon",
+                              "overlay": {"kind": "lower_third", "payload": {"title": "Colon", "subtitle": ""},
                                           "anchor": "reached Colon"},
                               "motion": None, "priority": 1.0, "opening_safe": True}]},
     }
@@ -417,7 +425,9 @@ def validate_idea(item: Any, beat_ids: set[str], research: Optional[Research],
         return None
     seconds = (lengths or {}).get(str(item.get("beat_id")), 6.0)
     raw_overlay = _with_duration(item.get("overlay"), seconds)
-    body = {**item, "overlay": None, "motion": _with_duration(item.get("motion"), seconds)}
+    # a null or non-text anchor means 'none', never a reason to lose the whole idea
+    anchor = item.get("anchor") if isinstance(item.get("anchor"), str) else ""
+    body = {**item, "overlay": None, "motion": _with_duration(item.get("motion"), seconds), "anchor": anchor}
     try:
         idea = VisualIdea.model_validate(body)
     except (ValidationError, TypeError, ValueError):
@@ -438,7 +448,7 @@ def validate_idea(item: Any, beat_ids: set[str], research: Optional[Research],
         idea.motion = verify_map(idea.motion, idea.intent, narration)
         if idea.motion is None:  # nothing true left on the map: the slot falls back to footage
             return None
-    elif not _payload_ok(idea.motion):
+    elif not _payload_ok(idea.motion) or I.bare_number(idea.motion):
         return None
     if idea.motion.kind in QUOTE_KINDS and I.spec_repeats_narration(idea.motion, narration):
         return None
@@ -534,9 +544,10 @@ def verify_map(spec: MotionSpec, *context: str) -> Optional[MotionSpec]:
     context texts, the intent and beat narration, when the director gives none); a route with an endpoint out
     of view is dropped with its endpoint markers, one with no geometry is dropped and its endpoint markers
     stay. A mode nobody names ('line') tries rail, then road, and is never a straight line over the land; only
-    sea and air are a dashed arc. Arrows carry raw coordinates and are dropped. Distances in labels and the
-    title must match the drawn geometry. Shaded regions must exist in the bundled admin 0 or admin 1 layers;
-    a name a state shares with a country is the one whose box holds a marker or the view center.
+    sea and air are a dashed arc. Arrows carry raw coordinates and are dropped. The title is rebuilt from
+    what is drawn (builders.drawn_title), never the director's words, so it cannot name a place that did not
+    resolve. Distances in labels must match the drawn geometry. Shaded regions must exist in the bundled admin
+    0 or admin 1 layers; a name a state shares with a country is the one whose box holds a marker or the view center.
     source_note is the fixed data source, never model text.
     """
     from ..mg import geo
@@ -546,9 +557,33 @@ def verify_map(spec: MotionSpec, *context: str) -> Optional[MotionSpec]:
     view = _director_view(p)
     refit = view is None
 
-    def resolve(name: Any) -> Optional[geo.GeoHit]:
+    def resolve(name: Any, near: Any = ()) -> Optional[geo.GeoHit]:
         text = str(name or "").strip()
-        return geo.lookup(text.title() if text.isupper() else text) if text else None
+        # small: the director names each map place explicitly, so GNIS towns may answer
+        return geo.lookup(text.title() if text.isupper() else text, near=near, small=True) if text else None
+
+    # A name resolves to the homonym nearest the map's own places (the other names it gives, else its view),
+    # so a small town drawn beside Talkeetna is the Alaska one, not one in another state.
+    named = [m.get("place") or m.get("label") for m in _dicts(p.get("markers"))]
+    named += [r.get(k) for r in _dicts(p.get("routes")) for k in ("from_place", "to_place")]
+    first = [h for h in (resolve(n) for n in named) if h is not None]
+    # the map's other places are the context a homonym is judged by; the view centre only when none resolves
+    near = [(h.lat, h.lon) for h in first] or ([tuple(view[0])] if view else [])
+    _resolve = resolve
+
+    def resolve(name: Any) -> Optional[geo.GeoHit]:  # noqa: F811 - the near-aware resolver every check uses
+        # The plain hit (the well known place) wins unless it is off the director's own view: near only places a
+        # name the plain lookup cannot, or one whose plain hit is off the map. The centre of far apart places is
+        # no place at all (Santa Monica and Jacksonville averaged to Texas and picked the Texas homonyms). A place
+        # beyond NEAR_RADIUS_DEG of a wide view still resolves by its unique name; in_own_view then keeps it only
+        # when it is in view.
+        plain = _resolve(name)
+        if plain is not None and (view is None or b.in_view(view[0], view[1], (plain.lat, plain.lon), safe=False)):
+            return plain
+        if view is not None and sum(b.in_view(view[0], view[1], (h.lat, h.lon), safe=False)
+                                    for h in geo.candidates(str(name or "").strip())) > 1:
+            return None  # two homonyms on this map (Santa Monica, Texas and California): no dot beats a wrong one
+        return _resolve(name, near) or plain
 
     def in_own_view(name: str, hit: Optional[geo.GeoHit]) -> Optional[geo.GeoHit]:
         nonlocal refit
@@ -610,10 +645,9 @@ def verify_map(spec: MotionSpec, *context: str) -> Optional[MotionSpec]:
     shaded = list(dict.fromkeys(n for n in (geo.region_name(str(x), near) for x in regions) if n))
     if not (markers or routes or shaded):
         return None
-    # A distance outside a route label is checked against the one route, else the two markers' separation.
+    # A distance in a marker label is checked against the one route, else the two markers' separation.
     pair = R.miles((markers[0].lat, markers[0].lon), (markers[1].lat, markers[1].lon)) if len(markers) == 2 else None
     measured = lengths[0] if len(routes) == 1 else None if routes else pair
-    title = checked_distance(title, measured)
     for m, name in zip(markers, names):
         m.label = checked_distance(m.label, measured) or name
     content = [(m.lat, m.lon) for m in markers] + [(q[0], q[1]) for r in routes for q in r.points]
@@ -628,7 +662,8 @@ def verify_map(spec: MotionSpec, *context: str) -> Optional[MotionSpec]:
         center, zoom = b.map_view(content)
         zoom_end = round(zoom + delta, 2) if delta is not None else None
     mp = MapPayload(center=center, zoom=zoom, zoom_end=zoom_end, markers=markers, routes=routes, labels=labels,
-                    shaded_regions=shaded, title=title)
+                    shaded_regions=shaded)
+    mp.title = b.drawn_title({**mp.model_dump(), "markers": [{"label": n} for n in names]})  # resolved names
     return spec.model_copy(update={"payload": mp.model_dump(), "source_note": b.MAP_SOURCE})
 
 

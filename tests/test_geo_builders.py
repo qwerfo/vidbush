@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from vidbush.mg import builders as b
-from vidbush.models import MapPayload, MotionKind, MotionSpec
+from vidbush.models import BoxPayload, MapPayload, MotionKind, MotionSpec
 
 NY = ("New York", 40.71, -74.0)
 SF = ("San Francisco", 37.77, -122.42)
@@ -14,8 +14,8 @@ MIRA = ("Miraflores Locks", 8.997, -79.591)
 
 def _all_specs() -> list[MotionSpec]:
     return [
-        b.map_spec([NY, SF], route=True, title="Coast to coast"),
-        b.map_spec([], shaded=["Panama"], title="Panama"),
+        b.map_spec([NY, SF], route=True),
+        b.map_spec([], shaded=["Panama"]),
         b.route_map_spec([[NY, ("Cape Horn", -55.98, -67.27), SF], [NY, ("Colon", 9.36, -79.9), SF]],
                          labels=["Around the Horn", "Through Panama"]),
         b.bar_chart_spec(["Around Cape Horn", "Through Panama"], [13000, 5200], "miles", "Voyage", "Panama Canal", 0),
@@ -25,8 +25,10 @@ def _all_specs() -> list[MotionSpec]:
         b.lower_third_spec("George Goethals", "Chief engineer"),
         b.callout_spec("No pumps. Only gravity."),
         b.text_overlay_spec("1914", position="upper_left"),
-        b.highlight_box_spec(0.2, 0.0, 0.3, 0.9, "Lock gate"),
-        b.arrow_spec(0.1, 0.05, 0.6, 0.99, "Here"),
+        b._spec(MotionKind.highlight_box, 5.0, BoxPayload(x=0.2, y=0.2, w=0.3, h=0.5, label="Lock gate").model_dump(),
+                "documentary_warm", "transparent"),
+        b._spec(MotionKind.arrow, 5.0, BoxPayload(x=0.1, y=0.2, to_x=0.6, to_y=0.8, label="Here").model_dump(),
+                "documentary_warm", "transparent"),
         b.recap_grid_spec(["Hoover Dam", "Erie Canal"]),
     ]
 
@@ -48,13 +50,6 @@ def test_source_notes() -> None:
     assert b.bar_chart_spec(["a", "b"], [1, 2], source_note="").source_note == "Illustrative"
     assert b.bar_chart_spec(["a", "b"], [1, 2], source_note="Panama Canal").source_note == "Source: Panama Canal"
     assert b.map_spec([NY]).source_note.startswith("Map data")
-
-
-def test_safe_area_clamping() -> None:
-    box = b.highlight_box_spec(0.2, 0.0, 0.3, 0.9).typed_payload()
-    assert box.y >= 150 / 1080 - 1e-6 and box.y + box.h <= 930 / 1080 + 1e-6
-    arrow = b.arrow_spec(0.1, 0.05, 0.6, 0.99).typed_payload()
-    assert 150 / 1080 - 1e-6 <= arrow.y and arrow.to_y <= 930 / 1080 + 1e-6
 
 
 def test_map_zoom_from_bbox() -> None:
@@ -115,7 +110,7 @@ def test_recap_grid_carries_numbers() -> None:
 
 
 def test_map_shades_states_from_admin_1() -> None:
-    spec = b.map_spec([], shaded=["Nevada", "Arizona", "Atlantis"], title="Nevada and Arizona")
+    spec = b.map_spec([], shaded=["Nevada", "Arizona", "Atlantis"])
     p = spec.typed_payload()
     assert p.shaded_regions == ["Nevada", "Arizona"] and {lb.text for lb in p.labels} == {"NEVADA", "ARIZONA"}
     assert 30 < p.center[0] < 42 and -120 < p.center[1] < -108 and p.zoom > 3

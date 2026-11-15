@@ -1,6 +1,7 @@
 """A10: no em dash character anywhere in the repository (text files)."""
 from __future__ import annotations
 
+import gzip
 import os
 import subprocess
 
@@ -29,7 +30,8 @@ def test_no_em_dash_in_repo():
     bad = []
     for path in _repo_files():
         try:
-            with open(path, "rb") as fh:
+            # a gzip asset is checked by its content: compressed bytes can hold the three bytes by chance
+            with (gzip.open if path.endswith(".gz") else open)(path, "rb") as fh:
                 if EM in fh.read():
                     bad.append(path)
         except OSError:

@@ -134,18 +134,34 @@ motion stage renders it to `work/mg/<hash>.mp4` and adds a Candidate with
 `shot.overlay`; the motion stage renders it with alpha to
 `work/mg/<hash>.mov` (qtrle, rgba) and sets `shot.overlay_path`. A map or
 chart overlay renders as an inset panel over the picture (`vidbush/mg/inset.py`,
-always the Python renderer). A text overlay (callout, text_overlay,
-lower_third, highlight_box, arrow) carries `anchor` (the narration words it
-belongs to) and `start_at` (seconds into the shot): the director sets
-`start_at` 0.2 s after the anchor is spoken (`rules.time_overlays`), the
-clip renders for `duration - start_at` and the segment overlays it from
-`start_at`. The motion
+always the Python renderer). Every overlay that belongs to words (callout,
+text_overlay, lower_third, number_card, and map and chart insets) carries
+`anchor` (the narration words it belongs to) and `start_at` (seconds into the
+shot): the director sets `start_at` 0.2 s after its content is spoken
+(`ideas.spoken_times`: a text's anchor or title, a number, a map's first
+drawn place, a chart's first number or label; `rules.time_overlays`), with
+2.5 s (text) or 4 s (insets) visible before the cut, else it moves or is
+dropped. The clip renders for `duration - start_at` and the segment overlays
+it from `start_at`. highlight_box and arrow are no longer proposed by the
+director or the heuristics (they never saw the picture); the renderer still
+draws them for old shot lists. Picture ideas carry `VisualIdea.anchor` too:
+`_Assembler.pick` fills a picture slot with the idea whose words are spoken
+in it (`ideas.idea_anchor_time`, `ANCHOR_W`), and every later re-pick goes
+through `_Assembler.choose`. `assembler.map_conflict` is the one spacing and
+novelty test for every map and chart on screen, and `rules.screen_guard`
+runs last over what is visible (text repeats, map_conflict, lower thirds
+only for names in `must_show`, no filler subtitles, one label per name per
+minute). A map title is `builders.drawn_title` (built from what is drawn).
+In `mg/mapdraw.py` one collision set places the credit, marker dots, route
+and marker chips, title, locator (zoom 5 or more) and all labels. The motion
 cache key includes the renderer kind and a renderer version; degraded
 fallback renders are stored under a separate `.fallback` name.
 Data-driven graphics (maps, charts) always draw `source_note` in a corner.
 Palettes: `documentary_warm`, `documentary_cold`, `top10_bold`. Font: Inter
 (bundled in `assets/fonts`, OFL). Maps use Natural Earth data bundled in
-`assets/geo` and never a tile server. Every model-written map (director motion
+`assets/geo` and never a tile server; small US towns a map names explicitly
+resolve from USGS GNIS populated places (`assets/geo/gnis_places.json.gz`,
+public domain, `geo.lookup(..., small=True, near=...)`, never free text). Every model-written map (director motion
 card or inset, editor motion_spec) passes `shots/seat.verify_map`: markers are
 gazetteer places in the map's own view (route endpoints included), routes are
 real geometry from `mg/routes.py`, distances are confirmed by the drawn line,

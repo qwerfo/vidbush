@@ -275,7 +275,8 @@ The overlay shares are a ceiling, not a quota. On-screen text never repeats
 the narration (the captions already show it): a callout or text overlay adds a
 number, date, place or role label, unit conversion or source, or says the
 point in other words, and it appears 0.2 s after the narrator says its anchor
-words, holding at least 1.5 s (about 0.3 s per word). An overlay slot with
+words (or at the next shot's start when the word fell in the last second
+before a cut), holding at least 2.5 s (about 0.3 s per word). An overlay slot with
 nothing honest to show stays plain footage, and a card slot whose beat has
 nothing to draw (or whose card was already shown) becomes footage too.
 `qa_report.md` shows the on-screen text line: verbatim share and the median
@@ -302,6 +303,29 @@ Card length and timing (shots/rules.py):
   background, a map or chart as an inset.
 - Chapter titles are lower thirds on footage, not full screen cards. Call to
   action beats get no card at all.
+
+Pictures, maps and labels follow the words (run 3, shots/assembler.py,
+shots/rules.py, mg/mapdraw.py):
+
+- Every footage and still idea names its `anchor`, the narration words it
+  illustrates. A picture slot shows the idea whose words are spoken in it
+  (either family; the slot keeps its type, so the mix holds). The log line
+  "pictures placed on their words" gives `anchor_misses`.
+- A map or chart, inset or full screen, appears 0.2 s after its first place
+  or number is spoken and stays at least 4 s, or moves or is dropped. At most
+  one map or chart per 15 s, the same map not within 180 s, and a map only
+  when it shows a new place (60 s window), on every path to the screen.
+- Overlays go where their words are, not only to planned overlay slots, up
+  to the profile's overlay share.
+- A map's title is built from what it draws. Title, credit, locator and all
+  labels share one collision check; a close-up map (zoom 5 or more) gets a
+  small locator map. Small US towns resolve from USGS GNIS when a map names
+  them (`assets/geo/gnis_places.json.gz`, rebuild with
+  `E:\coding projects\Vidbush\geo_tools\build_gnis.py`).
+- No free highlight boxes or arrows. A lower third must name something in the
+  shot's `must_show` (chapter titles too), no country or decade
+  subtitles, one label per name per minute. The hook title card is dropped
+  when it repeats the opening line.
 
 `qa_report.md` has an Animation table: cards, shots with an overlay, map and
 chart insets, full screen card time (percent of runtime) and the longest text

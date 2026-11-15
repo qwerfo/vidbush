@@ -1,6 +1,6 @@
 """Heuristic visual ideas from beat text: the deterministic fallback for the director seat.
 
-ideas_for_beat(bc, palette, rng) returns at least one footage and one still
+ideas_for_beat(bc, research, palette) returns at least one footage and one still
 VisualIdea for a beat, plus the motion ideas its concrete nouns, people,
 places, era and numbers support (a call to action beat gets no motion idea).
 Text helpers here are also used by the director to validate model output
@@ -10,12 +10,12 @@ narration and keep it from repeating it.
 from __future__ import annotations
 
 import math
-import random
 import re
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from ..mg.inset import INSET_KINDS
 from ..models import Beat, FactCard, MotionKind, MotionSpec, Research, Scene, ScenePurpose, VisualIdea, Word
 from ..util import no_em_dash
 
@@ -72,7 +72,7 @@ STOP = {"the", "a", "an", "of", "and", "or", "to", "in", "on", "at", "by", "for"
         "these", "those", "again", "still", "even", "very", "much", "many", "such", "own", "suddenly", "during",
         "across", "through", "between", "under", "within", "without", "against", "toward", "towards", "up",
         "down", "out", "off", "until", "since", "because", "though", "although", "among", "per", "will"}
-DISPLAY_NAMES = {"United States of America": "United States", "United Kingdom": "Britain"}
+from ..mg.builders import DISPLAY_NAMES  # noqa: E402 one table for every name shown on screen
 
 
 class NumberMention(BaseModel):
@@ -555,22 +555,25 @@ def person_role(name: str, text: str) -> str:
 
 
 def _named_overlays(bc: BeatContext, ent: BeatEntities, palette: str) -> dict[str, MotionSpec]:
-    """Lower thirds keyed by the name they show: people, and cities or landmarks (never areas)."""
+    """Lower thirds keyed by the name they show: people with their role, and cities or landmarks (never areas)
+    with no subtitle, because a country under a town is filler (run 2 printed 'United States' under five
+    towns)."""
     from ..mg import builders as b
     out: dict[str, MotionSpec] = {}
     for person in ent.people[:2]:
         out[person] = b.lower_third_spec(person, person_role(person, bc.beat.text), palette=palette)
     for name, _la, _lo in ent.places:
         if name not in ent.areas and name not in out:
-            out[name] = b.lower_third_spec(name, _place_sub(name), palette=palette)
+            out[name] = b.lower_third_spec(name, palette=palette)
     return out
 
 
-def overlay_options(bc: BeatContext, ent: BeatEntities, palette: str, rng: random.Random) -> list[MotionSpec]:
+def overlay_options(bc: BeatContext, ent: BeatEntities, palette: str) -> list[MotionSpec]:
     """Generic overlays any footage or still of the beat can carry, best first (no named lower thirds).
 
-    Labels only (a year, a noun): a heuristic cannot paraphrase, and a clause of the narration on screen
-    repeats what the captions already show."""
+    Labels only (a year): a heuristic cannot paraphrase, and a clause of the narration on screen repeats what
+    the captions already show. No highlight box or arrow: a heuristic never sees the picture, so a box at
+    fixed coordinates points at nothing."""
     from ..mg import builders as b
     out: list[MotionSpec] = []
     if CTA_RE.search(bc.beat.text):
@@ -578,12 +581,6 @@ def overlay_options(bc: BeatContext, ent: BeatEntities, palette: str, rng: rando
     for y in ent.years[:1]:
         sub = next((p[0] for p in ent.places if p[0] not in ent.areas), "")
         out.append(b.text_overlay_spec(str(y), position="upper_left", subtitle=sub, palette=palette))
-    roll = rng.random()
-    if roll < 0.12 and ent.nouns:
-        out.append(b.highlight_box_spec(0.3 + rng.random() * 0.2, 0.3, 0.32, 0.3, ent.nouns[0].title(),
-                                        palette=palette))
-    elif roll < 0.2 and ent.nouns:
-        out.append(b.arrow_spec(0.2, 0.3, 0.45 + rng.random() * 0.15, 0.5, ent.nouns[0].title(), palette=palette))
     return out
 
 
@@ -598,7 +595,7 @@ def overlay_choices(bc: BeatContext, palette: str, must_show: list[str]) -> list
     named = _named_overlays(bc, ent, palette)
     shown = {m.lower() for m in must_show}
     first = [spec for name, spec in named.items() if name.lower() in shown]
-    return first + overlay_options(bc, ent, palette, random.Random(bc.beat.id))
+    return first + overlay_options(bc, ent, palette)
 
 
 PREPOSITIONS = {
@@ -622,20 +619,14 @@ def _prep(place: str) -> str:
     return prep.replace(" the", "") if place.lower().startswith("the ") else prep
 
 
-def _place_sub(name: str) -> str:
-    from ..mg import geo
-    hit = geo.lookup(name)
-    if hit is None or not hit.country or hit.country == name:
-        return ""
-    return "United States" if hit.country == geo.US else hit.country
-
-
 # ---------------------------------------------------------------- on-screen text against the narration
 
 TEXT_OVERLAY_KINDS = {MotionKind.callout, MotionKind.text_overlay, MotionKind.lower_third, MotionKind.highlight_box,
                       MotionKind.arrow}
 ANCHOR_LEAD_S = 0.2  # a text overlay appears this long after its anchor's first word starts
-READ_MIN_S = 1.5
+TEXT_LATE_S = 1.0  # a word spoken this close before a cut may show its text at the next shot's start
+READ_MIN_S = 2.5  # text on screen for less than this flashes past unread: it moves to a shot that holds it
+INSET_HOLD_S = 4.0  # a map or chart inset needs this long on screen to be read
 READ_PER_WORD_S = 0.3
 REPEAT_WINDOW_S = 8.0  # narration this close to on-screen text counts when checking for repeats
 NAME_TOKENS = 3  # texts this short (names, places, years, labels) never count as repeating the narration
@@ -684,37 +675,158 @@ def overlay_title(spec: MotionSpec) -> str:
 
 
 def read_seconds(spec: MotionSpec) -> float:
-    """Reading time of an overlay's text: at least READ_MIN_S, about READ_PER_WORD_S per word."""
+    """Time an overlay needs on screen: INSET_HOLD_S for a map or chart inset, else the reading time of its
+    text (at least READ_MIN_S, about READ_PER_WORD_S per word)."""
+    if spec.kind in INSET_KINDS:
+        return INSET_HOLD_S
     text = f"{overlay_title(spec)} {spec.payload.get('subtitle') or ''}"
     return max(READ_MIN_S, READ_PER_WORD_S * len(text.split()))
 
 
-def anchor_time(anchor: str, words: list[Word], lo: float, hi: float) -> Optional[float]:
-    """Start of the narration word where the anchor is spoken, among words starting in [lo, hi]; None when
-    it is not. The match holds the most of the anchor's content words (at least half) within its length
-    plus two tokens; the earliest best match wins. A word is matched by its own tokens (Nenana's, dog-sled)."""
-    toks = norm_tokens(anchor)
+def phrase_times(phrase: str, words: list[Word]) -> list[float]:
+    """Starts of the words where a phrase is spoken, best matches only: a match holds the most of the phrase's
+    content words (at least half) within its length plus two tokens. A word is matched by its own tokens
+    (Nenana's, dog-sled)."""
+    toks = norm_tokens(phrase)
     want = {t for t in toks if t not in STOP} or set(toks)
-    if not want:
-        return None
-    span = [(w.start, t) for w in words if lo <= w.start <= hi for t in norm_tokens(w.text)]
-    best: Optional[tuple[int, float]] = None
+    span = [(w.start, t) for w in words for t in norm_tokens(w.text)]
+    hits: list[tuple[int, float]] = []
     for i, (start, tok) in enumerate(span):
-        if tok not in want:
-            continue
-        got = len(want & {t for _s, t in span[i:i + len(toks) + 2]})
-        if got >= max(1, math.ceil(0.5 * len(want))) and (best is None or got > best[0]):
-            best = (got, start)
-    return best[1] if best else None
+        if tok in want:
+            got = len(want & {t for _s, t in span[i:i + len(toks) + 2]})
+            if got >= max(1, math.ceil(0.5 * len(want))):
+                hits.append((got, start))
+    best = max((g for g, _s in hits), default=0)
+    return sorted({t for g, t in hits if g == best})
+
+
+def anchor_time(anchor: str, words: list[Word], lo: float, hi: float) -> Optional[float]:
+    """Start of the narration word where the anchor is spoken, among words starting in [lo, hi] (the earliest
+    best match, phrase_times); None when it is not."""
+    times = phrase_times(anchor, [w for w in words if lo <= w.start <= hi])
+    return times[0] if times else None
+
+
+_SAID_NUMBER_RE = re.compile(r"\$?(\d[\d,]*(?:\.\d+)?)\s*(?:%|percent)?")
+
+
+def _said_word(word: str) -> str:
+    return re.sub(r"'s$", "", word.lower().strip(".,;:!?\"'()[]"))
+
+
+def number_times(value: float, words: list[Word]) -> list[float]:
+    """Starts of the words that say a number: digits, a year read aloud or a spelled out count (up to four
+    words)."""
+    out: list[float] = []
+    for i, w in enumerate(words):
+        for n in range(1, 5):
+            said = _SAID_NUMBER_RE.fullmatch(spelled_to_digits(" ".join(_said_word(x.text) for x in words[i:i + n])))
+            if said and float(said.group(1).replace(",", "")) == value:
+                out.append(w.start)
+                break
+    return out
+
+
+def drawn_names(spec: MotionSpec) -> list[str]:
+    """What a map draws, in order: its anchor when set, marker labels, route endpoints, label texts and
+    shaded regions (the names the narration can speak)."""
+    p = spec.payload
+    names = [spec.anchor] + [m.get("label", "") for m in p.get("markers") or []]
+    names += [r.get(k, "") for r in p.get("routes") or [] for k in ("from_place", "to_place")]
+    names += [lb.get("text", "") for lb in p.get("labels") or []] + list(p.get("shaded_regions") or [])
+    return list(dict.fromkeys(str(n).strip() for n in names if n and str(n).strip()))
+
+
+def spoken_times(spec: MotionSpec, words: list[Word]) -> list[float]:
+    """When a spec's content is spoken, sorted: the one timing test for overlays and full screen cards alike,
+    because a graphic belongs to the words that say what it shows. A number card by its number, a map by any
+    of its drawn places (drawn_names), a chart by any of its numbers or labels (its anchor first), a text
+    overlay or card by its anchor (the seat's words), else its title."""
+    p = spec.payload
+    if spec.kind == MotionKind.number_card:
+        m = re.search(r"\d[\d,]*(?:\.\d+)?", str(p.get("number", "")))
+        return number_times(float(m.group(0).replace(",", "")), words) if m else []
+    if spec.kind == MotionKind.map:
+        return sorted({t for name in drawn_names(spec) for t in phrase_times(name, words)})
+    if spec.kind in (MotionKind.bar_chart, MotionKind.line_chart):
+        values = [float(v) for sr in p.get("series") or [] for v in sr.get("values") or []]
+        names = [spec.anchor] + [str(x) for x in p.get("labels") or []]
+        return sorted({t for v in values for t in number_times(v, words)}
+                      | {t for n in names if n for t in phrase_times(n, words)})
+    return phrase_times(spec.anchor or overlay_title(spec), words)
 
 
 def overlay_start(spec: MotionSpec, words: list[Word], start: float, end: float) -> Optional[float]:
-    """Seconds into the shot [start, end] where a text overlay appears: ANCHOR_LEAD_S after its anchor (the
-    seat's anchor, else its title) is spoken, with its reading time left before the cut. None when the shot
-    does not hold that moment."""
-    t = anchor_time(spec.anchor or overlay_title(spec), words, start - ANCHOR_LEAD_S,
-                    end - read_seconds(spec) - ANCHOR_LEAD_S)
-    return None if t is None else round(max(0.0, t + ANCHOR_LEAD_S - start), 3)
+    """Seconds into the shot [start, end] where an overlay (text, or a map or chart inset) appears:
+    ANCHOR_LEAD_S after its content is first spoken (spoken_times), with read_seconds left before the cut. A
+    word spoken at most TEXT_LATE_S before the shot starts shows at the shot start, because a word late in the
+    previous shot leaves it too little time to read and text a moment after its word still reads as its own
+    (run 2 landed at 0.2 to 0.84 s). None when the shot does not hold that moment."""
+    lo, hi = start - TEXT_LATE_S, end - read_seconds(spec) - ANCHOR_LEAD_S
+    times = spoken_times(spec, [w for w in words if lo <= w.start <= hi])
+    return round(max(0.0, times[0] + ANCHOR_LEAD_S - start), 3) if times else None
+
+
+# ---------------------------------------------------------------- labels against the picture
+
+LABEL_REPEAT_S = 60.0  # one label per name per minute: a name shown again so soon is noise
+
+
+def label_key(text: str) -> str:
+    """A name normalised for comparison (case, possessives, punctuation)."""
+    return " ".join(norm_tokens(text))
+
+
+def _holds_words(a: str, b: str) -> bool:
+    return bool(a) and bool(b) and f" {b} " in f" {a} "
+
+
+def label_ok(spec: Optional[MotionSpec], must_show: list[str]) -> bool:
+    """A lower third is allowed only on a shot whose must_show names what it names: the label's last word (a
+    surname, the head of a place name) is a whole word of a must_show item, any case. A name on screen tells the
+    viewer what the picture is, and no name list can tell a person from a phrase, so every lower third, a
+    chapter title included, follows this (run 2 put 'Fort Worth' over Manhattan and 'Cathy Parker' over
+    linemen; a must_show 'coast' never licenses 'Coast Guard'). Other overlays pass."""
+    if spec is None or spec.kind != MotionKind.lower_third:
+        return True
+    words = label_key(overlay_title(spec)).split()
+    return bool(words) and any(_holds_words(label_key(m), words[-1]) for m in must_show)
+
+
+def filler_subtitle(text: str) -> bool:
+    """A subtitle that adds nothing under a name: only a country, or only a decade or year ('1950s', '2010S').
+    A person's role is not filler."""
+    from ..mg import geo
+    t = text.strip()
+    if not t:
+        return False
+    hit = geo.lookup(t)
+    return bool(re.fullmatch(r"\d{4}s?", t, re.I)) or t in DISPLAY_NAMES.values() or bool(hit and hit.kind == "country")
+
+
+def bare_number(spec: Optional[MotionSpec]) -> bool:
+    """A number card with no label: a number on screen says nothing without what it counts (run 2 showed a
+    bare '10'), so it is never used."""
+    return spec is not None and spec.kind == MotionKind.number_card and not str(spec.payload.get("label") or "").strip()
+
+
+_STYLE_WORDS = {"footage", "archival", "photograph", "photographs", "documentary", "historical", "establishing",
+                "portrait", "detail", "close", "wide", "image", "shot", "still", "aerial", "vintage", "cinematic",
+                "medium", "framing", "painting", "showing", "shows"}
+
+
+def idea_anchor_time(idea: VisualIdea, words: list[Word], span: tuple[float, float]) -> Optional[float]:
+    """When a picture's content is spoken inside its beat span: the idea's anchor (the seat's words), else the
+    earliest spoken must_show item, else the earliest spoken content word of its intent (style words such as
+    'archival footage' skipped); None when nothing resolves. A picture belongs to the words it illustrates,
+    and heuristic ideas get their anchor this way for free."""
+    inside = [w for w in words if span[0] - 1e-6 <= w.start <= span[1] + 1e-6]
+    intent = [w for w in _WORD_RE.findall(idea.intent) if w.lower() not in STOP | _STYLE_WORDS and len(w) > 3]
+    for tier in ([idea.anchor] if idea.anchor else [], idea.must_show, intent):
+        times = [t for text in tier for t in phrase_times(text, inside)[:1]]
+        if times:
+            return min(times)
+    return None
 
 
 def spoken_near(words: list[Word], t: float, window: float = REPEAT_WINDOW_S) -> str:
@@ -740,11 +852,14 @@ _FROM_TO_RE = re.compile(r"\bfrom\s+" + _NAME + r"\s+to\s+" + _NAME)
 _BETWEEN_RE = re.compile(r"\bbetween\s+" + _NAME + r"\s+and\s+" + _NAME)
 
 
-def _point(name: str) -> Optional[tuple[str, float, float]]:
-    """A city or landmark with one location (never a country, state, continent or sea)."""
+def _point(name: str, near: Optional[tuple[str, float, float]] = None) -> Optional[tuple[str, float, float]]:
+    """A city or landmark with one location (never a country, state, continent or sea). With near (the
+    journey's other endpoint), a small GNIS town beside it may answer: narration is free text, so a small
+    place resolves only next to a Natural Earth endpoint, never two common words (the President and the
+    Captain) on their own."""
     from ..mg import geo
     name = re.sub(r"^the\s+", "", name.strip(), flags=re.I)
-    hit = geo.lookup(name)
+    hit = geo.lookup(name) or (geo.lookup(name, near=[near[1:]], small=True) if near else None)
     if hit is None or geo.is_area(hit.name):
         return None
     return DISPLAY_NAMES.get(hit.name, hit.name), hit.lat, hit.lon
@@ -763,6 +878,7 @@ def travel_route(text: str) -> Optional[list[tuple[str, float, float]]]:
             if not m or (need_verb and not TRAVEL_RE.search(sent)):
                 continue
             a, b = _point(m.group(1)), _point(m.group(2))
+            a, b = a or (_point(m.group(1), b) if b else None), b or (_point(m.group(2), a) if a else None)
             if a and b and a[0] != b[0]:
                 return [a, b]
     return None
@@ -770,7 +886,9 @@ def travel_route(text: str) -> Optional[list[tuple[str, float, float]]]:
 
 def map_idea(bc: BeatContext, ent: BeatEntities, palette: str) -> Optional[VisualIdea]:
     """Route map for a real journey between two points (real geometry for the travel mode the beat names, else
-    markers only), else markers on the named points with areas labelled."""
+    markers only), else markers on the named points with areas labelled. Only when the beat moves between
+    places (a journey, two or more points or two or more areas): a beat that names one place gets a lower
+    third, not a map, the same rule the director seat follows (run 2's heuristic mapped every named place)."""
     from ..mg import builders as b
     from ..mg.routes import infer_via
     if not ent.places:
@@ -778,17 +896,16 @@ def map_idea(bc: BeatContext, ent: BeatEntities, palette: str) -> Optional[Visua
     route = travel_route(bc.beat.text)
     points = route or [p for p in ent.places if p[0] not in ent.areas]
     shaded = [a for a in ent.areas][:3]
+    if not route and len(points) < 2 and len(shaded) < 2:
+        return None
     if route:
-        title = f"{route[0][0]} to {route[-1][0]}"
         intent = f"Map tracing the route from {route[0][0]} to {route[-1][0]}."
+    elif points:
+        intent = f"Map pushing in on {points[0][0]}" + (f", with {_join(shaded)} shaded." if shaded else ".")
     else:
-        title = points[0][0] if points else _join(shaded)
-        if points:
-            intent = f"Map pushing in on {title}" + (f", with {_join(shaded)} shaded." if shaded else ".")
-        else:
-            intent = f"Map pushing in with {title} shaded."
+        intent = f"Map pushing in with {_join(shaded)} shaded."
     via = infer_via(bc.beat.text) if route else "line"
-    spec = b.map_spec(points[:6], route=bool(route), shaded=shaded, title=title, palette=palette, via=via)
+    spec = b.map_spec(points[:6], route=bool(route), shaded=shaded, palette=palette, via=via)
     return _motion_idea(bc, spec, intent, 0.95)
 
 
@@ -967,11 +1084,12 @@ def number_sublabel(m: NumberMention, text: str) -> str:
 
 def number_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research], palette: str) -> Optional[VisualIdea]:
     """Number card for the most striking number (count up) or, failing that, the year. Years read aloud count
-    as years (spoken_years), never as a quantity."""
+    as years (spoken_years), never as a quantity. A number that is part of a name (in_name) and a card with
+    no label (bare_number) are skipped; a number with a unit (260 miles) is a quantity, never a name."""
     from ..mg import builders as b
     facts = research.facts if research else []
     text = spoken_years(bc.beat.text)
-    numbers = [n for n in extract_numbers(text) if not n.is_year]
+    numbers = [n for n in extract_numbers(text) if not n.is_year and (n.unit or not in_name(n.raw, text))]
     years = extract_years(text)
     if numbers:
         cited = [m for m in numbers if not facts or number_is_cited(m.value, facts)]
@@ -982,23 +1100,36 @@ def number_idea(bc: BeatContext, ent: BeatEntities, research: Optional[Research]
         spec = b.number_card_spec(b.format_number(m.value, m.unit), label=label,
                                   sublabel=number_sublabel(m, text), count_up=True, palette=palette,
                                   source_note=b.source_note_for(src.source_title) if src else "")
-        return _motion_idea(bc, spec, f"Number card: {m.raw} {label}.".replace("  ", " "), 0.85)
+        if not bare_number(spec):
+            return _motion_idea(bc, spec, f"Number card: {m.raw} {label}.".replace("  ", " "), 0.85)
     if years:
         words = ent.phrase.split()[:6]
         while words and words[-1].lower() in STOP:
             words.pop()
         spec = b.number_card_spec(str(years[0]), label=" ".join(words), count_up=False, palette=palette)
-        return _motion_idea(bc, spec, f"Year card: {years[0]}.", 0.6)
+        return None if bare_number(spec) else _motion_idea(bc, spec, f"Year card: {years[0]}.", 0.6)
     return None
+
+
+def in_name(raw: str, text: str) -> bool:
+    """True when a number is part of a name: its digits or number word come right after a capitalised word
+    that does not start the sentence and is no possessive ('Interstate Ten', 'Apollo 11'; not "Togo's 260").
+    A name's number is no quantity to show."""
+    digits = spelled_to_digits(text)
+    for m in re.finditer(r"([A-Za-z][\w'-]*)\s+" + re.escape(raw) + r"(?![\d,.]\d)", digits):
+        before = digits[:m.start()].rstrip()
+        possessive = m.group(1).lower().endswith(("'s", "s'"))
+        if m.group(1)[0].isupper() and not possessive and before and before[-1] not in ".!?:":
+            return True
+    return False
 
 
 # ---------------------------------------------------------------- per beat
 
-def _attach_overlays(bc: BeatContext, ent: BeatEntities, ideas: list[VisualIdea], palette: str,
-                     rng: random.Random) -> None:
+def _attach_overlays(bc: BeatContext, ent: BeatEntities, ideas: list[VisualIdea], palette: str) -> None:
     """Each overlay goes to at most one footage and one still idea; named lower thirds only where shown."""
     named = _named_overlays(bc, ent, palette)
-    generic = overlay_options(bc, ent, palette, rng)
+    generic = overlay_options(bc, ent, palette)
     for family in ("footage", "still"):
         used: set[int] = set()
         for idea in (i for i in ideas if i.family == family):
@@ -1010,8 +1141,7 @@ def _attach_overlays(bc: BeatContext, ent: BeatEntities, ideas: list[VisualIdea]
                 idea.overlay = spec
 
 
-def ideas_for_beat(bc: BeatContext, research: Optional[Research], palette: str,
-                   rng: random.Random) -> list[VisualIdea]:
+def ideas_for_beat(bc: BeatContext, research: Optional[Research], palette: str) -> list[VisualIdea]:
     """All heuristic ideas for one beat; always includes footage and still, motion when the beat supports one.
 
     Call-to-action beats get plain footage and stills only: no overlay and no card. The first beat of a
@@ -1024,9 +1154,9 @@ def ideas_for_beat(bc: BeatContext, research: Optional[Research], palette: str,
     still = still_ideas(bc, ent)
     if CTA_RE.search(bc.beat.text):
         return foot + still
-    _attach_overlays(bc, ent, foot + still, palette, rng)
+    _attach_overlays(bc, ent, foot + still, palette)
     if bc.first_in_scene and bc.scene.purpose != ScenePurpose.hook and foot:
-        foot[0].overlay = b.lower_third_spec(bc.scene.title, era_label(bc.era) if bc.era else "", palette=palette)
+        foot[0].overlay = b.lower_third_spec(bc.scene.title, palette=palette)  # no era filler
     motion = [x for x in (chart_idea(bc, ent, research, palette), line_idea(bc, ent, research, palette),
                           map_idea(bc, ent, palette), number_idea(bc, ent, research, palette)) if x]
     return foot + still + motion

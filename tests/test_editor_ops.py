@@ -194,8 +194,9 @@ def test_change_type_to_footage_resources_and_judges(settings, work, monkeypatch
 def test_set_and_remove_overlay(settings, work):
     spec = {"kind": "callout", "payload": {"title": "Opened 1914", "position": "upper_left"},
             "anchor": "canal opened"}
-    res = run(settings, op("set_overlay", shot_id="shot_001", motion_spec=spec),
-              op("remove_overlay", shot_id="shot_004"))
+    # shot_001 grows to 4 s first: on-screen text needs ideas.READ_MIN_S (2.5 s) visible after its words
+    res = run(settings, op("set_duration", shot_id="shot_001", seconds=4.0),
+              op("set_overlay", shot_id="shot_001", motion_spec=spec), op("remove_overlay", shot_id="shot_004"))
     assert not res.errors, res.errors
     sl = load_shotlist(work)
     s1, s4 = sl.by_id("shot_001"), sl.by_id("shot_004")
@@ -405,6 +406,7 @@ def test_rewrite_beat_times_its_overlays_to_the_new_words(settings, work, monkey
                for k, t in enumerate("Panama took thousands of lives".split())]
         return narration.model_copy(update={"words": sorted(words + new, key=lambda w: w.start)})
 
+    monkeypatch.setattr("vidbush.shots.ideas.READ_MIN_S", 1.5)  # this test is about re-timing; shot_003 is 2 s
     sl = load_shotlist(work)
     sl.by_id("shot_004").overlay.payload["title"] = "Colon"  # never said in the new beat
     (work / "shotlist.json").write_text(sl.model_dump_json(), encoding="utf-8")

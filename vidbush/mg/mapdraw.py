@@ -8,7 +8,7 @@ Performance: the static map (water, graticule, coast halo, land with texture,
 borders, lakes, rivers, shaded regions) is drawn once into a base image at
 the resolution needed for the deepest zoom of the push-in. Each frame is one
 affine warp of that base plus the animated parts (routes, arrows, markers,
-labels, title), vignette and grain.
+labels and river names, title, locator), vignette and grain.
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from . import easing as ez
 from .palettes import RGB, mix
 from .textdraw import (
     CompBase,
+    _round_rect_mask,
     GlowLayer,
     Grain,
     Sprite,
@@ -48,9 +49,13 @@ GEO_DIR = Path(REPO_ROOT) / "assets" / "geo"
 ADMIN1 = "ne_50m_admin_1_states_provinces.geojson"
 RIVERS = "ne_50m_rivers_lake_centerlines.geojson"
 RIVER_RANK = 6  # only major rivers are drawn, at every zoom, so a minor one never reads as a route
+RIVER_ZOOM = 3.5  # rivers and their names from this zoom
 STATE_ZOOM = 3.5  # state and province borders from this zoom
 CONTEXT_ZOOM = 5.0  # faint roads and railways from this (regional) zoom
+LOCATOR_ZOOM = 5.0  # a view this close (under about 22 degrees of longitude) gets a locator map
+LOCATOR_STEPS = 3.0  # the locator spans 2**3 = 8 times the view, so the view reads as a small box in context
 Ring = np.ndarray  # (n, 2) lon, lat
+Box = tuple[float, float, float, float]  # x0, y0, x1, y1 in frame pixels
 
 
 # ---------------------------------------------------------------- data
@@ -75,6 +80,11 @@ def load_layer(name: str) -> list[tuple[dict, list[Ring]]]:
             continue
         out.append((f.get("properties") or {}, [np.asarray(r, np.float64)[:, :2] for r in rings if len(r) > 1]))
     return out
+
+
+def major_rivers() -> list[tuple[dict, list[Ring]]]:
+    """River features drawn on a map: RIVER_RANK and above."""
+    return [f for f in load_layer(RIVERS) if (f[0].get("scalerank") or 9) <= RIVER_RANK]
 
 
 def _names(props: dict) -> set[str]:
@@ -228,27 +238,9 @@ class MapBase:
             fill_poly(img, lakes, mix(water, (255, 255, 255), 0.06))
             for r in lakes:
                 polyline(img, r, mix(water, pal.rgb("text"), 0.25), max(1.0, 1.2 * self.k))
-        if z >= 3.5:
-            layer = [f for f in load_layer(RIVERS) if (f[0].get("scalerank") or 9) <= RIVER_RANK]
-            for r in self.rings(layer):
+        if z >= RIVER_ZOOM:
+            for r in self.rings(major_rivers()):
                 polyline(img, r, mix(water, pal.rgb("land"), 0.15), max(1.0, 1.6 * self.k))
-            self._river_labels(img, layer)
-
-    def _river_labels(self, img: np.ndarray, layer: list[tuple[dict, list[Ring]]]) -> None:
-        """Each drawn river gets a small name label on the middle of its longest visible stretch."""
-        pal, m = self.c.pal, 40 * self.k
-        for props, rings in layer:
-            name = props.get("name") or props.get("name_en")
-            inside = [r[(r[:, 0] > m) & (r[:, 0] < self.bw - m) & (r[:, 1] > m) & (r[:, 1] < self.bh - m)]
-                      for r in self.rings([(props, rings)])]
-            best = max(inside, key=len, default=np.zeros((0, 2)))
-            if not name or len(best) < 4:
-                continue
-            spr = halo_text(str(name), max(8, int(round(20 * self.k))), "Medium",
-                            mix(pal.rgb("water"), pal.rgb("text"), 0.55), pal.rgb("land"), 0.04,
-                            max(2, int(round(3 * self.k))))
-            x, y = best[len(best) // 2]
-            blit(img, spr, x - spr.w / 2, y + 6 * self.k)
 
     def _context_lines(self, img: np.ndarray) -> None:
         """Faint state and province borders when zoomed in, faint roads and railways at regional zooms."""
@@ -436,7 +428,8 @@ class MapComp(CompBase):
         self.arrow_pills = [pill(a.label, rf, pal.rgb("panel_text"), pal.rgb("panel"), self.px(12), self.px(7))
                             if a.label else None for a, _ in self.arrows]
         self.title = self._title_sprite()
-        self.offsets = self._place_labels()
+        self.locator = self._locator_sprite() if min(self.z0, self.z1) >= LOCATOR_ZOOM else None
+        self._layout()
 
     def _title_sprite(self) -> Optional[Sprite]:
         if not self.p.title:
@@ -445,28 +438,199 @@ class MapComp(CompBase):
         return pill(ln[0], f, self.pal.rgb("panel_text"), self.pal.rgb("panel"), self.px(24), self.px(14),
                     0.08 * f.size, accent=self.pal.rgb("accent"))
 
-    def _place_labels(self) -> list[tuple[float, float]]:
-        """Pick a side per marker label (right, left, above, below) avoiding overlaps at the final zoom."""
-        placed: list[tuple[float, float, float, float]] = []
+    def _locator_sprite(self) -> Sprite:
+        """Locator: the area LOCATOR_STEPS zoom steps wider than the final view, same centre, view outlined.
+
+        A close-up map of plain land with a few dots says nothing about where on Earth it is; a small map of
+        country and state outlines around it with the view drawn as a box does.
+        """
+        pal = self.pal
+        lw, lh = self.px(300), self.px(190)
+        zl = max(1.0, self.z1 - LOCATOR_STEPS)
+        proj = Projection(-self.proj.cv * self.proj.coslat, self.proj.cu, lw, lh)
+        s = proj.scale(zl)
+        half = lw / 2 / s * 1.05
+
+        def rings(layer: list[tuple[dict, list[Ring]]]) -> list[np.ndarray]:
+            out = []
+            for _, rs in layer:
+                for r in rs:
+                    for sh in _shifts(r, proj.cu, half):
+                        q = proj.ring_px(r, s, lw, lh, sh)
+                        if q[:, 1].max() >= 0 and q[:, 1].min() <= lh:
+                            out.append(q)
+            return out
+        img = np.empty((lh, lw, 3), np.uint8)
+        img[...] = pal.rgb("water")
+        land = rings(load_layer("ne_110m_admin_0_countries.geojson"))
+        fill_poly(img, land, pal.rgb("land"))
+        if zl >= STATE_ZOOM - 1:
+            for r in rings(load_layer(ADMIN1)):
+                polyline(img, r, mix(pal.rgb("land"), pal.rgb("land_border"), 0.4), 1.0)
+        for r in land:
+            polyline(img, r, pal.rgb("land_border"), max(1.0, self.px(1.5)))
+        vw = max(self.px(14), self.W / self.proj.scale(self.z1) * s)
+        vh = max(self.px(9), self.H / self.proj.scale(self.z1) * s)
+        box = np.array([[-vw, -vh], [vw, -vh], [vw, vh], [-vw, vh]]) / 2 + [lw / 2, lh / 2]
+        polyline(img, box, pal.rgb("panel"), max(3, self.px(6)), closed=True)
+        polyline(img, box, pal.rgb("accent"), max(2, self.px(3)), closed=True)
+        mask = _round_rect_mask(lw, lh, max(2, self.px(10))).astype(np.float32) / 255.0
+        edge = mask - cv2.erode(mask, np.ones((3, 3), np.uint8), iterations=max(1, self.px(2)))
+        panel = np.array(pal.rgb("panel"), np.float32)
+        rgb = img.astype(np.float32) * (1 - edge[..., None]) + panel * edge[..., None]
+        arr = np.empty((lh, lw, 4), np.uint8)
+        arr[..., :3] = np.clip(rgb * mask[..., None], 0, 255).astype(np.uint8)
+        arr[..., 3] = np.clip(mask * 255, 0, 255).astype(np.uint8)
+        return Sprite(arr)
+
+    # ------------------------------------------------------------ layout: one collision set
+
+    def _layout(self) -> None:
+        """Place every piece of text and chrome through one collision set, in priority order.
+
+        No text may sit on top of other text, and a label that cannot be read is not drawn. Fixed reservations
+        come first: the source credit, the marker dots, the route and arrow chips (above their point, else
+        below), the marker chips and the route line, then the title chip and the locator, each in the first
+        clear corner. Then free labels, region labels, river names. A label that overlaps anything already
+        placed tries its next candidate position; free, region and river labels with no free candidate are
+        skipped (a marker chip, route chip or arrow chip keeps its first side, since its name is the content).
+        Each river name is drawn at most once. Map-anchored boxes are tested at the start, middle and end zoom of
+        the push-in against what sits there at that zoom, so they stay clear for the whole shot.
+        """
+        self.zs = sorted({self.z0, (self.z0 + self.z1) / 2, self.z1})
+        self.taken: list[list[Box]] = [[] for _ in self.zs]  # boxes placed so far, per tested zoom
+        self.note_xy = (0.0, 0.0)
+        if self._note is not None:
+            self.note_xy = (self.W - self.margin * 0.55 - self._note.w, self.safe_bottom - self._note.h - self.px(14))
+            self._take([_box(self.note_xy, self._note)] * len(self.zs))
+        r = self.px(16)
+        for _, uv in self.markers:
+            self._take([(x - r, y - r, x + r, y + r) for x, y in self._at(uv)])
+        # route and arrow chips go in with the marker chips, which then route around them: reserved after every
+        # marker chip, a route chip covered the chip of a place near the route's midpoint
+        self.route_offs = [self._chip(path_prefix(uv, 0.5)[-1:], spr)
+                           for spr, (_, uv) in zip(self.route_pills, self.routes)]
+        self.arrow_offs = [self._chip(uv[:1], spr) for spr, (_, uv) in zip(self.arrow_pills, self.arrows)]
+        self.offsets = []
         r = self.px(22)
-        offsets = []
-        for (m, uv), spr in zip(self.markers, self.marker_pills):
+        for (_, uv), spr in zip(self.markers, self.marker_pills):
             if spr is None:
-                offsets.append((0.0, 0.0))
+                self.offsets.append((0.0, 0.0))
                 continue
-            x, y = self.proj.px(uv, self.z1)[0]
             options = [(r, -spr.h / 2), (-r - spr.w, -spr.h / 2), (-spr.w / 2, -r - spr.h), (-spr.w / 2, r)]
-            best = options[0]
-            for dx, dy in options:
-                box = (x + dx, y + dy, x + dx + spr.w, y + dy + spr.h)
-                inside = box[0] > self.px(20) and box[2] < self.W - self.px(20) and box[1] > self.safe_top \
-                    and box[3] < self.safe_bottom
-                if inside and not any(_overlap(box, b) for b in placed):
-                    best = (dx, dy)
+            off = self._place(uv, spr, options)
+            if off is None:
+                off = options[0]
+                self._take(self._boxes(uv, spr, *off))
+            self.offsets.append(off)
+        # the place names and the line they explain are the content, so the title and the locator take a corner
+        # clear of both (a rebuild of run 2 put the locator over the Red Devil chip and the title on the route)
+        rr = self.px(8)
+        for _, uv in self.routes:
+            for pt in uv[::max(1, len(uv) // 24)]:
+                self._take([(x - rr, y - rr, x + rr, y + rr) for x, y in self._at(np.asarray([pt]))])
+        self.title_xy = self._corner(self.title, self.px(30)) if self.title is not None else None
+        if self.title_xy is None:
+            # the title only repeats the names the map draws, so with no clear corner it is left out rather than
+            # printed over a place name (a rebuild hid the Utqiagvik chip under the title)
+            self.title = None
+        self.locator_xy = self._corner(self.locator, self.px(20)) if self.locator is not None else None
+        if self.locator_xy is None:
+            self.locator = None  # no corner is clear of the credit, the markers, the route and the title
+        self.labels: list[tuple[np.ndarray, Sprite, tuple[float, float]]] = []
+        g = self.px(6)
+        for _, uv, spr in sorted(self.label_sprites, key=lambda e: e[0].size == "large"):  # free before region
+            off = self._place(uv, spr, [(-spr.w / 2, -spr.h / 2), (-spr.w / 2, -spr.h * 1.5 - g),
+                                        (-spr.w / 2, spr.h / 2 + g)])
+            if off is not None:
+                self.labels.append((uv, spr, off))
+        self.rivers = self._river_names()
+
+    def _chip(self, uv: np.ndarray, spr: Optional[Sprite]) -> tuple[float, float]:
+        """Offset of a route or arrow chip from its point: above, else below, else above anyway (reserved)."""
+        if spr is None:
+            return 0.0, 0.0
+        options = [(-spr.w / 2, -spr.h - self.px(18)), (-spr.w / 2, self.px(18))]
+        off = self._place(uv, spr, options)
+        if off is None:
+            off = options[0]
+            self._take(self._boxes(uv, spr, *off))
+        return off
+
+    def _corner(self, spr: Sprite, inset: float) -> Optional[tuple[float, float]]:
+        """First safe-area corner (upper left, upper right, lower left, lower right, above the credit) where spr
+        overlaps nothing.
+
+        None when no corner is clear: the caller then leaves the piece out."""
+        left, right = self.margin, self.W - self.margin - spr.w
+        top, bottom = self.safe_top + inset, self.safe_bottom - spr.h - inset
+        above_note = self.note_xy[1] - spr.h - self.px(10) if self._note is not None else bottom
+        for xy in ((left, top), (right, top), (left, bottom), (right, bottom), (right, above_note)):
+            if self._fits([_box(xy, spr)] * len(self.zs)):
+                self._take([_box(xy, spr)] * len(self.zs))
+                return xy
+        return None
+
+    def _at(self, uv: np.ndarray) -> list[tuple[float, float]]:
+        """Pixel position of a world point at each tested zoom."""
+        return [tuple(self.proj.px(uv[:1], z)[0]) for z in self.zs]
+
+    def _boxes(self, uv: np.ndarray, spr: Sprite, dx: float, dy: float) -> list[Box]:
+        return [(x + dx, y + dy, x + dx + spr.w, y + dy + spr.h) for x, y in self._at(uv)]
+
+    def _take(self, boxes: list[Box]) -> None:
+        """Reserve one box per tested zoom."""
+        for placed, b in zip(self.taken, boxes):
+            placed.append(b)
+
+    def _fits(self, boxes: list[Box]) -> bool:
+        """Inside the safe area and clear of everything placed at the same zoom."""
+        m = self.px(16)
+        return all(b[0] >= m and b[2] <= self.W - m and b[1] >= self.safe_top and b[3] <= self.safe_bottom
+                   and not any(_overlap(b, t) for t in self.taken[i]) for i, b in enumerate(boxes))
+
+    def _place(self, uv: np.ndarray, spr: Sprite, options: list[tuple[float, float]]) -> Optional[tuple[float, float]]:
+        """First offset whose boxes fit, reserved; None when no option fits."""
+        for dx, dy in options:
+            boxes = self._boxes(uv, spr, dx, dy)
+            if self._fits(boxes):
+                self._take(boxes)
+                return dx, dy
+        return None
+
+    def _river_names(self) -> list[tuple[str, np.ndarray, Sprite, tuple[float, float]]]:
+        """One name per drawn river, on its longest stretch in view: tried at the middle, then the thirds and
+        quarters; a river whose name fits nowhere goes unnamed. Natural Earth splits a river into several
+        features, so stretches are merged by name first: a name printed twice reads as two rivers."""
+        if self.base.z_lo < RIVER_ZOOM:
+            return []
+        pal, proj, m = self.pal, self.proj, self.px(40)
+        half = self.W / 2 / proj.scale(min(self.zs)) * 1.05
+        stretches: dict[str, tuple[str, np.ndarray]] = {}
+        for props, rings in major_rivers():
+            name = str(props.get("name") or props.get("name_en") or "").strip()
+            if not name:
+                continue
+            for r in rings:
+                for sh in _shifts(r, proj.cu, half):
+                    uv = np.stack([r[:, 0] + sh, -r[:, 1] / proj.coslat], axis=1)
+                    ok = np.ones(len(uv), bool)
+                    for z in self.zs:
+                        q = proj.px(uv, z)
+                        ok &= (q[:, 0] > m) & (q[:, 0] < self.W - m) & (q[:, 1] > m) & (q[:, 1] < self.H - m)
+                    key = name.casefold()
+                    if ok.sum() >= 4 and ok.sum() > len(stretches.get(key, ("", ()))[1]):
+                        stretches[key] = (name, uv[ok])
+        out = []
+        col, halo, g = mix(pal.rgb("water"), pal.rgb("text"), 0.55), pal.rgb("land"), self.px(6)
+        for name, pts in sorted(stretches.values(), key=lambda e: -len(e[1])):  # longest rivers claim space first
+            spr = halo_text(name, max(8, self.px(20)), "Medium", col, halo, 0.04, max(2, self.px(3)))
+            n = len(pts)
+            for j in dict.fromkeys((n // 2, n // 3, 2 * n // 3, n // 4, 3 * n // 4)):
+                if self._place(pts[j:j + 1], spr, [(-spr.w / 2, g)]) is not None:
+                    out.append((name, pts[j:j + 1], spr, (-spr.w / 2, g)))
                     break
-            placed.append((x + best[0], y + best[1], x + best[0] + spr.w, y + best[1] + spr.h))
-            offsets.append(best)
-        return offsets
+        return out
 
     # ------------------------------------------------------------ frame
 
@@ -485,8 +649,7 @@ class MapComp(CompBase):
         self._draw_title(frame, t)
         self._grain.apply(frame, i)
         if self._note is not None:
-            blit(frame, self._note, self.W - self.margin * 0.55 - self._note.w,
-                 self.safe_bottom - self._note.h - self.px(14), 0.9)
+            blit(frame, self._note, *self.note_xy, 0.9)
         return frame
 
     def _route_px(self, t: float, z: float) -> list[tuple[int, np.ndarray, float]]:
@@ -519,7 +682,8 @@ class MapComp(CompBase):
             if spr is not None and p > 0.5:
                 mid = self.proj.px(path_prefix(self.routes[k][1], 0.5), z)[-1]
                 o = ez.ease_out_cubic(ez.progress(p, 0.5, 0.8))
-                blit(frame, spr, mid[0] - spr.w / 2, mid[1] - spr.h - self.px(18), o)
+                dx, dy = self.route_offs[k]
+                blit(frame, spr, mid[0] + dx, mid[1] + dy, o)
             fade_out = 1 - ez.progress(t, r.reveal_end, r.reveal_end + 0.6)
             if fade_out <= 0:
                 continue
@@ -548,7 +712,8 @@ class MapComp(CompBase):
             if spr is not None:
                 o = ez.ease_out_cubic(ez.progress(t, a.appear_at, a.appear_at + 0.5))
                 x, y = full[0]
-                blit(frame, spr, x - spr.w / 2, y + self.px(18), o)
+                dx, dy = self.arrow_offs[k]
+                blit(frame, spr, x + dx, y + dy, o)
 
     def _draw_markers(self, frame: np.ndarray, t: float, z: float) -> None:
         pal = self.pal
@@ -574,17 +739,26 @@ class MapComp(CompBase):
                 blit(frame, spr, x + dx + slide, y + dy, o)
 
     def _draw_labels(self, frame: np.ndarray, t: float, z: float) -> None:
-        for i, (_, uv, spr) in enumerate(self.label_sprites):
+        for _, uv, spr, (dx, dy) in self.rivers:
+            x, y = self.proj.px(uv, z)[0]
+            blit(frame, spr, x + dx, y + dy)
+        for i, (uv, spr, (dx, dy)) in enumerate(self.labels):
             o = ez.ease_out_cubic(ez.progress(t, 0.5 + 0.15 * i, 1.2 + 0.15 * i))
             x, y = self.proj.px(uv, z)[0]
-            blit(frame, spr, x - spr.w / 2, y - spr.h / 2, o * 0.95)
+            blit(frame, spr, x + dx, y + dy, o * 0.95)
 
     def _draw_title(self, frame: np.ndarray, t: float) -> None:
-        if self.title is None:
-            return
         o = ez.ease_out_cubic(ez.progress(t, 0.2, 0.9))
-        blit(frame, self.title, self.margin - self.px(30) * (1 - o), self.safe_top + self.px(30), o)
+        if self.locator is not None:
+            blit(frame, self.locator, *self.locator_xy, o)
+        if self.title is not None:
+            x, y = self.title_xy
+            blit(frame, self.title, x - self.px(30) * (1 - o), y, o)
 
 
-def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+def _box(xy: tuple[float, float], spr: Sprite) -> Box:
+    return xy[0], xy[1], xy[0] + spr.w, xy[1] + spr.h
+
+
+def _overlap(a: Box, b: Box) -> bool:
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]

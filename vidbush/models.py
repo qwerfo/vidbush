@@ -518,6 +518,7 @@ class VisualIdea(Model):
     overlay: Optional[MotionSpec] = None  # optional overlay for footage or still
     priority: float = 1.0  # higher is used first
     opening_safe: bool = True  # has real activity, ok for the dense opening
+    anchor: str = ""  # footage and stills: the narration words the picture illustrates (placed on them)
 
 
 class DirectorPlan(Model):

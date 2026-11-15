@@ -1,25 +1,29 @@
-"""Layer two of the director: pacing slots to shots by picking ideas.
+'''Layer two of the director: pacing slots to shots by picking ideas.
 
-_Assembler.pick() scores every idea of the slot's family. Footage and stills
-may come from nearby beats (small distance penalty). Motion graphics only come
-from the beat the slot plays over, or the adjacent beat when the slot spans it,
-so a map or card never shows content the narration has not reached. Reuse is
-charged by content signature (maps by view and labels, cards by text), the
-same motion kind within 60 s costs a decaying penalty, and maps are capped at
-about MAP_SHARE of motion slots unless they show a new place, and the same map
-is never shown twice within INSET_REPEAT_S (card or inset). A motion slot
-whose best card was already shown, or whose beat has nothing to draw, takes
-footage instead. Overlay shots draw first on the beat's own map and chart
-ideas as insets over the picture, since reference channels move most of their
-animation over footage. A text overlay is offered only to a shot that holds
-the moment its anchor is spoken.
-"""
+_Assembler.pick() scores the ideas a slot may take. A picture slot (footage or
+still) takes picture ideas of both families from nearby beats: the slot type
+stays (the pacing engine owns the medium mix), the narration owns the content,
+so the idea whose words are spoken in the slot's window wins (anchor term,
+ideas.idea_anchor_time) and the slot's own family wins a tie. Motion graphics
+only come from the beat the slot plays over, or the adjacent beat when the slot
+spans it, so a map or card never shows content the narration has not reached.
+Reuse is charged by content signature (maps by view and labels, cards by
+text), the same motion kind within 60 s costs a decaying penalty, maps are
+capped at about MAP_SHARE of motion slots unless they show a new place, and
+every map or chart (card or inset) passes map_conflict. A motion slot whose
+best card was already shown, or whose beat has nothing to draw, takes footage
+instead. Overlay shots draw first on the beat's own map and chart ideas as
+insets over the picture, since reference channels move most of their animation
+over footage. An overlay (text, map or chart) is offered only to a shot that
+holds the moment its content is spoken. choose() is the one picture chooser the
+rules use too, so a later rule never undoes the anchor-aware pick.
+'''
 from __future__ import annotations
 
 import bisect
 import random
 import re
-from typing import Optional
+from typing import Optional, Sequence
 
 from ..models import (OVERLAY_TYPES, MapPayload, MotionKind, MotionSpec, Script, Shot, ShotType, StyleProfile,
                       VisualIdea, Word)
@@ -31,14 +35,26 @@ from .pacing import Slot
 FAMILY = {ShotType.footage: "footage", ShotType.footage_overlay: "footage", ShotType.image: "still",
           ShotType.image_overlay: "still", ShotType.ai_image: "still", ShotType.ai_video: "footage",
           ShotType.motion_graphic: "motion"}
+PICTURE = ("footage", "still")
 TEXT_KINDS = {MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout}
+TIMED_KINDS = I.TEXT_OVERLAY_KINDS | INSET_KINDS | {MotionKind.number_card}  # overlays that belong to the words that say them
 PLAIN_OF = {ShotType.footage_overlay: ShotType.footage, ShotType.image_overlay: ShotType.image}
 KIND_WINDOW_S = 60.0
 KIND_PENALTY = 0.5
 MAP_SHARE = 0.35
 REUSE_PENALTY = 0.9
-INSET_GAP_S = 15.0  # seconds between two map or chart insets
-INSET_REPEAT_S = 180.0  # the same inset is not shown again within this
+# A picture whose words are spoken in the slot beats a higher priority one whose words are several seconds away
+# (3 s cost 0.45, more than a seat idea's lead over a heuristic one), and the cap stays below REUSE_PENALTY so
+# showing the same picture again still costs more than any timing gap.
+ANCHOR_W = 0.3  # score per second between an idea's anchor and the slot window
+ANCHOR_CAP_S = 4.0
+FAMILY_SWITCH_W = 0.2  # a picture of the other family fills a slot only when its words are better placed
+HOOK_CALM_W = 0.15  # footage without activity in the hook: a tie breaker below one second of anchor gap,
+# because the words own the content (a larger penalty put other beats' pictures on the hook's words)
+INSET_GAP_S = 15.0  # seconds between two map or chart graphics (inset or full screen card)
+INSET_REPEAT_S = 180.0  # the same map or chart is not shown again within this
+
+History = Sequence[tuple[float, MotionSpec]]
 
 
 class _BeatLocator:
@@ -59,6 +75,11 @@ def overlap(a: tuple[float, float], b: tuple[float, float]) -> float:
     return max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
 
 
+def gap(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Seconds between two time ranges (0 when they touch or overlap)."""
+    return max(0.0, a[0] - b[1], b[0] - a[1])
+
+
 class _Assembler:
     """Turns pacing slots into shots by picking ideas; also serves rules.py callbacks."""
 
@@ -76,9 +97,10 @@ class _Assembler:
         self.usage: dict[int, int] = {}
         self.sig_usage: dict[str, int] = {}
         self.motion_log: list[tuple[float, MotionKind]] = []
-        self.card_log: list[tuple[float, MotionSpec]] = []
-        self.inset_log: list[float] = []
+        self.card_log: list[tuple[float, MotionSpec]] = []  # full screen cards as picked
+        self.inset_of: dict[str, tuple[float, MotionSpec]] = {}  # map and chart insets by shot id
         self.map_places: set[str] = set()
+        self.anchor_t: dict[int, Optional[float]] = {}
         self.by_key: dict[tuple[str, str], list[int]] = {}
         for i, idea in enumerate(ideas):
             self.by_key.setdefault((idea.beat_id, idea.family), []).append(i)
@@ -134,28 +156,57 @@ class _Assembler:
             out.append((d, bid))
         return out
 
-    def pick(self, beat_id: str, family: str, at: float, prev: Optional[int], duration: float = 0.0,
-             exclude: tuple[int, ...] = ()) -> int:
-        """Best idea of a family near a beat: priority minus reuse, distance and context penalties."""
+    def history(self, skip: str = "") -> list[tuple[float, MotionSpec]]:
+        """Map and chart graphics placed so far (cards and insets), without the inset of shot skip."""
+        return self.card_log + [v for sid, v in self.inset_of.items() if sid != skip]
+
+    def anchor_cost(self, i: int, start: float, end: float) -> float:
+        """ANCHOR_W per second between where the idea's words are spoken (idea_anchor_time, cached) and the
+        window [start, end], capped at ANCHOR_CAP_S. An unanchored idea pays the full cap: a picture whose words
+        are spoken beats one whose words never are, and a beat with no anchored idea pays the same everywhere."""
+        idea = self.ideas[i]
+        span = self.spans.get(idea.beat_id, (start, end))
+        if i not in self.anchor_t:
+            self.anchor_t[i] = I.idea_anchor_time(idea, self.words, span)
+        t = self.anchor_t[i]
+        return ANCHOR_W * (min(gap((t, t), (start, end)), ANCHOR_CAP_S) if t is not None else ANCHOR_CAP_S)
+
+    def _best(self, beat_id: str, family: str, at: float, duration: float, prev: Optional[int],
+              exclude: tuple[int, ...] = (), hard: bool = False) -> tuple[int, int]:
+        """(best idea, its reuse count) for a slot: priority minus reuse, distance, context and, for pictures,
+        anchor penalties. hard: exclude is a constraint, not a penalty."""
         hook = at < self.profile.pacing.hook_seconds
         scene = self.bc[beat_id].scene.id if beat_id in self.bc else ""
         scene_start = self.spans.get(self.bc[beat_id].scene.beats[0].id, (0, 0))[0] if beat_id in self.bc else 0.0
+        families = PICTURE if family in PICTURE else (family,)
+        history = self.history()
         best, best_score, best_reuse = -1, -1e9, 0
         for d, bid in self._beats_near(beat_id, family, at, duration):
-            for i in self.by_key.get((bid, family), []):
-                idea = self.ideas[i]
-                if idea.motion is not None and self._repeated_map(idea.motion, at):
-                    continue
-                reuse = max(self.usage.get(i, 0), self.sig_usage.get(signature(idea), 0))
-                score = idea.priority - REUSE_PENALTY * reuse - 0.25 * abs(d)
-                score -= 0.8 if self.bc[bid].scene.id != scene else 0.0
-                score -= 5.0 if i == prev or i in exclude else 0.0
-                if hook and family == "footage" and not idea.opening_safe:
-                    score -= 0.5
-                if idea.motion is not None:
-                    score -= self._motion_penalty(idea.motion, at, scene_start, duration)
-                if score > best_score:
-                    best, best_score, best_reuse = i, score, reuse
+            for fam in families:
+                for i in self.by_key.get((bid, fam), []):
+                    idea = self.ideas[i]
+                    if hard and i in exclude:
+                        continue
+                    if idea.motion is not None and map_conflict(idea.motion, at, history):
+                        continue
+                    reuse = max(self.usage.get(i, 0), self.sig_usage.get(signature(idea), 0))
+                    score = idea.priority - REUSE_PENALTY * reuse - 0.25 * abs(d)
+                    score -= 0.8 if self.bc[bid].scene.id != scene else 0.0
+                    score -= 5.0 if i == prev or i in exclude else 0.0
+                    if hook and family == "footage" and not idea.opening_safe:
+                        score -= HOOK_CALM_W
+                    if family in PICTURE:
+                        score -= (FAMILY_SWITCH_W if fam != family else 0.0) + self.anchor_cost(i, at, at + duration)
+                    if idea.motion is not None:
+                        score -= self._motion_penalty(idea.motion, at, scene_start, duration)
+                    if score > best_score:
+                        best, best_score, best_reuse = i, score, reuse
+        return best, best_reuse
+
+    def pick(self, beat_id: str, family: str, at: float, prev: Optional[int], duration: float = 0.0,
+             exclude: tuple[int, ...] = ()) -> int:
+        """Best idea for a slot (_best), counted as used."""
+        best, best_reuse = self._best(beat_id, family, at, duration, prev, exclude)
         if family == "motion" and (best < 0 or best_reuse > 0):
             # no fresh card for this moment (the beat has nothing to draw, or its card is already shown): footage
             return self.pick(beat_id, "footage", at, prev, duration, exclude)
@@ -165,6 +216,14 @@ class _Assembler:
         if family == "motion" and self.ideas[best].motion is not None:
             self._log_motion(self.ideas[best].motion, at)
         return best
+
+    def choose(self, shot: Shot, exclude: tuple[int, ...] = (), family: Optional[str] = None) -> Optional[int]:
+        """The picture idea for a shot a rule re-picks, with the same scoring as pick (not counted: rebind
+        counts it). exclude is a hard constraint. None when no idea qualifies."""
+        fam = family or FAMILY.get(shot.type, "footage")
+        fam = fam if fam in PICTURE else "footage"
+        best, _ = self._best(shot.beat_id, fam, shot.start, shot.duration, None, exclude, hard=True)
+        return best if best >= 0 else None
 
     def _count(self, idx: int, delta: int) -> None:
         sig = signature(self.ideas[idx])
@@ -196,26 +255,20 @@ class _Assembler:
                 p += 1.0
         return p
 
-    def _repeated_map(self, spec: MotionSpec, at: float) -> bool:
-        """True for a map already on screen (full screen card or inset) within INSET_REPEAT_S."""
-        if spec.kind != MotionKind.map:
-            return False
-        sig = motion_signature(spec)
-        return any(sp.kind == MotionKind.map and abs(at - t) < INSET_REPEAT_S and motion_signature(sp) == sig
-                   for t, sp in self.card_log)
-
     def _fallback_idea(self, beat_id: str, family: str, at: float = 0.0) -> int:
         bc = self.bc[beat_id]
-        made = [x for x in I.ideas_for_beat(bc, None, self.profile.palette, random.Random(beat_id))
+        made = [x for x in I.ideas_for_beat(bc, None, self.profile.palette)
                 if x.family == family]
-        idea = next((x for x in made if x.motion is None or not self._repeated_map(x.motion, at)), made[0])
+        idea = next((x for x in made if x.motion is None or not map_conflict(x.motion, at, self.history())), made[0])
         self.ideas.append(idea)
         self.by_key.setdefault((beat_id, family), []).append(len(self.ideas) - 1)
         return len(self.ideas) - 1
 
     def _make_shot(self, k: int, slot: Slot, beat_id: str, idx: int) -> Shot:
         bc = self.bc[beat_id]
-        typ = slot.type if FAMILY[slot.type] == self.ideas[idx].family else ShotType.footage  # no honest card
+        fam = self.ideas[idx].family
+        same = FAMILY[slot.type] == fam or (FAMILY[slot.type] in PICTURE and fam in PICTURE)
+        typ = slot.type if same else ShotType.footage  # no honest card
         shot = Shot(id=f"shot_{k + 1:03d}", index=k, beat_id=beat_id, scene_id=bc.scene.id,
                     start=round(slot.start, 3), end=round(slot.end, 3), duration=round(slot.end - slot.start, 3),
                     type=typ, intent="")
@@ -227,8 +280,7 @@ class _Assembler:
             if shot.overlay is None:
                 shot.type = PLAIN_OF[shot.type]  # nothing honest to overlay (call to action beat)
             elif shot.overlay.kind in INSET_KINDS:
-                self.card_log.append((slot.start, shot.overlay))
-                self.inset_log.append(slot.start)
+                self.inset_of[shot.id] = (slot.start, shot.overlay)
         return shot
 
     # -------------------------------------------------------- callbacks for rules.py
@@ -248,19 +300,24 @@ class _Assembler:
         shot.queries = list(idea.queries)
         shot.motion = idea.motion if shot.type == ShotType.motion_graphic else None
         if shot.type in OVERLAY_TYPES:
-            fresh = idea.overlay is not None and not self._repeated_map(idea.overlay, shot.start)
+            fresh = idea.overlay is not None and self._overlay_ok(idea.overlay, shot, shot.start)
             shot.overlay = idea.overlay if fresh else shot.overlay
         else:
             shot.overlay = None
         shot.ai_prompt = "" if shot.type == ShotType.motion_graphic else ai_prompt(idea, self.bc.get(shot.beat_id))
 
+    def _overlay_ok(self, spec: MotionSpec, shot: Shot, at: float) -> bool:
+        """An overlay may land on a shot: its label names what the shot shows (ideas.label_ok) and a map or
+        chart inset passes map_conflict at the moment it appears."""
+        return I.label_ok(spec, shot.must_show) and not map_conflict(spec, at, self.history(shot.id))
+
     def overlay_pool(self, shot: Shot) -> list[MotionSpec]:
         """Overlays a shot may carry, best first: map and chart insets of its beat (animation moves over the
         picture), its idea's overlay, the overlays of every idea of its beat and the beats beside it (best
         idea first, so a seat overlay whose own idea became a card still reaches the picture), then lower
-        thirds for what it shows and the beat's generic overlays. Never a map shown within INSET_REPEAT_S. A
-        text overlay stays only when the shot holds the moment its anchor is spoken, with time to read it.
-        Empty on call-to-action beats."""
+        thirds for what it shows and the beat's generic overlays. A text, map or chart overlay stays only
+        when the shot holds the moment its content is spoken with time to read it (ideas.overlay_start), and
+        every overlay passes _overlay_ok. Empty on call-to-action beats."""
         bc = self.bc.get(shot.beat_id)
         if bc is None or I.CTA_RE.search(bc.beat.text):
             return []
@@ -270,32 +327,18 @@ class _Assembler:
         near = set(self.order[max(0, pos - 1):pos + 2])
         beat = [i.overlay for i in sorted((i for i in self.ideas if i.overlay is not None and i.beat_id in near),
                                           key=lambda i: -i.priority)]
-        pool = self.insets(shot.beat_id, shot.start) + [o for o in own + beat if not self._repeated_map(o, shot.start)]
-        pool += I.overlay_choices(bc, self.profile.palette, shot.must_show)
-        return [o for o in pool if o.kind not in I.TEXT_OVERLAY_KINDS
-                or I.overlay_start(o, self.words, shot.start, shot.end) is not None]
-
-    def insets(self, beat_id: str, at: float) -> list[MotionSpec]:
-        """The beat's map and chart ideas as transparent insets.
-
-        An inset is information the viewer has to read, so it needs room: none within INSET_GAP_S of
-        another inset, the same map or chart not again within INSET_REPEAT_S, and a map only when it shows
-        a place no map showed in the last KIND_WINDOW_S (a map earns its place when the narration moves
-        between places, not on every beat that names one)."""
-        if any(0 < abs(at - t) < INSET_GAP_S for t in self.inset_log):
-            return []
-        recent = [sp for t, sp in self.card_log if 0 <= at - t < KIND_WINDOW_S]
-        shown = {motion_signature(sp) for t, sp in self.card_log if 0 <= at - t < INSET_REPEAT_S}
-        places = set().union(*[map_places(sp) for sp in recent]) if recent else set()
         out: list[MotionSpec] = []
-        for i in self.by_key.get((beat_id, "motion"), []):
-            spec = self.ideas[i].motion
-            if spec is None or spec.kind not in INSET_KINDS or motion_signature(spec) in shown:
-                continue
-            if spec.kind == MotionKind.map and not (map_places(spec) - places):
-                continue
-            out.append(spec.model_copy(update={"background": "transparent"}))
+        for o in self.insets(shot.beat_id) + own + beat + I.overlay_choices(bc, self.profile.palette, shot.must_show):
+            at = I.overlay_start(o, self.words, shot.start, shot.end) if o.kind in TIMED_KINDS else 0.0
+            if at is not None and self._overlay_ok(o, shot, shot.start + at):
+                out.append(o)
         return out
+
+    def insets(self, beat_id: str) -> list[MotionSpec]:
+        """The beat's map and chart ideas as transparent insets (overlay_pool filters them)."""
+        return [self.ideas[i].motion.model_copy(update={"background": "transparent"})
+                for i in self.by_key.get((beat_id, "motion"), [])
+                if self.ideas[i].motion is not None and self.ideas[i].motion.kind in INSET_KINDS]
 
     def overlay_for(self, shot: Shot) -> Optional[MotionSpec]:
         """First overlay for an overlay shot, or None when nothing fits."""
@@ -303,17 +346,87 @@ class _Assembler:
         return pool[0] if pool else None
 
     def footage_for(self, shot: Shot) -> Optional[int]:
-        """A footage idea for a shot that must stop being a full screen card."""
-        return self.pick(shot.beat_id, "footage", shot.start, self.idea_of.get(shot.id), shot.duration)
+        """A picture idea for a shot that must stop being a full screen card (choose, as footage)."""
+        idx = self.choose(shot, family="footage")
+        return idx if idx is not None else self._fallback_idea(shot.beat_id, "footage", shot.start)
+
+
+def map_conflict(spec: MotionSpec, at: float, history: History) -> bool:
+    """True when a map or chart graphic (inset or full screen card) appearing at `at` would crowd the screen:
+    another map or chart starts within INSET_GAP_S, the same map or chart (motion_signature) was shown within
+    INSET_REPEAT_S, or a map shows no place that no map showed in the last KIND_WINDOW_S. A map or chart is
+    information the viewer has to read, and a map earns its place when the narration changes place, not on
+    every beat that names one (run 2 showed three maps of one place in 17 s, on three different paths). Every
+    path a map or chart takes to the screen checks this one predicate. Other kinds never conflict."""
+    if spec.kind not in INSET_KINDS:
+        return False
+    shown = [(t, sp) for t, sp in history if sp.kind in INSET_KINDS]
+    sig = motion_signature(spec)
+    if any(abs(at - t) < INSET_GAP_S or (abs(at - t) < INSET_REPEAT_S and motion_signature(sp) == sig)
+           for t, sp in shown):
+        return True
+    if spec.kind != MotionKind.map:
+        return False
+    recent = [map_places(sp) for t, sp in shown if sp.kind == MotionKind.map and 0 <= at - t < KIND_WINDOW_S]
+    return not (map_places(spec) - set().union(*recent))
+
+
+def shown_graphics(shots: Sequence[Shot], skip: Sequence[str] = ()) -> list[tuple[float, MotionSpec]]:
+    """(visible start, spec) of every map and chart on screen: full screen cards and insets (shot start plus
+    start_at), except on the shots in skip."""
+    out: list[tuple[float, MotionSpec]] = []
+    for s in shots:
+        if s.id in skip:
+            continue
+        if s.type == ShotType.motion_graphic and s.motion is not None and s.motion.kind in INSET_KINDS:
+            out.append((s.start, s.motion))
+        elif s.type in OVERLAY_TYPES and s.overlay is not None and s.overlay.kind in INSET_KINDS:
+            out.append((s.start + s.overlay.start_at, s.overlay))
+    return out
+
+
+def picture_anchor_misses(shots: Sequence[Shot], ideas: Sequence[VisualIdea], words: list[Word],
+                          spans: dict[str, tuple[float, float]], tolerance: float = 0.5) -> list[str]:
+    """Ids of picture shots that show the wrong picture for their words: the measurement for the report.
+
+    Candidates are each beat's primary picture ideas (the highest priority idea per beat and family) of the
+    shot's beat and its two neighbours. A shot misses when the idea it shows (matched by intent) is anchored
+    further from the shot's window than the nearest candidate plus tolerance seconds, or has no resolvable
+    anchor (ideas.idea_anchor_time) while a candidate does. Motion graphics are skipped."""
+    order = sorted(spans, key=lambda b: spans[b])
+    primary: dict[str, list[VisualIdea]] = {}
+    for fam in PICTURE:
+        for bid in order:
+            top = max((i for i in ideas if i.beat_id == bid and i.family == fam), key=lambda i: i.priority,
+                      default=None)
+            if top is not None:
+                primary.setdefault(bid, []).append(top)
+
+    def when(idea: VisualIdea) -> Optional[float]:
+        return I.idea_anchor_time(idea, words, spans.get(idea.beat_id, (0.0, 0.0)))
+
+    out: list[str] = []
+    for s in shots:
+        if s.type == ShotType.motion_graphic or s.beat_id not in spans:
+            continue
+        mine = [i for i in ideas if i.intent == s.intent and i.family in PICTURE]
+        mine.sort(key=lambda i: i.beat_id != s.beat_id)
+        if not mine:
+            continue
+        t = when(mine[0])
+        k = order.index(s.beat_id)
+        cands = [c for bid in order[max(0, k - 1):k + 2] for c in primary.get(bid, [])]
+        gaps = [gap((ct, ct), (s.start, s.end)) for ct in map(when, cands) if ct is not None]
+        if gaps and (t is None or gap((t, t), (s.start, s.end)) > min(gaps) + tolerance):
+            out.append(s.id)
+    return out
 
 
 def map_places(spec: MotionSpec) -> set[str]:
-    """Marker and label names a map shows (empty for other kinds)."""
+    """Normalised names a map draws (ideas.drawn_names; empty for other kinds)."""
     if spec.kind != MotionKind.map:
         return set()
-    p = spec.payload
-    names = [m.get("label", "") for m in p.get("markers", [])] + [lb.get("text", "") for lb in p.get("labels", [])]
-    return {n.strip().lower() for n in names if n and n.strip()}
+    return {I.label_key(n) for n in I.drawn_names(spec)} - {""}
 
 
 def signature(idea: VisualIdea) -> str:

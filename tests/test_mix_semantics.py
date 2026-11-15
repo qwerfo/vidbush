@@ -84,7 +84,7 @@ def test_built_documentary_keeps_one_card_per_75_seconds_hook_included(seed: int
     for k, t in enumerate(starts):
         assert not card_too_close(t, starts[:k] + starts[k + 1:], prof.pacing.card_spacing_s, exempt), starts
     anim = animation_share(sl)
-    assert anim["full_screen_cards"] <= 8 and anim["overlay_shots"] >= 20  # animation moves over the picture
+    assert anim["full_screen_cards"] <= 8 and anim["overlay_shots"] >= 10  # honest, timed overlays only
     assert anim["full_screen_card_time"] <= 10.0 and anim["max_card_hold_s"] <= prof.pacing.card_hold_max + 1e-6
     assert anim["inset_overlays"] > 0
     text = overlay_text_stats(sl, nar.words)  # overlays are a ceiling: only honest, timed text is on screen
@@ -102,7 +102,7 @@ def test_top10_keeps_every_number_card() -> None:
 
 def test_space_cards_moves_a_close_map_onto_footage_as_an_inset() -> None:
     prof = profile()
-    map_spec = b.route_map_spec([[("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)]], title="Across")
+    map_spec = b.route_map_spec([[("Colon", 9.36, -79.9), ("Panama City", 8.97, -79.54)]])
     card = b.title_card_spec("Chapter")
 
     def shot(i: int, start: float, typ: ShotType, motion=None) -> Shot:
