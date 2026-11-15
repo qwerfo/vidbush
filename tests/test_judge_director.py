@@ -103,7 +103,7 @@ def test_requery_then_ai_conversion_keeps_overlay(ctx, monkeypatch, registry):
     s = shot(0, ShotType.image_overlay, [cand("shot_000", 1, 1)], overlay=overlay)
     registry["result"] = [cand("shot_000", 2, 2)]
     monkeypatch.setattr(ctx.seats, "vision_json", fake_vision(
-        {"sample_image_01.jpg": 40, "sample_image_02.jpg": 55}, ai_score=82))
+        {"sample_image_01.jpg": 40, "sample_image_02.jpg": 50}, ai_score=82))
     out = dl.judge_and_select(shotlist([s]), ctx).shots[0]
     assert len(registry["calls"]) == 1
     qs = registry["calls"][0]["queries"]
