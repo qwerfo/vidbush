@@ -237,3 +237,42 @@ def test_replay_reads_drop_events_of_one_stage(monkeypatch, settings, tmp_path) 
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n" + json.dumps(
         {"msg": "sourcing done", "empty": ["s003"]}), encoding="utf-8")
     assert replay.empty_shots(log) == ["s003"]
+
+
+def test_a_straggler_stops_once_most_sources_are_done(make_ctx, monkeypatch) -> None:
+    """Once most sources finished, one still searching gets straggler_grace more, then its searches not
+    yet started are cancelled: it never holds the sourcing stage. The others' results all arrive."""
+    import time as _t
+
+    ctx = make_ctx(mode="script")
+    monkeypatch.setattr(registry, "cache_get", lambda *x, **k: None)
+    monkeypatch.setattr(registry, "cache_put", lambda *x, **k: None)
+    monkeypatch.setattr(registry, "straggler_grace", lambda elapsed: 0.2)
+
+    class Fast(_ShortAdapter):
+        name, keyword_words = "wikimedia", 0
+
+        def search(self, query: str, media: str, *a: Any, **k: Any) -> list[RawResult]:
+            self.sent.append(query)
+            return [RawResult(source=self.name, url=f"https://f/{query}", media=media, title=query)]
+
+    class Fast2(Fast):
+        name = "archive"
+
+    class Slow(_ShortAdapter):
+        name, keyword_words = "pexels", 0
+
+        def search(self, query: str, *a: Any, **k: Any) -> list[RawResult]:
+            self.sent.append(query)
+            _t.sleep(0.5)
+            return []
+
+    fast, fast2, slow = Fast(), Fast2(), Slow()
+    shots = [Shot(id=f"s{i}", index=i, beat_id="b", start=i, end=i + 1, duration=1, type=ShotType.image,
+                  intent="x", queries=[f"harbour cranes {i}"]) for i in range(8)]
+    t0 = _t.monotonic()
+    with registry.SearchPools([fast, fast2, slow]) as pools:
+        found = registry._search_all(shots, [fast, fast2, slow], ctx, pools)
+    assert _t.monotonic() - t0 < 2.5  # 8 slow searches would take 4 s
+    assert len(slow.sent) < 8
+    assert all(found[s.id]["wikimedia"] and found[s.id]["archive"] for s in shots)

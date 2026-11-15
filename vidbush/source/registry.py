@@ -42,7 +42,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
 
@@ -616,20 +616,52 @@ def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str,
 
     Each adapter runs its own rounds: a paced host (Pexels) still busy with round k never holds back
     another host's round k + 1, and its own next round goes only to shots still short on every result
-    in by then. The pass returns when every adapter's rounds are done, so no result is lost."""
+    in by then. The pass returns when every adapter's rounds are done, so no result is lost.
+
+    Stragglers never hold the stage: once most adapters are done, the ones still searching get
+    straggler_grace(elapsed) more, so they at most double the search time, then their searches not yet
+    started are cancelled (never charged to the budget). Run 3 evidence: Pexels at 200 an hour kept
+    sourcing searching 45 minutes after every other source had finished."""
     lock = threading.Lock()  # merged is read by every adapter's rounds
+    stop = threading.Event()
+    t0 = time.monotonic()
     with ThreadPoolExecutor(max_workers=max(1, len(adapters))) as drivers:
-        futs = [drivers.submit(_adapter_rounds, a, shots, queries, merged, ctx, pools, unsent, retry, allowance,
-                               lock) for a in adapters]
-        for f in futs:
-            f.result()
+        futs = {drivers.submit(_adapter_rounds, a, shots, queries, merged, ctx, pools, unsent, retry, allowance,
+                               lock, stop): a.name for a in adapters}
+        not_done = set(futs)
+        while not_done:
+            done, not_done = wait(not_done, return_when=FIRST_COMPLETED)
+            for f in done:
+                f.result()
+            if not_done and len(not_done) <= len(futs) // 2:
+                rest = wait(not_done, timeout=straggler_grace(time.monotonic() - t0))
+                if rest.not_done:
+                    stop.set()
+                    ctx.log.info("slow source stopped searching after the others finished; its later "
+                                 "searches are skipped", sources=sorted(futs[f] for f in rest.not_done))
+                for f in rest.done:
+                    f.result()
+                not_done = rest.not_done
+                for f in not_done:
+                    f.result()
+                not_done = set()
+
+
+STRAGGLER_MIN_S = 300.0
+
+
+def straggler_grace(elapsed: float) -> float:
+    """How long sources still searching may run once most have finished: as long again as the time so far."""
+    return max(STRAGGLER_MIN_S, elapsed)
 
 
 def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, list[str]],
                     merged: dict[str, dict[str, list[RawResult]]], ctx: "StageContext", pools: SearchPools,
                     unsent: set[tuple[str, str, str]], retry: Optional[set[tuple[str, str, str]]],
-                    allowance: Optional[dict[str, int]], lock: threading.Lock) -> None:
-    """The query rounds of one adapter (see _rounds); a shot leaves only this adapter's pool."""
+                    allowance: Optional[dict[str, int]], lock: threading.Lock,
+                    stop: Optional[threading.Event] = None) -> None:
+    """The query rounds of one adapter (see _rounds); a shot leaves only this adapter's pool. When stop is
+    set, searches not yet started are cancelled and no new round begins."""
     cap = ctx.settings.sources.max_candidates
     rid = run_id(ctx)
     pending = [s for s in shots if shot_media(s) in a.media]  # a shot shares only the budgets that serve its media
@@ -637,6 +669,8 @@ def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, list
         throttle.register_shots(rid, [a.name], [s.id for s in pending])
     asked: set[tuple[str, str]] = set()  # (shot, sent query): a shot never sends one request twice
     for k in range(QUERIES_PER_SHOT):
+        if stop is not None and stop.is_set():
+            break
         jobs: list[tuple[str, Future]] = []
         for s in pending:
             if k >= len(queries[s.id]):
@@ -651,7 +685,12 @@ def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, list
                 allowance[a.name] -= 1 + bool(search_hints(a, ctx).get("prefer_cc"))
             jobs.append((s.id, pools.submit(a, _search_one, a, q, shot_media(s), _per_adapter_n(a, cap),
                                             s, ctx, unsent)))
-        for sid, fut in jobs:
+        for i, (sid, fut) in enumerate(jobs):
+            if stop is not None and stop.is_set():
+                for _, later in jobs[i:]:
+                    later.cancel()  # all at once: the pool would start the next one before a one by one cancel
+            if fut.cancelled():
+                continue
             res = fut.result()
             with lock:
                 merged[sid][a.name].extend(res)
