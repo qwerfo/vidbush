@@ -87,6 +87,49 @@ def test_budget_over_hourly_limit_counts_only_sent_searches(monkeypatch) -> None
     assert clock[0] - 1000.0 >= (300 - 40) * 3600 / 160 - 1  # the burst, then one every 22.5 s
 
 
+def test_slow_host_searches_submitted_at_once_queue_instead_of_being_refused(monkeypatch) -> None:
+    """A round submits all its Pexels searches at once; past the burst each still waits for its token
+    (one search worker for a host slower than MAX_WAIT_S), so none is refused."""
+    clock = [1000.0]
+    monkeypatch.setattr(throttle.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(throttle.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    sent: list[str] = []
+
+    class Pexels:
+        name, media = "pexels", {"video"}
+
+        def search(self, query, media, n, settings, shot=None, **kw):
+            with throttle.slot("api.pexels.com"):
+                sent.append(query)
+            return []
+
+    class Ctx:
+        settings = type("S", (), {"source_cache_folder": "", "sources": None})()
+        project = type("P", (), {"id": "pacing"})()
+        extra: dict = {}
+        log = type("L", (), {"info": lambda *a, **k: None, "warn": lambda *a, **k: None})()
+
+    monkeypatch.setattr(registry, "cache_get", lambda *a, **k: None)
+    monkeypatch.setattr(registry, "cache_put", lambda *a, **k: None)
+    monkeypatch.setattr(registry, "search_hints", lambda a, c: {})
+    unsent: set = set()
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage, intent="x")
+    with registry.SearchPools([Pexels()]) as pools:
+        futs = [pools.submit(Pexels(), registry._search_one, Pexels(), f"q{i}", "video", 4, shot, Ctx(), unsent)
+                for i in range(80)]
+        for f in futs:
+            f.result()
+    assert len(sent) == 80 and not unsent
+
+
+def test_global_slots_stay_above_youtube_download_slots() -> None:
+    class Src:
+        max_concurrency = 6
+        youtube_download_workers = 6
+    throttle.configure(Src())
+    assert throttle.STATE.max_concurrency == 6 + throttle.OTHER_HOST_SLOTS
+
+
 def test_cooldown_refuses_until_expired() -> None:
     throttle.cool_down("api.pexels.com", 100)
     with pytest.raises(throttle.Throttled):

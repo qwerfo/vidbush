@@ -29,7 +29,8 @@ window's limit (window_rate). A request waits for the host's next token even
 when that is longer than MAX_WAIT_S (one interval of a slow host such as
 Pexels), so a budget larger than the hourly limit is paced, not refused; a
 request that would queue behind it is refused before it is sent (Throttled),
-so the registry refunds it and sends it later in the run.
+so the registry refunds it and sends it later in the run. The registry gives such a host one search
+worker (registry.ADAPTER_WORKERS), so its searches queue in the pool and none queues inside the bucket.
 configure(settings) reads optional overrides from settings.sources
 (rate_limits, max_concurrency, query_budget) when present.
 """
@@ -63,6 +64,7 @@ SERIAL_HOSTS = {"youtube"}
 # during the block, so it waits longer than that before one more try.
 CHALLENGE_COOLDOWN_S: dict[str, float] = {"www.loc.gov": 3900.0, "loc.gov": 3900.0, "*": 900.0}
 DEFAULT_MAX_CONCURRENCY = 6
+OTHER_HOST_SLOTS = 2  # global slots always left over the YouTube download slots
 # searches per run (one pipeline run of one project) and adapter; "*" is every other adapter
 DEFAULT_BUDGET: dict[str, int] = {"pexels": 300, "pixabay": 600, "loc": 300, "nara": 300, "youtube": 500, "*": 800}
 
@@ -136,6 +138,9 @@ def configure(sources: Any) -> None:
             STATE.rates[str(host).lower()] = (float(rate), float(burst))
             STATE.buckets.pop(str(host).lower(), None)
         cap = int(getattr(sources, "max_concurrency", 0) or DEFAULT_MAX_CONCURRENCY)
+        # yt-dlp downloads hold a global slot for their whole length: the cap stays above the YouTube
+        # download slots, so stills and film sections from other hosts are never all blocked behind them
+        cap = max(cap, int(getattr(sources, "youtube_download_workers", 0) or 0) + OTHER_HOST_SLOTS)
         if cap != STATE.max_concurrency:
             STATE.max_concurrency, STATE.slots = cap, threading.BoundedSemaphore(cap)
         STATE.budget.update({str(k): int(v) for k, v in (getattr(sources, "query_budget", None) or {}).items()})
