@@ -18,11 +18,27 @@ from PIL import Image
 from ..models import Candidate, Shot, SourceKind
 from ..util import no_em_dash
 
-HOUSE_STYLE = ("Photographic documentary still, natural light, realistic detail, era-correct clothing, vehicles "
-               "and architecture, wide 16:9 composition, 35mm lens. People appear only as anonymous figures, never "
-               "as the likeness of a named real person.")
+_STYLE = ("Photographic documentary still, natural light, realistic detail, era-correct clothing, vehicles "
+          "and architecture, 35mm lens. One single continuous photograph of one moment, one unbroken frame from "
+          "edge to edge. {frame} People appear only as anonymous figures, never as the likeness of a named real "
+          "person.")
+# The image seat may return 3:2 or square, which is cropped to 16:9 and then letterboxed, so the safe band is
+# stated for the worst canvas: the middle half of the picture height.
+_BAND = ("Composed for a wide cinematic {ratio}:1 frame: every head and the main subject sit inside the middle half "
+         "of the picture height with headroom, nothing important in the top or bottom quarter.")
+_FULL = "Wide 16:9 composition with every head and the main subject inside the frame with headroom."
+DEFAULT_LETTERBOX = 2.39
+
+
+def house_style(ratio: Optional[float] = DEFAULT_LETTERBOX) -> str:
+    """House style for a film letterboxed to ratio (None: no letterbox, the full 16:9 frame shows)."""
+    return _STYLE.format(frame=_BAND.format(ratio=f"{ratio:g}") if ratio else _FULL)
+
+
+HOUSE_STYLE = house_style()
 BASE_NEGATIVE = ["text", "captions", "watermark", "logos", "letters", "signature", "newspaper headlines",
-                 "news chyrons or TV station branding", "the likeness of a named real person"]
+                 "news chyrons or TV station branding", "the likeness of a named real person", "split panels",
+                 "collage", "diptych", "grid", "multiple frames", "border"]
 _LEADING = re.compile(r"^(archival footage|footage|stock footage|historical photograph|photograph|photo|image|"
                       r"documentary photograph|wide establishing (archival )?footage|close detail photograph)"
                       r"\s+of\s+", re.I)
@@ -266,7 +282,7 @@ def _answer(raw: Any) -> tuple[Optional[str], Optional[list[str]]]:
 
 
 def safe_prompt(text: str, ctx: Any, keep: Optional[list[str]] = None, narration: str = "",
-                problem: str = "") -> str:
+                problem: str = "", names: Optional[list[str]] = None) -> str:
     """The prompt with named people, brands and readable text rewritten out by the editor seat. Image models
     render names as fake likenesses and text as invented, often wrong, facts. The editor lists what it removed;
     those are names to the keep check (never lost content) and must not appear in the rewrite. A rewrite that
@@ -274,12 +290,13 @@ def safe_prompt(text: str, ctx: Any, keep: Optional[list[str]] = None, narration
     goes out with the removed items deleted (the rewrite instead when too little is left), so no fallback ever
     sends a name. Names are guessed by a heuristic only when the editor names none.
     problem (the judge's reason on a retry) is context only: it describes the wrong picture, so its words never
-    go to the image model as prompt text."""
+    go to the image model as prompt text. names are known names to remove (people the scene brief lists)."""
     keep = keep or []
+    seed = list(names or [])
     user = "\n".join([f"Prompt: {text}"] + ([f"Must keep: {'; '.join(keep)}"] if keep else [])
                      + ([f"Narration: {narration}"] if narration else [])
                      + ([f"Problem: {problem}"] if problem else []))
-    names: list[str] = []
+    names = _name_forms(seed)
     lost: list[str] = []
     leaked: list[str] = []
     clean: Optional[str] = None  # last rewrite with no name in it
@@ -308,7 +325,7 @@ def safe_prompt(text: str, ctx: Any, keep: Optional[list[str]] = None, narration
         if not leaked:
             clean = new
     if not new:
-        names = _name_forms(guess_names(text, keep))
+        names = _name_forms(seed + guess_names(text, keep))
         ctx.log.warn("ai prompt rewrite gave no answer, names guessed by heuristic", names=names)
     out = no_em_dash(without_names(text, names))
     if clean and _content_count(out) < 3:
@@ -320,18 +337,202 @@ def safe_prompt(text: str, ctx: Any, keep: Optional[list[str]] = None, narration
     return out
 
 
+# ---------------------------------------------------------------- scene brief: what the still shows
+
+_YEARS = re.compile(r"(?<!\w)'?\d{2,4}s?(?!\w)")
+_MEDIA_WORDS = {"archival", "footage", "stock", "photograph", "photo", "image", "picture", "film", "video", "clip",
+                "reel"}
+# "X, then Y" style connectors at a clause boundary: everything after the first one is a second moment (run 2:
+# split-panel collages). A bare 'then' ('back then', 'by then', 'then 21') or 'followed by' inside one clause
+# ('a dog team followed by children') is one moment and stays whole.
+_THEN = re.compile(r"\s*(?:[,;]\s*(?:and\s+)?then\b(?!\s+\d)|\band\s+then\b|[,;]\s*followed\s+by\b|"
+                   r"\bbefore\s+cutting\s+to\b)", re.I)
+_FIRST_LATER = re.compile(r"^\s*first\s+(.+?),?\s+later\b", re.I | re.S)
+
+
+def one_moment(text: str) -> str:
+    """Only the first moment of a multi-moment description ("X, then Y", "X followed by Y", "first X, later Y").
+    One moment is one continuous photograph; a second moment makes the image model draw panels."""
+    m = _FIRST_LATER.match(text)
+    head = (m.group(1) if m else _THEN.split(text, 1)[0]).strip(" ,;")
+    return head if len(head.split()) >= 2 and head != text.strip(" ,;") else text.strip()
+
+
+def _content_words(text: str) -> list[str]:
+    from ..shots.ideas import STOP
+    text = _YEARS.sub(" ", _LEADING.sub("", text.strip()))
+    return [w for w in re.findall(r"[^\W\d_]{2,}", text.casefold()) if w not in STOP and w not in _MEDIA_WORDS]
+
+
+def is_stub(shot: Shot, title: str = "") -> bool:
+    """True when the intent names no subject: under 3 content words once the media phrase, years and stop words
+    go ('Archival footage of a sea, 1920s'), or only words of the video title (the title pasted in)."""
+    words = _content_words(shot.intent)
+    titled = set(_content_words(title))
+    return len(words) < 3 or (bool(titled) and all(w in titled for w in words))
+
+
+def _shown(shot: Shot, stub: bool, title: str = "") -> list[str]:
+    """must_show items for the prompt; with a stub intent, items that only repeat the stub or the title go."""
+    if not stub:
+        return list(shot.must_show)
+    known = set(_content_words(shot.intent)) | set(_content_words(title))
+    return [m for m in shot.must_show if not all(w in known for w in _content_words(m))]
+
+
+def shot_window_text(shot: Shot, ctx: Any) -> str:
+    """Narration words spoken during the shot; under 6 words widens the window up to 3 s each side."""
+    from ..models import Narration
+    try:
+        nar = ctx.maybe_load("narration", Narration)
+    except Exception:  # noqa: BLE001  no narration yet (or a test context)
+        nar = None
+    words = nar.words if nar else []
+    got: list[str] = []
+    for pad in (0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0):
+        got = [w.text for w in words if w.end > shot.start - pad and w.start < shot.end + pad]
+        if len(got) >= 6:
+            break
+    return " ".join(got)
+
+
+def _title(ctx: Any) -> str:
+    from ..models import Script
+    try:
+        script = ctx.maybe_load("script", Script)
+    except Exception:  # noqa: BLE001
+        return ""
+    return script.title if script else ""
+
+
+def letterbox_ratio(ctx: Any) -> Optional[float]:
+    """The film's letterbox ratio (only the middle band shows); None when letterbox is off."""
+    lb = getattr(getattr(ctx, "profile", None), "letterbox", None)
+    if lb is None:
+        return DEFAULT_LETTERBOX
+    return float(lb.ratio) if lb.enabled and lb.ratio else None
+
+
+BRIEF_SYSTEM = (
+    "You plan one documentary still for a photographic image model. The narration spoken during the shot is "
+    "what the picture must show; the beat narration and the video title are context (use the title for the "
+    "place); the director intent and must show are secondary. Decide who or what acts (with the count), the "
+    "action, the object acted on, the real place by name plus its physical look (terrain, vegetation, "
+    "buildings), the period (a year or a decade), and ONE moment: one sentence for one continuous photograph, "
+    "never a sequence. When the moment is about a named real person, describe the context instead (the place, "
+    "the object, the event, figures seen from behind or at a distance, no face) and list the person in people. "
+    'Return JSON {"agent": "<who or what acts, with count>", "action": "...", "object": "...", '
+    '"place": "<name, terrain, vegetation, buildings>", "era": "<year or decade>", '
+    '"people": ["<named real persons the picture would show>"], "moment": "<one sentence>"}.')
+BRIEF_TEXT_KEYS = ("agent", "action", "object", "place", "era", "moment")
+
+
+def _scalar(v: Any) -> Optional[str]:
+    """A brief field as text: strings as they are, numbers (an era of 1925) as digits, nothing as ''; None for
+    lists and objects, which are not a field value."""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return f"{v:g}"
+    return None
+
+
+def _valid_brief(raw: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    vals = {k: _scalar(raw.get(k)) for k in BRIEF_TEXT_KEYS}
+    if any(v is None for v in vals.values()) or not vals["moment"].strip():
+        return None
+    people = raw.get("people") or []
+    people = people if isinstance(people, list) else [people]
+    names = [p.get("name") if isinstance(p, dict) else p for p in people]
+    out: dict[str, Any] = {k: no_em_dash(" ".join(v.split())) for k, v in vals.items()}
+    out["people"] = [n.strip() for n in names if isinstance(n, str) and n.strip()]
+    return out
+
+
+def scene_brief(shot: Shot, ctx: Any) -> dict[str, Any]:
+    """agent, action, object, place, era, people, moment and stub for the shot, from one editor call grounded
+    in the narration spoken during the shot. A stub intent never reaches the prompt: its moment comes from the
+    narration. An unusable answer falls back to must_show, the de-stubbed intent or the narration."""
+    from ..judge.judge import narration_by_beat
+    window = shot_window_text(shot, ctx)
+    beat = narration_by_beat(ctx).get(shot.beat_id, "")
+    title = _title(ctx)
+    stub = is_stub(shot, title)
+    shown = _shown(shot, stub, title)
+    user = "\n".join(
+        [f"Narration during this shot (primary): {window or beat or '(none)'}"]
+        + ([f"Beat narration (context): {beat}"] if beat else [])
+        + ([f"Video title (context for the place): {title}"] if title else [])
+        + ([] if stub else [f"Director intent (secondary): {shot.intent}"]
+           + ([f"Must show (secondary): {'; '.join(shown)}"] if shown else [])))
+    try:
+        raw = ctx.seats.llm_json("editor", "ai_scene_brief", BRIEF_SYSTEM, user, ctx.stage or "judge",
+                                 temperature=0.2)
+    except Exception as e:  # noqa: BLE001  the fallback brief still gives a picture
+        ctx.log.warn("ai scene brief failed", shot=shot.id, error=str(e)[:200])
+        raw = None
+    brief = _valid_brief(raw)
+    if brief is None:
+        ctx.log.warn("ai scene brief unusable, built from must_show and the narration", shot=shot.id)
+        intent = _LEADING.sub("", shot.intent.strip().rstrip("."))
+        brief = {"agent": shown[0] if shown else "", "action": "", "object": ", ".join(shown[1:]),
+                 "place": "", "era": "", "people": [],
+                 "moment": no_em_dash(window or beat or intent if stub else intent)}
+    brief["moment"] = one_moment(brief["moment"])
+    brief["stub"] = stub
+    return brief
+
+
+def _brief_prompt(brief: dict[str, Any], shown: list[str]) -> str:
+    """Moment and must_show items; place and period are added after the name removal (_lock)."""
+    moment = brief["moment"].strip().rstrip(".")
+    parts = [(moment[:1].upper() + moment[1:] + ".") if moment else "Documentary scene."]
+    if shown:
+        parts.append(f"Clearly showing: {', '.join(one_moment(m) for m in shown)}.")
+    return " ".join(parts)
+
+
+def _lock(brief: dict[str, Any]) -> str:
+    """'Place: ... Period: ...' from the brief. It is added after safe_prompt, because a heuristic name guess
+    (when the editor gives no answer) deletes capitalised words and would take the place names with it."""
+    return " ".join(f"{label}: {brief[k].strip().rstrip('.')}." for label, k in (("Place", "place"), ("Period", "era"))
+                    if brief.get(k, "").strip())
+
+
 def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None, problem: str = "") -> Candidate:
-    """Generate one still for the shot and return it as an ai_image candidate (not appended). The rewrite is
-    grounded in the beat's narration; every still after a shot's first is a retry in the cost report.
+    """Generate one still for the shot and return it as an ai_image candidate (not appended). The prompt comes
+    from the scene brief (one moment, must_show, place, period, house style); an explicit prompt (operator
+    regenerate) wins over the brief and still keeps one moment and the house style. The rewrite is grounded in
+    the shot's and the beat's narration; every still after a shot's first is a retry in the cost report.
     A retry's problem (the judge's reason) adds a positive "Must clearly show" line and goes to the rewrite as
     context only. The negative prompt comes from the base prompt alone, so a reason such as 'no sled' never
-    turns the sled into a negative."""
+    turns the sled into a negative. People the brief names never reach the image model; the shot is flagged
+    so a real photo of them can be preferred."""
     from ..judge.judge import narration_by_beat
-    text = build_prompt(shot, prompt)
+    brief = scene_brief(shot, ctx)
+    shown = _shown(shot, brief["stub"], _title(ctx))
+    # An operator's explicit prompt is kept whole (it carries their prompt delta); without one, the brief writes
+    # the prompt. shot.ai_prompt is not used: the shot planner writes it from the intent, which is where stub
+    # prompts came from.
+    base = prompt if prompt else _brief_prompt(brief, shown)
+    text = build_prompt(shot, f"{base.strip().rstrip('.')}. {house_style(letterbox_ratio(ctx))}")
     if problem:
-        text = build_prompt(shot, f"{text} Must clearly show: {', '.join(shot.must_show) or shot.intent}.")
-    text = safe_prompt(text, ctx, keep=shot.must_show, narration=narration_by_beat(ctx).get(shot.beat_id, ""),
-                       problem=problem)
+        text = build_prompt(shot, f"{text} Must clearly show: {', '.join(shown) or brief['moment']}.")
+    if brief["people"]:
+        # the named person's context, never their likeness: run 2 drew a named spectator's face in close-up
+        text = f"{text} Every person is small in the frame or seen from behind; no face fills the frame."
+        if "real_person_photo_wanted" not in shot.flags:
+            shot.flags.append("real_person_photo_wanted")
+    narration = " ".join(dict.fromkeys(x for x in (shot_window_text(shot, ctx),
+                                                    narration_by_beat(ctx).get(shot.beat_id, "")) if x))
+    text = safe_prompt(text, ctx, keep=shot.must_show, narration=narration, problem=problem, names=brief["people"])
+    lock = _lock(brief)
+    if lock and lock not in text:
+        text = f"{text.rstrip()} {lock}"
     n = next_ai_index(shot, ctx.work)
     out = ctx.work / "ai" / f"{shot.id}_{n}.png"
     path, is_mock = _call_image(ctx, text, negative_prompt(shot, prompt), out, "image" if n == 1 else "image retry")
@@ -339,7 +540,8 @@ def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None, pr
     ctx.log.info("ai image generated", shot=shot.id, mock=is_mock, path=str(path), prompt=text[:300])
     return Candidate(id=f"{shot.id}_ai_image_{n}", source=SourceKind.ai_image, local_path=str(path), media="image",
                      width=width, height=height, licence="AI generated", attribution="AI generated image",
-                     title="AI generated still", keyframes=[str(path)], flags=["mock"] if is_mock else [])
+                     title="AI generated still", keyframes=[str(path)], flags=["mock"] if is_mock else [],
+                     brief=brief, prompt=text)
 
 
 def _call_image(ctx: Any, text: str, negative: str, out: Path, note: str = "image") -> tuple[Path, bool]:

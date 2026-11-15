@@ -90,11 +90,15 @@ def _animation_checks(sl: ShotList, facts: dict[str, Any], words: list[Word], to
     number cards are structural, so a top 10 video skips the runtime check), a text or number card holds only
     briefly, some map or chart rides on footage or a still as an inset, and the overlays on the picture are
     honest: no on-screen text repeats the narration, and text overlays appear when their words are spoken
-    (overlay count is a ceiling, not a quota, so a shot with nothing to add stays plain)."""
-    from .judge.qa import OVERLAY_TIMING_MAX_S, animation_share, overlay_text_stats
+    (overlay count is a ceiling, not a quota, so a shot with nothing to add stays plain). The fact
+    all_text_on_cue holds every piece of on-screen text (map and chart titles and every card included) to the
+    same rule and is reported, not gated, until the shot planner anchors map, chart and number overlays."""
+    from .judge.qa import OVERLAY_TIMING_MAX_S, animation_share, overlay_text_stats, screen_time
     anim = animation_share(sl)
     text = overlay_text_stats(sl, words)
     facts["animation"], facts["overlay_text"] = anim, text
+    facts["screen_time_pct"] = screen_time(sl)[0]
+    facts["all_text_on_cue"] = text["all_verbatim_pct"] == 0 and text["early"] == 0 and text["late"] == 0
     return {"cards_sparing": anim["full_screen_cards"] <= CARD_SHARE_MAX,
             "card_time_sparing": top10 or anim["full_screen_card_time"] <= CARD_TIME_MAX,
             "card_hold_short": anim["max_card_hold_s"] <= PacingProfile().card_hold_max + CARD_HOLD_SLACK_S,

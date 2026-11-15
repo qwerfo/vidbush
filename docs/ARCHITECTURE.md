@@ -107,14 +107,16 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | source/registry.py | `source_all(shotlist, ctx) -> ShotList`, `source_shot(shot, ctx, queries=None) -> list[Candidate]` | parallel adapters, cap 8, sidecars |
 | judge/director_loop.py | `judge_and_select(shotlist, ctx) -> ShotList` | score, select, re-query, convert to ai_image, never empty |
 | visuals/prepare.py | `prepare_visuals(shotlist, ctx) -> ShotList` | derived crops, optional DepthFlow and ai_video |
-| visuals/ai_images.py | `generate_ai_candidate(shot, ctx, prompt=None) -> Candidate` | image seat, configured provider order |
+| visuals/ai_images.py | `generate_ai_candidate(shot, ctx, prompt=None, problem='') -> Candidate`, `scene_brief(shot, ctx) -> dict`, `shot_window_text(shot, ctx)`, `is_stub(shot, title)`, `one_moment(text)` | prompt from a scene brief of the shot's narration window (agent, action, object, place, era, people, one moment); stub intents never become prompts; composed for the letterbox band; named people shown as context and flagged `real_person_photo_wanted`; names removed by the editor seat (`safe_prompt`); brief and prompt stored on the candidate |
+| judge/ai_checks.py | `check_still(shot, cand, ctx) -> dict` | one vision call per AI still, seven fixed ok or not questions (subject, count, setting, one image, no text, no named face, framing) on the still cropped to the letterbox band; a not-ok answer sets `reject_reason` so `director_loop.add_ai` regenerates with the reason as context |
 | mg/renderer.py | `render_spec(spec, out_path, alpha, settings) -> Path`, `render_all_motion(shotlist, ctx) -> (ShotList, list[Path])` | python or remotion, cached by spec hash |
 | mg/routes.py | `route_points(a, b, via) -> list[[lat, lon]] or None`, `infer_via(*texts) -> str`, `path_miles(points) -> float` | rail, road, river: snap within 10 km and Dijkstra over the bundled line layer; sea, air: dashed great circle; line (no mode named): rail, then road (`modes(via)`); trail: none |
 | render/captions.py | `group_words(words, style) -> list[CaptionLine]`, `build_captions(narration, profile, out_root, settings) -> list[Path]`, `write_ass_window(lines, profile, t0, t1, path, w, h) -> Path`, `caption_geometry(profile, w, h) -> dict` | one line, 3 to 5 words, fixed band height |
 | audio/music.py | `build_mix(narration, script, shotlist, brand, profile, settings, work_dir, log, rng) -> Path` | writes work/mix.wav at -14 LUFS, ducked bed |
 | render/assemble.py | `assemble(shotlist, ctx) -> (Path, ShotList)` | per-shot segments with cache, concat, intro/outro, mux |
 | render/package.py | `package(shotlist, ctx) -> list[Path]` | chapters, description, thumbnails |
-| judge/qa.py | `build_qa(shotlist, ctx) -> list[Path]` | post-render judge pass, qa_report.json and .md |
+| judge/qa.py | `build_qa(shotlist, ctx) -> list[Path]`, `judge_rendered(shotlist, frames, ctx, words)`, `local_checks(...)`, `overlay_text_stats(shotlist, words)`, `screen_time(shotlist)` | post-render frame check: frames from each shot's own window (`shot_times`), judged against the narration spoken during the shot with named checks plus code checks (text timing, repeats, filler, same picture); screen time by what is on screen (selected candidate, not planned type); every on-screen text item measured; qa_report.json and .md opening with a five-line summary |
+| scripts/qa_calibration.py | `review_labels(review)`, `compare(...)` | runs the frame check over a finished render read only and compares it with a frame review (recall, false alarms); scripts/regen_ai_shots.py regenerates chosen AI shots into a scratch copy |
 | editor/ops.py | `apply_ops(settings, project_id, ops) -> EditResult`, `apply_and_render(settings, project_id, ops, echo=True) -> EditResult` | fixed EditOp vocabulary |
 | editor/revise.py | `map_message(settings, project_id, message) -> list[EditOp]` | editor seat with rule-based fallback |
 | review/store.py | `load(settings, id) -> Review`, `update_shot(settings, id, shot, verdict=, comment=, rejects=)`, `set_project_comment`, `mark_fixed`, `progress` | review.json, reconciled with the shot list on every load |
@@ -197,7 +199,9 @@ them to footage_overlay and image_overlay in the footage to still ratio of
 the picture mix. Documentary default: footage 20, footage_overlay 47.2,
 image 7, image_overlay 20.8, motion_graphic 5. The old `motion_graphic` key
 is read as `full_screen_cards`. QA reports the shot type mix against
-`shot_mix()` and an animation table (full screen cards, shots with an
+`shot_mix()` by rendered type (a shot whose pick is an AI still counts as
+`ai_image` whatever it was planned as), screen time by what is really on
+screen (real footage, real still, AI still, AI video, graphic) and an animation table (full screen cards, shots with an
 overlay, map and chart insets).
 
 ## Captions geometry

@@ -437,6 +437,11 @@ class Candidate(Model):
     reject_reason: Optional[str] = None
     flags: list[str] = Field(default_factory=list)  # nc_nd, mock, judge_mock, low_res, anachronism, depthflow, fixture_rotation, frame_grab, off_topic
     crop: Optional[list[float]] = None  # derived framing [x, y, w, h] in 0..1
+    # AI stills only: the scene brief the prompt was built from (agent, action, object, place, era, people,
+    # moment), the prompt sent to the image model, and the fixed-question check (judge/ai_checks.py).
+    brief: dict[str, Any] = Field(default_factory=dict)
+    prompt: str = ""
+    checks: dict[str, Any] = Field(default_factory=dict)
 
 
 class Shot(Model):
@@ -787,6 +792,12 @@ class QAShot(Model):
     attempts: int = 0
     flags: list[str] = Field(default_factory=list)
     post_render_score: Optional[float] = None
+    # What is really on screen (real_footage, real_still, generated_still, generated_video, graphic), the
+    # narration spoken during the shot, the frame checks that failed and whether the rendered shot fails.
+    on_screen: str = ""
+    window_text: str = ""
+    checks_failed: list[str] = Field(default_factory=list)
+    failed: bool = False
 
 
 class FallbackNote(Model):
@@ -823,6 +834,13 @@ class QAReport(Model):
     # On-screen text against the narration: text_items, timing_error_s (median gap between a text overlay and its
     # anchor word), unanchored (text overlays whose anchor is not spoken near them), verbatim_pct.
     overlay_text: dict[str, float] = Field(default_factory=dict)
+    # Screen time by what is really on screen, in percent of the runtime and in seconds; rendered shots that
+    # fail their frame check; the five worst moments; the five-line summary that opens qa_report.md.
+    screen_time: dict[str, float] = Field(default_factory=dict)
+    screen_time_s: dict[str, float] = Field(default_factory=dict)
+    pct_fail_rendered: float = 0.0
+    worst: list[str] = Field(default_factory=list)
+    summary: list[str] = Field(default_factory=list)
 
 
 ALL_MODELS: dict[str, type[BaseModel]] = {
