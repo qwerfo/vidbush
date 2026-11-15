@@ -97,7 +97,7 @@ def call_image(ctx: Any, spec: ProviderSpec, fn: Any, note: str, model: str = ""
     The spec carries the art model, so health is tracked per model: one model's outage (Elevate answered
     "temporarily unavailable" for gemini_flash_image three times on 2026-11-15) never marks the other art
     model or the seat's own stills model down."""
-    if model and model != spec.model:
+    if model and model != getattr(spec, "model", model) and dataclasses.is_dataclass(spec):
         spec = dataclasses.replace(spec, model=model)
     return ctx.seats.client.call("image", ctx.stage or "visuals", [spec], fn, note)
 

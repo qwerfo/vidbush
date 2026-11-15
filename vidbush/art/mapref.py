@@ -127,6 +127,16 @@ def inland_water(p: MapPayload, width: int = 768, height: int = 432) -> np.ndarr
     return _base(p, width, height, view_key(p)["zoom"]).inland_water()
 
 
+PAINT_SHARE = 0.12  # a view is painted only when sea and land each cover at least this share of it
+
+
+def paintable(mask: np.ndarray) -> bool:
+    """Enough coastline to hold a painting to the view: on views that were almost all land, every model painted
+    an oblique scene (perspective mountains, a train) instead of the map, and registration rightly failed them."""
+    share = float((mask > 127).mean())
+    return PAINT_SHARE <= share <= 1.0 - PAINT_SHARE
+
+
 def checkable(mask: np.ndarray) -> bool:
     """A coastline can be checked only when the view holds both land and water."""
     share = float((mask > 127).mean())

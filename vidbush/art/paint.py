@@ -81,8 +81,8 @@ def paint_reason(spec: MotionSpec, window: str) -> Optional[str]:
         return "shaded region (a border point)"
     if PRECISE_WORDS.search(f"{window} {p.title}"):
         return "narration makes a precise point"
-    if not mapref.checkable(mapref.land_mask(p, 384, 216)):
-        return "no coastline to check registration against"
+    if not mapref.paintable(mapref.land_mask(p, 384, 216)):
+        return "too little coastline to hold a painting to the view"
     return None
 
 

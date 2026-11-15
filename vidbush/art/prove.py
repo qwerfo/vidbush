@@ -83,15 +83,26 @@ def build_map(places: list[str], start: float, end: float) -> Optional[MotionSpe
     if not hits:
         return None
     title = ", ".join(h[0] for h in hits[:2])
-    return builders.map_spec(hits[:3], duration=max(6.0, min(9.0, end - start)), title=title, push_in=True)
+    spec = builders.map_spec(hits[:3], duration=max(6.0, min(9.0, end - start)), title=title, push_in=True)
+    # an establishing map shows the place in its region: at regional zoom the coast is distinctive enough for a
+    # painter to trace, where a zoom 6 delta or fjord coast defeated every model in the proving run
+    p = spec.typed_payload()
+    if p.zoom > ESTABLISH_ZOOM:
+        p.zoom = ESTABLISH_ZOOM
+        p.zoom_end = min(p.zoom_end or ESTABLISH_ZOOM + 0.4, ESTABLISH_ZOOM + 0.4)
+        spec.payload = p.model_dump()
+    return spec
+
+
+ESTABLISH_ZOOM = 5.2
 
 
 def widen_until_checkable(spec: MotionSpec, steps: int = 3) -> MotionSpec:
     """A view without a coastline cannot be registered; widen it (lower zoom, same center) until it can."""
-    from .mapref import checkable, land_mask
+    from .mapref import land_mask, paintable
     p = spec.typed_payload()
     for _ in range(steps):
-        if checkable(land_mask(p, 384, 216)):
+        if paintable(land_mask(p, 384, 216)):
             break
         p.zoom = max(1.5, p.zoom - 0.8)
         if p.zoom_end is not None:
@@ -180,6 +191,9 @@ class Prove:
                 break
             try:
                 start, end = float(m.get("start", 0)), float(m.get("end", 0))
+                if set(map(str, m["places"])) & set(self.args.skip_places):
+                    self.add({"type": "map_skipped", "start": start, "places": m["places"], "reason": "skipped place"})
+                    continue
                 spec = build_map([str(x) for x in m["places"]][:3], start, end)
                 if spec is None:
                     self.add({"type": "map_skipped", "start": start, "places": m["places"], "reason": "no place found"})
@@ -196,6 +210,14 @@ class Prove:
                 seen.add(vk)
                 _wait_cap(self.spec, self.args.image_cap, self.ctx.log)
                 rep = P.paint_map(p, window, self.ctx, out, tag=f"m{done}")
+                if rep["variants"] and all(v.get("error") for v in rep["variants"]):
+                    # the image lane was failing (every variant errored, nothing was judged): wait for it once
+                    self.ctx.log.info("art prove: every variant errored, waiting 5 minutes and retrying once")
+                    time.sleep(300)
+                    from ..providers.base import HEALTH
+                    for model in {self.ctx.profile.art.map_model, self.ctx.profile.art.map_fallback_model}:
+                        HEALTH.mark_up(f"{self.spec.name}:{model}")
+                    rep = P.paint_map(p, window, self.ctx, out, tag=f"m{done}")
                 item = {"type": "illustrated_map", "start": start, "end": end, "window": window, "places": m["places"],
                         "why": m.get("why", ""), "spec": spec.model_dump(mode="json"), "report": rep,
                         "ok": bool(rep.get("base"))}
@@ -354,6 +376,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--ai-clips", type=int, default=4)
     ap.add_argument("--image-cap", type=float, default=300.0)
     ap.add_argument("--stop-clips-at", default="")
+    ap.add_argument("--skip-places", nargs="*", default=[], help="place names the gazetteer resolves wrongly")
     ap.add_argument("--only", default="", choices=["", "ai-clips", "extra-illustrations", "maps"])
     args = ap.parse_args(argv)
     Prove(args).run()
