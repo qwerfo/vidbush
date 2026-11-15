@@ -100,11 +100,19 @@ def archival_still(cand: Candidate) -> bool:
 
 # ---------------------------------------------------------------- branding notes
 
-_BRAND_RE = re.compile(r"subscrib\w*|\bbell (?:icon|button)s?|notification bell|channel (?:name|branding|intro|outro)|"
-                       r"\bbrand(?:ing|ed)\b|\bend[ -]?(?:card|screen)s?|\bwatermark\w*|\blogos?\b", re.I)
+_BRAND_RE = re.compile(r"\bsubscrib(?:e|ing)\b|\bbell (?:icon|button)s?|notification bell|"
+                       r"channel (?:name|branding|intro|outro)|\bbrand(?:ing|ed)\b|\bend[ -]?(?:card|screen)s?|"
+                       r"\bwatermarks?\b|\blogos?\b", re.I)  # subscribe as a call to action, not "subscribers"
 _CLAUSE_RE = re.compile(r"[.;,:!?()]|\b(?:but|though|although|while|yet|plus|and|however|except)\b", re.I)
+_AFTER_END_RE = re.compile(r"[.;,!?()]|\b(?:but|though|although|while|yet|plus|and|however|except)\b", re.I)
 _NEG_RE = re.compile(r"\b(?:no|not|without|free of|nor|lacks?|lacking|absent|zero|never|none)\b|n't\b", re.I)
-_NEG_AFTER_RE = re.compile(r"^\W*(?:is |are )?(?:none|absent|not (?:visible|present|shown))\b", re.I)
+# negated after the note: "logo-free", "watermark free", ": none", "... is absent", "are not visible"
+_NEG_AFTER_RE = re.compile(r"^[\s-]*(?:free|less)\b|^\W*(?:none|absent)\b|"
+                           r"\b(?:is|are)\s+(?:none|absent)\b|\bnot (?:visible|present|shown)\b", re.I)
+_ITEM = r"\w[\w'-]*(?:\s+\w[\w'-]*){0,2}"  # a list item of up to three words
+# a negated list: "no people, watermark or text" negates every item up to the last joiner
+_NEG_LIST_RE = re.compile(rf"\b(?:no|without|free of)\s+{_ITEM}(?:\s*,\s*{_ITEM})*\s*,?\s+(?:or|and|nor)\s+{_ITEM}",
+                          re.I)
 
 
 def branding_note(text: str, brief: str = "") -> str:
@@ -114,13 +122,16 @@ def branding_note(text: str, brief: str = "") -> str:
     itself asks for (a railway logo as the subject).
     """
     text = text or ""
+    lists = [(n.start(), n.end()) for n in _NEG_LIST_RE.finditer(text)]
     for m in _BRAND_RE.finditer(text):
         word = m.group(0).lower()
         if brief and re.search(r"\b" + re.escape(word.rstrip("s")), brief, re.I):
             continue
         cuts = [c.end() for c in _CLAUSE_RE.finditer(text, 0, m.start())]
-        after = re.split(r"[.;,!?]", text[m.end():], maxsplit=1)[0]
-        if _NEG_RE.search(text[cuts[-1] if cuts else 0:m.start()]) or _NEG_AFTER_RE.match(after):
+        end = _AFTER_END_RE.search(text, m.end())
+        after = text[m.end():end.start() if end else len(text)]
+        if (_NEG_RE.search(text[cuts[-1] if cuts else 0:m.start()]) or _NEG_AFTER_RE.search(after)
+                or any(a <= m.start() and m.end() <= b for a, b in lists)):
             continue
         return word
     return ""

@@ -101,6 +101,17 @@ def test_picture_kind_is_the_one_classifier(monkeypatch):
     ("Vintage bar; no modern elements or logos.", ""),
     ("Clear harbour; watermark: none", ""),
     ("Liberty Bell in Philadelphia, free of watermarks", ""),
+    ("No people, watermark or text", ""),
+    ("Without people, text, or logos", ""),
+    ("Clean watermark-free archival photo", ""),
+    ("Fits narration, logo-free frame", ""),
+    ("watermark free image of dogs", ""),
+    ("Great shot. Channel name in lower third is absent", ""),
+    ("Newspaper delivered to subscribers in 1920", ""),
+    ("Not a perfect match, watermark or logo in corner", "watermark"),
+    ("Watermark visible in corner, subject not visible", "watermark"),
+    ("Station logo in corner while the tower is not visible", "logo"),
+    ("asks viewers to subscribe at the end", "subscribe"),
 ])
 def test_branding_note_reads_reason_text_and_respects_negation(text, hit):
     assert J.branding_note(text) == hit
