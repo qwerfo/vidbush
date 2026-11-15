@@ -85,6 +85,11 @@ class SourceKind(str, Enum):
     ai_video = "ai_video"
     upload = "upload"
     motion = "motion"  # rendered motion graphic
+    # designed animation (vidbush/art): openly illustrated, never posing as a photograph; counted apart
+    # from photo-style AI stills
+    illustrated_map = "illustrated_map"  # painted base of a true map view (registration checked)
+    illustration = "illustration"  # still in the brand's declared illustration style
+    art_video = "art_video"  # generated clip whose first frame is an illustration or painted map
 
 
 class StageStatus(str, Enum):
@@ -321,6 +326,8 @@ class MapPayload(Model):
     labels: list[MapLabel] = Field(default_factory=list)
     shaded_regions: list[str] = Field(default_factory=list)  # country, state or province names, or ISO A3
     title: str = ""
+    art_base: str = ""  # painted base image of this view (vidbush/art), used instead of the drawn land and water
+    art_clip: str = ""  # checked clip of the painted base (subtle water and cloud motion), used when no push-in
 
 
 class ChartSeries(Model):
@@ -604,6 +611,26 @@ def default_visual_mix() -> dict[str, float]:
             OVERLAYS_KEY: 37, "ai_image": 0, "ai_video": 0}
 
 
+class ArtProfile(Model):
+    """Art layer shares (vidbush/art). Every default is off: a profile that sets none gets no art."""
+
+    illustrated_maps: float = 0.0  # share of map slots that may get a painted base (only maps that establish a place)
+    illustrations: float = 0.0  # share of shots that may get a declared-style illustration
+    clip_every_s: float = 0.0  # one generated clip per this many seconds of runtime (0 = no clips)
+    clip_opening_s: float = 60.0  # the opening is served first: it needs motion most
+    clip_min_s: float = 3.0
+    clip_max_s: float = 5.0
+    map_variants: int = 3  # paintings per map view; the best registered one is kept
+    illustration_variants: int = 2
+    map_repeat_s: float = 180.0  # never two illustrated maps of the same view within this window
+    map_model: str = "nano_banana_pro"
+    map_fallback_model: str = "gemini_flash_image"
+    illustration_model: str = "nano_banana_pro"
+    clip_resolution: str = "1080p"
+    clip_from_ai_stills: bool = True  # photo-style AI stills may come alive; real photographs never do
+    hour_credit_cap: float = 0.0  # skip new art while the key has used this many image credits this hour (0 = none)
+
+
 class StyleProfile(Model):
     id: str
     name: str = ""
@@ -615,6 +642,7 @@ class StyleProfile(Model):
     colour: ColourGrade = Field(default_factory=ColourGrade)
     music: MusicStyle = Field(default_factory=MusicStyle)
     motion: MotionStyle = Field(default_factory=MotionStyle)
+    art: ArtProfile = Field(default_factory=ArtProfile)
     palette: str = "documentary_warm"
     top10: bool = False  # number cards, item lower thirds, recap grid
     provenance: dict[str, Any] = Field(default_factory=dict)
@@ -682,6 +710,8 @@ class Brand(Model):
     outro_path: Optional[str] = None
     blocklist: list[str] = Field(default_factory=list)
     niche_notes: str = ""
+    # one style line applied to every illustration in a video so they read as one set (vidbush/art)
+    illustration_style: str = ""
     language: str = "en"
     licence_policy: LicencePolicy = Field(default_factory=LicencePolicy)
 

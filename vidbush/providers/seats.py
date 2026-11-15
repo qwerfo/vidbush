@@ -27,6 +27,7 @@ from . import search as search_mod
 from . import tts as tts_mod
 from . import tts_algrow
 from . import tts_elevate
+from . import video_elevate
 from .base import HEALTH, CallResult, CostTracker, ProviderClient, ProviderError, ProviderSpec, is_placeholder_model
 
 ROLES = ["researcher", "writer", "director", "judge", "editor", "cheap_classifier", "image", "video",
@@ -48,6 +49,8 @@ TTS_TYPES: dict[str, Any] = {
     "algrow_tts": tts_algrow,
     "elevate_tts": tts_elevate,
 }
+# Video provider types with their own module (generate_video, same signature as video.py); others use video.py
+VIDEO_TYPES: dict[str, Any] = {"elevate_video": video_elevate}
 # LLM and vision provider types to the module whose chat() serves them (same contract as llm.chat);
 # looked up at call time so tests and hot fixes can replace a module's chat
 LLM_TYPES: dict[str, Any] = {
@@ -412,6 +415,7 @@ class Seats:
         """Image to video seat. Off by default; returns None when unavailable."""
         def fn(spec: ProviderSpec) -> CallResult:
             from .video import generate_video
+            generate_video = getattr(VIDEO_TYPES.get(spec.type), "generate_video", generate_video)  # fal: video.py
             return generate_video(spec, prompt, still, out_path, seconds, self.settings.cost.video_per_second_usd)
 
         res = self._call("video", stage, fn, lambda: mock.mock_video(prompt, still, out_path, seconds), note="video")

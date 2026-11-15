@@ -27,3 +27,7 @@ colour: {lut_path: null}
 music: {ducking_depth_db: 12, attack_ms: 80, release_ms: 600, bed_gain_db: -18, scene_crossfade_s: 1.5}
 motion: {ken_burns_intensity: 0.12, depthflow: false}
 top10: false
+# Art layer (vidbush/art, run 3): designed visuals, openly illustrated, counted as animation. Modest shares:
+# half of the maps that only establish a place get a painted base (precise maps stay plain), about one
+# shot in twenty an illustration, one generated clip per 90 s with the opening 60 s served first.
+art: {illustrated_maps: 0.5, illustrations: 0.05, clip_every_s: 90, clip_opening_s: 60}

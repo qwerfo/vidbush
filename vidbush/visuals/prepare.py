@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..art.plan import apply_art
 from ..models import ShotList, ShotType
 from . import depthflow
 from .ai_video import animate_still
@@ -19,6 +20,7 @@ def prepare_visuals(shotlist: ShotList, ctx: Any) -> ShotList:
     """Apply derived framings, clip variation, ai_video and optional DepthFlow. Returns the shot list."""
     crops = derive_crops(shotlist, ctx)
     clips = vary_repeated_video(shotlist, ctx)
+    apply_art(shotlist, ctx)  # run 3 art layer: illustrated maps, illustrations, clips (off unless the profile asks)
     videos = upgrade_ai_video(shotlist, ctx)
     parallax = apply_depthflow(shotlist, ctx)
     ctx.log.info("visuals prepared", derived_crops=crops, varied_clips=clips, ai_videos=videos,

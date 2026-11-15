@@ -21,6 +21,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from ..art import hooks as art_hooks
 from ..config import REPO_ROOT
 from . import easing as ez
 from .palettes import RGB, mix
@@ -137,6 +138,7 @@ class MapBase:
         self.countries = load_layer(name)
         self.k = comp.k * self.S
         self.plain = self._render()
+        self.plain = art_hooks.painted_base(self, self.plain)  # run 3 art layer: painted base of this view
         self.shaded = self._shade(self.plain) if comp.p.shaded_regions else None
         self.half = None if self.S < 1.6 else self._halves()
 
@@ -474,6 +476,7 @@ class MapComp(CompBase):
         t = i / self.fps
         z = self.zoom_at(t)
         frame = self.base.view(z, ez.ease_in_out_cubic(ez.progress(t, 0.3, 1.4)))
+        frame = art_hooks.moving_base(self, i, frame)  # run 3 art layer: checked clip of the painted base
         cv2.multiply(frame, self.vig, dst=frame, scale=1 / 255.0)
         self.glow.clear()
         self._draw_routes(frame, t, z)
