@@ -345,3 +345,32 @@ One line each: the decision and why.
 - Run 2 ran detached as alaska_run2 from run 1's script copy, brand default, with stdout and stderr in data\_run2.log as the brief asks; every other log (test suites, probes, serve, review frames) goes to E:\coding projects\Vidbush\logs or review_run2.
 - The sourcing and AI prompt fixes found during run 2 were merged after its sourcing and judge stages had loaded their modules, so run 2 itself ran on the code of commit 29e8f4c; they first act on run 3.
 - The render was reviewed from extracted frames by area (maps, on-screen text, AI stills, real clips) before the report, because QA scores alone missed defects the frames show (a subscribe button under a 'TOWN' box shipped with judge score 0).
+
+## Run 3: main
+
+- Run 3 main lane started 2026-11-15 12:05 on live-run-3, branched from main after main was fast forwarded to live-run-2 (077c48a; full suite 1185 passed, 17 skipped).
+- Run 1's project.json said packaging "running" although every packaging output existed; it was set to done with the newest output's time as finished_at, and a backup kept beside it.
+- The Pixabay key was copied into .env.local from Adam's CaseFile project (the same key is in fitness-video-factory); NARA_API_KEY was already in this repo's .env.local.
+- Step 2 was built in two worktrees on E: (run3/src for sourcing, run3/sel for judging and selection), each reviewed by two independent reviewers (correctness, requirement compliance) and every confirmed finding fixed before merging.
+- The generated source sets live only in models.py, in three kinds (photo-style AI, designed animation, graphics); judge, prefilter, package and attribution derive from them: the two lanes had defined them separately and disagreed about motion graphics.
+- REAL_BAR 55 and FLOOR 50 are constants in director_loop.py, not settings: they are fixed rules from the brief
+- A borrow never takes a sibling's best candidate or current pick: taking it moves the problem to the sibling (a banned neighbour segment, or the same photo twice in a row)
+- A borrowed copy keeps the donor's score only when the donor's must_avoid covers this shot's must_avoid; otherwise it is re-judged for this shot: one vision call is cheaper than a generated still. Run 2 had identical must_avoid in only 10 of 158 sibling pairs, so most borrows will be re-judged
+- BORROW_TRIES is 3: each try may cost one judge call
+- A borrow is refused if the same asset was shown in the last 60 s or repeats a banned segment
+- If nothing meets the floor and generation fails, keep the least bad candidate (not branded, then not hard-rejected, then by score), flag it below_floor and log a warning: this keeps the never-empty guarantee
+- A shot with no candidates at all still raises if AI generation fails, as before
+- Branding notes count even when the judge calls them minor, and a bare 'logo' stays a note: the floor exists to stop shipped logos, and a logo the brief asks for already passes
+- The small-still rule is based on the native source size, not licence or crop: a crop set by derive is a deliberate zoom and keeps cover scaling
+- DESIGNED_SOURCES starts empty and source values are compared as strings, so the art lane adds its values in one place
+- Commons 'No restrictions' counts as public domain for archival stills
+- Sources that require every word get the first 3 specific words of the query (base.keyword_query): in the run 2 cache Commons, Archive and NASA returned nothing for most of their searches, and their hit rate falls steeply with query length
+- The search cache and a shot's duplicate check are keyed on the query actually sent (registry.sent_query), not the long query: long queries that shorten alike are one request
+- Keyword queries and relevance tokens skip English function words (base.FUNCTION_WORDS): queries taken from narration otherwise become filler such as 'When they were'
+- NARA uses only records whose use and access restrictions are both Unrestricted, licence 'Public domain (US National Archives, unrestricted federal record)': 'Restricted - Possibly' means donor or contractor copyright, which no licence string flags
+- NARA is available only with NARA_API_KEY: without the key the API returns HTTP 200 with its HTML page, not results
+- LoC bot check pauses only loc.gov for 65 minutes (LoC's documented block is 1 hour and restarts on each request made during it); a polite client cannot pass Cloudflare's challenge, and disguising the client is not allowed
+- A host whose token interval is longer than throttle.MAX_WAIT_S gets one search worker (Pexels): its searches queue in the pool and each waits for its own token, instead of being refused
+- The global concurrency cap is at least youtube_download_workers + 2: each yt-dlp download holds a global slot for its whole length
+- Budgets: YouTube 500, Pexels 300, NARA 300 searches per run, paced by host rates, never refused because of them
+- youtube_download_workers 6 and fetch workers 8: run 2 fetching was limited by download slots, and each stream averaged about 0.6 MB/s, far below the line speed
