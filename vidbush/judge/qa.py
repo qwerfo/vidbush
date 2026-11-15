@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import (SHOT_TYPES, STATIC_CARD_KINDS, FallbackNote, MotionKind, MotionSpec, Narration, QAReport, QAShot,
+from ..models import (DESIGNED_SOURCES, GENERATED_SOURCES, SHOT_TYPES, STATIC_CARD_KINDS, FallbackNote, MotionKind, MotionSpec, Narration, QAReport, QAShot,
                       Script, Shot, ShotList, ShotType, SourceKind, Word)
 from ..shots import ideas as I
 from ..util import ToolError, media_duration, read_json, run, write_json
@@ -31,12 +31,13 @@ QA_FLAGS = ("mock", "nc_nd", "standard_youtube_licence", "anachronism", "low_res
             "held_frame", "missing_media", "segment_repeat", "needs_motion_graphic")
 SOURCE_NOTES = "source_notes.json"
 SOURCE_LABELS = {"youtube": "YouTube", "pexels": "Pexels", "pixabay": "Pixabay", "wikimedia": "Wikimedia Commons",
-                 "archive": "Internet Archive", "loc": "Library of Congress", "nasa": "NASA"}
+                 "archive": "Internet Archive", "loc": "Library of Congress", "nasa": "NASA",
+                 "nara": "US National Archives"}
 NO_MATCH_TARGET_PCT = 1.0
 OVERLAY_TIMING_MAX_S = 0.5  # median gap between a text overlay and its anchor word above this reads as off
 MIX_TOLERANCE_PTS = 5.0
 OVERLAY_SIBLING = {"footage": "footage_overlay", "image": "image_overlay"}
-NO_ATTRIBUTION = {SourceKind.motion, SourceKind.ai_image, SourceKind.ai_video}
+NO_ATTRIBUTION = GENERATED_SOURCES
 
 
 def build_qa(shotlist: ShotList, ctx: Any) -> list[Path]:
@@ -160,19 +161,37 @@ def _grab(video: Path, t: float, out: Path, width: int = FRAME_WIDTH) -> Optiona
 
 # ---------------------------------------------------------------- what is on screen
 
-ON_SCREEN = ("real_footage", "real_still", "generated_still", "generated_video", "graphic")
+# Five kinds, counted apart everywhere: real footage, real stills, photo-style AI (stills and clips that stand
+# in for real footage, kept rare), designed animation (illustrated maps, declared-style illustrations and clips
+# made from them, openly non-photographic) and graphics (cards, charts, drawn maps).
+ON_SCREEN = ("real_footage", "real_still", "generated_still", "generated_video", "designed", "graphic")
 ON_SCREEN_LABELS = {"real_footage": "real footage", "real_still": "real stills", "generated_still": "AI stills",
-                    "generated_video": "AI video", "graphic": "graphics"}
+                    "generated_video": "AI video", "designed": "designed animation", "graphic": "graphics"}
+PHOTO_AI_SCREEN = ("generated_still", "generated_video")
+DESIGNED_TYPE = "designed_animation"  # mix table row for shots whose pick is designed animation
 ON_SCREEN_PROMPT = {"real_footage": "real footage (a sourced video clip)",
                     "real_still": "a real photograph or scan (a sourced still)",
                     "generated_still": "an AI generated still", "generated_video": "an AI generated video clip",
+                    "designed": "designed animation (an illustrated map, an illustration in a declared style, or a "
+                                "clip made from one), openly not a photograph",
                     "graphic": "a motion graphic made by the edit (map, chart or card)"}
+
+
+def is_designed(shot: Shot) -> bool:
+    """The pick is designed animation (models.DESIGNED_SOURCES), or a drawn map painted by the art layer."""
+    c = shot.selected_candidate()
+    if c is not None and c.source in DESIGNED_SOURCES:
+        return True
+    p = (shot.motion.payload if shot.motion is not None else None) or {}
+    return bool(isinstance(p, dict) and (p.get("art_base") or p.get("art_clip")))
 
 
 def on_screen(shot: Shot) -> str:
     """What the viewer really sees, decided by the selected candidate and never by the planned shot type,
     because a footage or image shot converted to an AI still keeps its old type."""
     c = shot.selected_candidate()
+    if is_designed(shot):
+        return "designed"
     if shot.type == ShotType.motion_graphic or (c is not None and c.source == SourceKind.motion):
         return "graphic"
     if c is not None:
@@ -190,6 +209,8 @@ def on_screen(shot: Shot) -> str:
 def effective_type(shot: Shot) -> str:
     """Shot type as rendered: a shot whose pick is an AI still or AI clip counts as ai_image or ai_video."""
     seen = on_screen(shot)
+    if seen == "designed" and shot.type != ShotType.motion_graphic:
+        return DESIGNED_TYPE
     if seen == "generated_still" and shot.type != ShotType.motion_graphic:
         return ShotType.ai_image.value
     if seen == "generated_video" and shot.type != ShotType.motion_graphic:
@@ -580,7 +601,7 @@ def mix_and_pacing(shotlist: ShotList) -> tuple[dict[str, float], dict[str, dict
     total_n = len(shotlist.shots) or 1
     mix: dict[str, float] = {}
     pacing: dict[str, dict[str, float]] = {}
-    for t in SHOT_TYPES:
+    for t in SHOT_TYPES + [DESIGNED_TYPE]:
         durs = [s.duration for s in shotlist.shots if effective_type(s) == t]
         mix[t] = round(100.0 * len(durs) / total_n, 1)
         if durs:
@@ -845,10 +866,11 @@ def summary_lines(r: QAReport, offset: float = 0.0) -> list[str]:
     and why, the worst five moments, on-screen text problems, and the pipeline judge against the frames."""
     st, secs = r.screen_time, r.screen_time_s
     real = round(st.get("real_footage", 0.0) + st.get("real_still", 0.0), 1)
-    gen = round(st.get("generated_still", 0.0) + st.get("generated_video", 0.0), 1)
+    gen = round(sum(st.get(k, 0.0) for k in PHOTO_AI_SCREEN), 1)
     parts = ", ".join(f"{ON_SCREEN_LABELS[k]} {st.get(k, 0):g}% ({secs.get(k, 0):.0f} s)" for k in ON_SCREEN
                       if st.get(k, 0) or k in ("real_footage", "real_still", "generated_still"))
-    lines = [f"Screen time: real {real:g}%, generated {gen:g}% ({parts})"]
+    lines = [f"Screen time: real {real:g}%, photo-style AI {gen:g}%, designed animation {st.get('designed', 0):g}%, "
+             f"graphics {st.get('graphic', 0):g}% ({parts})"]
     rendered = [q for q in r.shots if q.post_render_score is not None]
     if rendered:
         fails = [q for q in rendered if q.failed]
@@ -993,7 +1015,7 @@ def render_markdown(r: QAReport, offset: float = 0.0) -> str:
     md += ["## Visual mix (share of shot count)", "",
            "| Type | Target % | Shots % | Screen time % | Count | Min s | Max s | Mean s |",
            "|---|---|---|---|---|---|---|---|"]
-    for t in SHOT_TYPES:
+    for t in SHOT_TYPES + ([DESIGNED_TYPE] if DESIGNED_TYPE in r.pacing else []):
         p = r.pacing.get(t, {})
         md.append(f"| {t} | {r.mix_target.get(t, 0):g} | {r.mix_achieved.get(t, 0):g} | {p.get('time_pct', 0):g} | "
                   f"{int(p.get('count', 0))} | {p.get('min', 0):g} | {p.get('max', 0):g} | {p.get('mean', 0):g} |")

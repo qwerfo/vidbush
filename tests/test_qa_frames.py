@@ -71,10 +71,25 @@ def test_on_screen_follows_the_pick_not_the_planned_type():
     assert qa.effective_type(converted) == "ai_image" and qa.effective_type(clip) == "footage_overlay"
     pct, secs = qa.screen_time(ShotList(project_id="p", duration=20, shots=[converted, real, card, clip]))
     assert secs == {"real_footage": 10.0, "real_still": 2.0, "generated_still": 4.0, "generated_video": 0.0,
-                    "graphic": 4.0}
+                    "designed": 0.0, "graphic": 4.0}
     assert pct["real_footage"] == 50.0
     mix, _pacing = qa.mix_and_pacing(ShotList(project_id="p", duration=20, shots=[converted, real, card, clip]))
     assert mix["ai_image"] == 25.0 and mix["footage"] == 0.0
+
+
+def test_designed_animation_is_its_own_kind(monkeypatch):
+    """Designed animation never counts as a photo-style AI still or as a graphic, in screen time and the mix."""
+    monkeypatch.setattr(qa, "DESIGNED_SOURCES", {SourceKind.upload})  # stands in for the art layer's values
+    art = _shot(1, 0, 5, ShotType.ai_image, SourceKind.upload, "image")
+    painted = _shot(2, 5, 9, ShotType.motion_graphic, SourceKind.motion)
+    painted.motion = MotionSpec(kind=MotionKind.map, duration=4, payload={"art_base": "base.png"})
+    ai = _shot(3, 9, 10, ShotType.ai_image, SourceKind.ai_image, "image")
+    sl = ShotList(project_id="p", duration=10, shots=[art, painted, ai])
+    assert [qa.on_screen(s) for s in (art, painted, ai)] == ["designed", "designed", "generated_still"]
+    pct, _ = qa.screen_time(sl)
+    assert pct["designed"] == 90.0 and pct["generated_still"] == 10.0 and pct["graphic"] == 0.0
+    mix, _ = qa.mix_and_pacing(sl)
+    assert mix[qa.DESIGNED_TYPE] > 0 and mix["ai_image"] < 50
 
 
 # ---------------------------------------------------------------- every piece of on-screen text
@@ -194,7 +209,7 @@ def test_report_opens_with_five_trustworthy_lines(make_ctx):
                          "window": "the team carried it", "fail": True},
             "shot_002": {"score": 85, "reason": "ok", "rejects": [], "failed": [], "window": "", "fail": False}}
     r = qa.make_report(sl, ctx, 70.0, post, 1.0, 1.0, [])
-    assert len(r.summary) == 5 and r.summary[0].startswith("Screen time: real 40%, generated 60%")
+    assert len(r.summary) == 5 and r.summary[0].startswith("Screen time: real 40%, photo-style AI 60%, designed animation 0%")
     assert "1 of 2 (50%)" in r.summary[1] and "picture does not match the words" in r.summary[1]
     assert r.worst == ["00:00 shot_001 (AI still): men carry the serum"]
     md = qa.render_markdown(r, offset=2.0).splitlines()
