@@ -792,7 +792,7 @@ class QAShot(Model):
     attempts: int = 0
     flags: list[str] = Field(default_factory=list)
     post_render_score: Optional[float] = None
-    # What is really on screen (real_footage, real_still, generated_still, generated_video, graphic), the
+    # What is really on screen (real_footage, real_still, generated_still, generated_video, designed, graphic), the
     # narration spoken during the shot, the frame checks that failed and whether the rendered shot fails.
     on_screen: str = ""
     window_text: str = ""

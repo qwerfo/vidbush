@@ -161,7 +161,7 @@ def _grab(video: Path, t: float, out: Path, width: int = FRAME_WIDTH) -> Optiona
 
 # ---------------------------------------------------------------- what is on screen
 
-# Five kinds, counted apart everywhere: real footage, real stills, photo-style AI (stills and clips that stand
+# Five kinds, counted apart everywhere (AI stills and AI video together are the photo-style AI kind): real footage, real stills, photo-style AI (stills and clips that stand
 # in for real footage, kept rare), designed animation (illustrated maps, declared-style illustrations and clips
 # made from them, openly non-photographic) and graphics (cards, charts, drawn maps).
 ON_SCREEN = ("real_footage", "real_still", "generated_still", "generated_video", "designed", "graphic")
@@ -462,7 +462,7 @@ def local_checks(shotlist: ShotList, words: list[Word], frames: dict[str, list[s
         for t in screen_texts(s):
             if t["kind"] == MotionKind.lower_third.value and t["role"] == "subtitle" and _filler(t["text"]):
                 found["text_filler"] = f"subtitle \"{t['text']}\" adds nothing"
-        if on_screen(s) != "graphic":
+        if on_screen(s) != "graphic" and s.type != ShotType.motion_graphic:  # full screen maps and cards never count as repeats
             key = _picture_key(s)
             h = _frame_hash(frames[s.id][0]) if frames.get(s.id) else None
             twin = next((sid for at, hh, kk, sid in seen_pics if s.start - at < PICTURE_REPEAT_S and (

@@ -23,6 +23,14 @@ def test_fallback_queries_never_append_the_topic():
 def test_topic_still_used_when_the_beat_names_no_subject():
     bc = _bc("And then it all changed.")
     ent = I.beat_entities(bc)
-    if not ent.nouns and not ent.people:
-        queries = [q for idea in I.footage_ideas(bc, ent) for q in idea.queries]
-        assert any("zebra" in q.lower() for q in queries)
+    queries = [q for idea in I.footage_ideas(bc, ent) for q in idea.queries]
+    assert any("zebra" in q.lower() for q in queries)
+
+
+def test_one_noun_beat_gets_distinct_ideas_with_several_queries():
+    bc = _bc("The ship sank.")
+    bc.era = None
+    ent = I.beat_entities(bc)
+    main, wide = I.footage_ideas(bc, ent)
+    assert main.queries[0] != wide.queries[0]  # a wide idea must not share the main idea's look
+    assert len(main.queries) >= 2 and len(I.still_ideas(bc, ent)[0].queries) >= 2

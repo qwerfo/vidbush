@@ -280,3 +280,13 @@ def test_parallax_clip_of_a_still_counts_as_a_still_and_map_arrows_are_text():
     assert qa.on_screen(s) == "real_still"
     m = _spec(MotionKind.map, center=[0, 0], arrows=[{"start": [0, 0], "end": [1, 1], "label": "Serum route"}])
     assert ("place", "Serum route") in qa.spec_texts(m)
+
+
+def test_every_source_kind_is_sourced_or_in_one_generated_set():
+    """Guard: a generated SourceKind missing from models' sets would be judged, credited and replaced as real."""
+    from vidbush import models as M
+    sourced = {"local", "youtube", "wikimedia", "archive", "loc", "nasa", "nara", "pexels", "pixabay", "upload"}
+    sets = (M.PHOTO_AI_SOURCES, M.DESIGNED_SOURCES, M.GRAPHIC_SOURCES)
+    assert not (sets[0] & sets[1] or sets[0] & sets[2] or sets[1] & sets[2])
+    for k in M.SourceKind:
+        assert (k.value in sourced) != (k in M.GENERATED_SOURCES), k
