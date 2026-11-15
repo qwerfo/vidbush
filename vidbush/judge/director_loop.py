@@ -46,6 +46,7 @@ REAL_BAR = 55.0  # a real candidate at or above this beats a photo-style AI stil
 FLOOR = 50.0  # nothing below this ships while an alternative exists
 BELOW_FLOOR_FLAG = "below_floor"  # nothing met the floor and generation failed: least bad candidate kept
 BORROWED_FLAG = "borrowed_from_beat"  # a real candidate taken from another shot of the same beat
+BORROW_TRIES = 3  # beat candidates tried for one floor slot (each may cost a judge call)
 DESIGNED_FLAG = "designed_animation"  # marker on an ai_image shot whose pick is designed animation
 SHOT_FLAGS = {"mock", "low_res", "small_archival", "nc_nd", "anachronism", "no_match_accepted",
               "standard_youtube_licence", NEEDS_MOTION_FLAG, BELOW_FLOOR_FLAG, BORROWED_FLAG, DESIGNED_FLAG}
@@ -180,7 +181,7 @@ def _resolve(shot: Shot, ctx: Any, threshold: float, siblings: Sequence[Shot] = 
     A shot with a real candidate at or above REAL_BAR may requery but is never converted to an AI still:
     the real one wins selection anyway, so the still would only cost generation time and credits. Nor is
     a shot with nothing at the floor while another shot of its beat holds such a real candidate: selection
-    borrows it (and still generates when the borrow is banned by the segment rule).
+    borrows it (see _beat_pool), and still generates there when the borrow is refused (banned, recent, failed judge).
     """
     notes: list[str] = []
     try:
@@ -194,7 +195,7 @@ def _resolve(shot: Shot, ctx: Any, threshold: float, siblings: Sequence[Shot] = 
             if _real_ok(shot):
                 notes.append(f"real candidate at or above {REAL_BAR:g} kept, no AI still")
                 break
-            if not any(_shippable(c, shot) for c in shot.candidates) and _beat_real(siblings):
+            if not any(_shippable(c, shot) for c in shot.candidates) and _beat_real(shot, siblings):
                 notes.append("a real candidate of the same beat will be borrowed, no AI still")
                 break
             if shot.type not in AI_TYPES:
@@ -484,29 +485,59 @@ def _allowed_usable(shot: Shot, usage: _Usage) -> list[Candidate]:
     return [c for c in _ranked(shot) if _shippable(c, shot) and not usage.banned(c, shot.scene_id)]
 
 
-def _beat_real(siblings: Sequence[Shot]) -> bool:
-    return any(is_real(c) and _ok(c, o, REAL_BAR) for o in siblings for c in list(o.candidates))
+def _beat_pool(shot: Shot, siblings: Sequence[Shot]) -> list[tuple[Shot, Candidate]]:
+    """(donor, candidate) pairs a floor slot may borrow: real, clean, at or above REAL_BAR for the donor.
+
+    Never a sibling's own pick or best candidate: taking it moves the problem to that sibling (a banned
+    neighbour segment, or the same photo twice in a row). Never an asset the shot already holds: it was
+    judged on this shot's words and failed.
+    """
+    taken = {asset_key(c) for o in siblings for c in [*_ranked(o)[:1], o.selected_candidate()] if c is not None}
+    taken |= {asset_key(c) for c in list(shot.candidates)}
+    return [(o, c) for o in siblings for c in list(o.candidates)
+            if is_real(c) and _ok(c, o, REAL_BAR) and asset_key(c) not in taken]
+
+
+def _beat_real(shot: Shot, siblings: Sequence[Shot]) -> bool:
+    return bool(_beat_pool(shot, siblings))
+
+
+def _avoids_covered(shot: Shot, donor: Shot) -> bool:
+    """The donor's judge already checked every must_avoid item of shot."""
+    def norm(items: list[str]) -> set[str]:
+        return {x.strip().lower() for x in items}
+    return norm(shot.must_avoid) <= norm(donor.must_avoid)
 
 
 def _borrow(shot: Shot, usage: _Usage, siblings: Sequence[Shot], ctx: Any) -> list[Candidate]:
-    """The best real candidate of another shot in the same beat (at or above REAL_BAR, clean, not a banned
-    segment here), copied into shot. Same beat means the same narration, so its score carries over."""
-    pool = [c for o in siblings for c in o.candidates if is_real(c) and _ok(c, o, REAL_BAR)]
-    pool = [c for c in pool if not usage.banned(c, shot.scene_id)
+    """A real candidate of another shot in the same beat (see _beat_pool), not a banned segment here and not
+    shown in the last minute, copied into shot, best first. Its score carries over when the donor's brief
+    covered this shot's must_avoid; otherwise the copy is judged for this shot (one vision call, cheaper than
+    a generated still) and must reach the floor."""
+    pool = [(o, c) for o, c in _beat_pool(shot, siblings) if not usage.banned(c, shot.scene_id)
             and usage.penalty(c, shot.start) < DIVERSITY_GAP + RECENT_PENALTY]  # not shown in the last minute
-    if not pool:
-        return []
-    best = max(pool, key=lambda c: (c.score or 0.0) - usage.penalty(c, shot.start))
-    ids, n = {c.id for c in shot.candidates}, 0
-    while f"{shot.id}_{source_value(best)}_b{n}" in ids:
-        n += 1
-    copy = best.model_copy(deep=True, update={"id": f"{shot.id}_{source_value(best)}_b{n}",
-                                              "flags": sorted(set(best.flags) | {BORROWED_FLAG})})
-    if not add_candidates(shot, [copy]):  # the shot already holds this asset (and it failed here)
-        return []
-    ctx.log.info("no own candidate meets the floor, real candidate borrowed from the beat", shot=shot.id,
-                 candidate=copy.id, origin=best.id, score=copy.score)
-    return [copy]
+    pool.sort(key=lambda oc: (oc[1].score or 0.0) - usage.penalty(oc[1], shot.start), reverse=True)
+    for donor, best in pool[:BORROW_TRIES]:
+        ids, n = {c.id for c in shot.candidates}, 0
+        while f"{shot.id}_{source_value(best)}_b{n}" in ids:
+            n += 1
+        update: dict[str, Any] = {"id": f"{shot.id}_{source_value(best)}_b{n}",
+                                  "flags": sorted(set(best.flags) | {BORROWED_FLAG})}
+        rejudge = not _avoids_covered(shot, donor)
+        if rejudge:
+            update.update(score=None, judge_reason=None, reject_reason=None)
+        added = add_candidates(shot, [best.model_copy(deep=True, update=update)])
+        if not added:
+            continue
+        copy = added[0]
+        if rejudge:
+            _prefilter_and_score([(shot, copy)], ctx, workers=1)
+            if not _shippable(copy, shot):
+                continue
+        ctx.log.info("no own candidate meets the floor, real candidate borrowed from the beat", shot=shot.id,
+                     candidate=copy.id, origin=best.id, score=copy.score, rejudged=rejudge)
+        return [copy]
+    return []
 
 
 def _try_ai(shot: Shot, ctx: Any) -> bool:

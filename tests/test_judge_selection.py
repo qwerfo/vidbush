@@ -137,6 +137,40 @@ def test_floor_slot_borrows_the_best_real_candidate_of_the_beat(ctx, monkeypatch
     assert out.type == ShotType.image_overlay and out.overlay is not None
 
 
+def test_borrow_never_takes_a_later_siblings_best_and_skips_assets_already_held(ctx, monkeypatch, registry):
+    # needy shot first; its donor follows. The donor's best (01) stays with it; 02 is already on the needy
+    # shot (failed there), so the needy shot borrows the next one (03) instead of giving up.
+    needy = shot(0, ShotType.image, [cand("shot_000", 1, 4), cand("shot_000", 2, 2, score=40.0)])
+    donor = shot(1, ShotType.image, [cand("shot_001", 1, 1), cand("shot_001", 2, 2), cand("shot_001", 3, 3)])
+    monkeypatch.setattr(ctx.seats, "vision_json", fake_vision(
+        {"sample_image_01.jpg": 90, "sample_image_02.jpg": 85, "sample_image_03.jpg": 70,
+         "sample_image_04.jpg": 20}))
+    n, d = dl.judge_and_select(shotlist([needy, donor]), ctx).shots
+    assert d.selected == "shot_001_local_1", "the donor keeps its best"
+    assert n.selected_candidate().local_path == img(3) and dl.BORROWED_FLAG in n.selected_candidate().flags
+    assert not any(c.source == SourceKind.ai_image for c in n.candidates + d.candidates)
+
+
+def test_borrow_is_rejudged_when_the_donor_brief_missed_a_must_avoid_and_refused_falls_to_ai(
+        ctx, monkeypatch, registry):
+    needy = shot(0, ShotType.image, [cand("shot_000", 1, 4)], must_avoid=["people"])
+    donor = shot(1, ShotType.image, [cand("shot_001", 1, 1), cand("shot_001", 2, 3)])
+    base = fake_vision({"sample_image_01.jpg": 90, "sample_image_03.jpg": 70, "sample_image_04.jpg": 20})
+
+    def vision_json(*a: Any, **k: Any) -> dict[str, Any]:
+        out = base(*a, **k)
+        if "Must avoid: people" in a[3] and Path(a[4][0]).name == "sample_image_03.jpg":
+            out = {**out, "score": 15.0, "reason": "a crowd of people fills the dock"}
+        return out
+
+    monkeypatch.setattr(ctx.seats, "vision_json", vision_json)
+    n, d = dl.judge_and_select(shotlist([needy, donor]), ctx).shots
+    copy = next(c for c in n.candidates if dl.BORROWED_FLAG in c.flags)
+    assert copy.score == 15.0, "judged against the needy shot's own brief"
+    assert n.selected_candidate().source == SourceKind.ai_image and n.type == ShotType.ai_image
+    assert d.selected == "shot_001_local_1"
+
+
 def test_nothing_meets_floor_and_generation_fails_keeps_least_bad_flagged(ctx, monkeypatch, registry):
     s = shot(0, ShotType.image, [cand("shot_000", 1, 1), cand("shot_000", 2, 2), cand("shot_000", 3, 3)])
     monkeypatch.setattr(ctx.seats, "vision_json", vision(
