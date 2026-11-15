@@ -252,5 +252,6 @@ Video models (`POST /v2/media {type: video, model, prompt, operation, source_ima
   (`<out>.task.json`), so a timeout or a restart resumes the running task instead of paying twice. The
   concurrent limit is waited out (usage before the submit, the capacity 429 during it). A refused task is never
   resubmitted.
+- In the proving run veo moved the camera (3 to 5 percent zoom or drift) on all 5 painted map clips and added objects or morphing to 4 of 8 photo-style AI stills; 6 of 10 illustration clips passed every check. Throughput was about one clip every 6 to 8 minutes on the one-at-a-time lane.
 - Images with references for the art layer: `vidbush/art/elevate.py` (RadioPlay's `reference_images` shape),
   through the image seat's own client, envelope and polling.

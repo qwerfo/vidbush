@@ -630,7 +630,9 @@ class ArtProfile(Model):
     map_model: str = "nano_banana_pro"
     map_fallback_model: str = "gemini_flash_image"
     illustration_model: str = "nano_banana_pro"
-    clip_from_ai_stills: bool = True  # photo-style AI stills may come alive; real photographs never do
+    # photo-style AI stills stay still by default: moving, they read even more as footage of a real event (run 3
+    # review: an animated AI still of two ships on sea ice); real photographs never come alive
+    clip_from_ai_stills: bool = False
     hour_credit_cap: float = 0.0  # skip new art while the key has used this many image credits this hour (0 = none)
 
 

@@ -170,7 +170,7 @@ def main(argv: list[str] | None = None) -> None:
     chosen = pick12(stills(items))
     contact_sheet(chosen, review / "art_contact_sheet.png")
     bad = failed_stills(review / "art_project" / "work" / "art")
-    bad |= {str(it["still"]) for it in items if it.get("type") == "illustration"
+    bad |= {str(it.get("still")) for it in items if it.get("type") == "illustration" and it.get("still")
             and (it.get("scene") or TEXT_ARTIFACT.search(str(it.get("report", {}).get("brief", ""))))}  # its clip too
     clips = number_clips(items, review, bad)
     y = yield_numbers(items)

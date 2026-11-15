@@ -69,7 +69,7 @@ def plan_clips(shotlist: ShotList, profile_art: Any, eligible: dict[str, str]) -
     if every <= 0:
         return []
     min_s = float(getattr(profile_art, "clip_min_s", 3.0))
-    ai_ok = bool(getattr(profile_art, "clip_from_ai_stills", True))
+    ai_ok = bool(getattr(profile_art, "clip_from_ai_stills", False))
     shots = [s for s in shotlist.shots if s.id in eligible and s.duration >= min_s
              and eligible[s.id] in KIND_RANK and (ai_ok or eligible[s.id] != "ai_image")]
     if not shots:

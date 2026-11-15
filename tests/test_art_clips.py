@@ -29,7 +29,7 @@ def test_plan_budget_opening_and_spread():
     sl = _list(80, 5.0)  # 400 s
     elig = {s.id: "ai_image" for s in sl.shots}
     elig["s3"] = "illustration"
-    picks = C.plan_clips(sl, ArtProfile(clip_every_s=90, clip_opening_s=60), elig)
+    picks = C.plan_clips(sl, ArtProfile(clip_every_s=90, clip_opening_s=60, clip_from_ai_stills=True), elig)
     assert len(picks) == 4
     assert picks[0] == "s3"  # opening first, illustration preferred
     starts = sorted(next(s.start for s in sl.shots if s.id == p) for p in picks[1:])
@@ -42,16 +42,17 @@ def test_plan_off_min_one_and_ai_flag_and_min_length():
     sl = _list(10, 5.0)  # 50 s, under one budget period
     elig = {s.id: "ai_image" for s in sl.shots}
     assert C.plan_clips(sl, ArtProfile(clip_every_s=0), elig) == []
-    assert len(C.plan_clips(sl, ArtProfile(clip_every_s=90), elig)) == 1
+    assert len(C.plan_clips(sl, ArtProfile(clip_every_s=90, clip_from_ai_stills=True), elig)) == 1
     assert C.plan_clips(sl, ArtProfile(clip_every_s=90, clip_from_ai_stills=False), elig) == []
-    assert C.plan_clips(sl, ArtProfile(clip_every_s=90, clip_min_s=6), elig) == []
+    assert C.plan_clips(sl, ArtProfile(clip_every_s=90), elig) == []  # the default: photo-style AI stills stay still
+    assert C.plan_clips(sl, ArtProfile(clip_every_s=90, clip_min_s=6, clip_from_ai_stills=True), elig) == []
 
 
 def test_plan_prefers_designed_then_longer():
     sl = ShotList(project_id="p", shots=[_shot(0, 0, 4), _shot(1, 4, 6), _shot(2, 10, 3.5)], duration=13.5)
-    assert C.plan_clips(sl, ArtProfile(clip_every_s=90), {"s0": "ai_image", "s1": "ai_image",
+    assert C.plan_clips(sl, ArtProfile(clip_every_s=90, clip_from_ai_stills=True), {"s0": "ai_image", "s1": "ai_image",
                                                            "s2": "illustrated_map"}) == ["s2"]
-    assert C.plan_clips(sl, ArtProfile(clip_every_s=90), {"s0": "ai_image", "s1": "ai_image"}) == ["s1"]
+    assert C.plan_clips(sl, ArtProfile(clip_every_s=90, clip_from_ai_stills=True), {"s0": "ai_image", "s1": "ai_image"}) == ["s1"]
 
 
 # ---------------------------------------------------------------- motion_prompt
