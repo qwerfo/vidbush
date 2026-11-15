@@ -813,3 +813,65 @@ look right when you play the file.
 
 See also: `docs/ARCHITECTURE.md` (stage graph, contracts, cache rule),
 `docs/DECISIONS.md`, `docs/PROGRESS.md`, `docs/BLOCKERS.md`, `docs/SPEC.md`.
+
+## 11. Run 3: AI stills and QA you can trust
+
+### 11a. Reading qa_report.md
+
+The report now opens with five lines:
+
+1. Screen time: real (footage plus stills) against generated (AI stills and video), with each class in percent
+   and seconds. It follows the picture each shot really uses, so a footage shot that fell back to an AI still
+   counts as AI.
+2. Rendered shots that fail their frame check, with the most common reasons.
+3. The worst five moments, as final.mp4 timestamps with shot id and reason. Look at these first.
+4. On-screen text problems over every text item (overlays, lower thirds, boxes, arrows, number overlays, map
+   and chart titles and labels, full screen cards): repeats of the narration, early, late, too short to read.
+5. The pipeline judge's pass rate next to the rendered frames' pass rate, so the gap is visible.
+
+How a shot is checked: frames from its own middle (plus its quarters on shots of 4 s or more, plus one where
+its overlay text shows) go to the vision seat with the narration spoken during the shot, the lines just
+before and after, what kind of picture it is and every text drawn over it. The model answers named checks
+(matches the words, text true, clean, one image, no fake face, quality); code adds checks that need the whole
+timeline (text off its words, text under 2.5 s, the same label or picture within a minute, a country or
+decade subtitle). Any failed check fails the shot; a score fails it only below 40. The "Flagged shots" table
+lists the failed checks per shot.
+
+Cost: about 0.045 USD per 11 minute video (Gemini 3.8 Flash, the middle frame at high detail).
+
+### 11b. Calibrating QA against a frame review
+
+```powershell
+.venv\Scripts\python.exe scripts\qa_calibration.py --project "E:\coding projects\Vidbush\output\alaska_run2" `
+  --review "E:\coding projects\Vidbush\review_run2\review_run2.json" `
+  --extras "E:\coding projects\Vidbush\review_run2\review_run2_extras.json" `
+  --settings-root C:\projects\vidbush_tmp --out "E:\coding projects\Vidbush\scratch\run3_qa_cal" --tag v4
+```
+
+It reads the project only, writes frames, verdicts, costs and logs to `--out`, and prints recall (share of
+review defects QA fails) and false alarms (share of review passes QA fails); `calibration_<tag>.json` lists
+every miss and false alarm with QA's reason. `--reuse-frames` skips frame extraction, `--reuse-verdicts`
+re-scores saved verdicts without model calls. Run 2 results are in DECISIONS.md under "Run 3: stills and QA".
+A review in another shape needs its own `review_labels`.
+
+### 11c. AI stills
+
+- The prompt comes from a scene brief of the narration spoken during the shot: who or what acts, the action,
+  the object, the place with its look, the period, one moment. Stub intents never become prompts. Brief and
+  prompt are stored on the candidate (`brief`, `prompt` in shotlist.json).
+- Every AI still gets one extra vision call with seven fixed questions (`judge/ai_checks.py`); a "no" fails
+  the take and its reason steers the next take (up to `judge.ai_retries`, default 2). The answers are in the
+  candidate's `checks`.
+- A shot whose narration is about a named real person gets a context still and the flag
+  `real_person_photo_wanted`: give it a real photo through the review page (replace with your file) when you
+  have one.
+- Each AI still now costs one more editor call and one more vision call; on the Elevate subscription the image
+  itself stays free. Expect about 3 to 4 minutes per take of wall clock (image about 100 s, judge and check
+  about 80 s).
+
+To redo chosen AI shots of a finished project into a scratch copy (the project is not touched):
+
+```powershell
+.venv\Scripts\python.exe scripts\regen_ai_shots.py --project "E:\coding projects\Vidbush\output\alaska_run2" `
+  --out "E:\coding projects\Vidbush\scratch\run3_regen" --shots shot_068,shot_087 --settings-root C:\projects\vidbush_tmp
+```

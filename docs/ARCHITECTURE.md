@@ -183,7 +183,9 @@ them to footage_overlay and image_overlay in the footage to still ratio of
 the picture mix. Documentary default: footage 20, footage_overlay 47.2,
 image 7, image_overlay 20.8, motion_graphic 5. The old `motion_graphic` key
 is read as `full_screen_cards`. QA reports the shot type mix against
-`shot_mix()` and an animation table (full screen cards, shots with an
+`shot_mix()` by rendered type (a shot whose pick is an AI still counts as
+`ai_image` whatever it was planned as), screen time by what is really on
+screen (real footage, real still, AI still, AI video, graphic) and an animation table (full screen cards, shots with an
 overlay, map and chart insets).
 
 ## Captions geometry

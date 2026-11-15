@@ -247,6 +247,8 @@ def test_text_whose_words_come_long_after_is_early_and_unanchored():
     assert r["early"] and r["unanchored"]
     assert qa.overlay_text_stats(ShotList(project_id="p", duration=14, shots=[s]), words)["unanchored"] == 1
     assert not qa.text_item_report(s, [])["unanchored"]  # no narration at all is not a timing defect
+    found = qa.local_checks(ShotList(project_id="p", duration=14, shots=[s]), words, {})
+    assert found["shot_001"]["text_timing"].endswith("shows long before its words are spoken")
 
 
 def test_the_text_frame_survives_the_frame_limit(tmp_path, monkeypatch):

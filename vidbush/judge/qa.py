@@ -373,7 +373,7 @@ def _frame_hash(path: str) -> Optional[int]:
         with Image.open(path) as im:
             w, h = im.size
             g = im.convert("L").crop((int(w * 0.1), int(h * 0.2), int(w * 0.9), int(h * 0.72))).resize((9, 8))
-            px = list(g.getdata())
+            px = list(g.tobytes())  # mode L: one byte per pixel
     except (OSError, ValueError):
         return None
     if max(px) - min(px) < 12:  # a flat frame (black, fade) says nothing about the picture
@@ -420,7 +420,8 @@ def local_checks(shotlist: ShotList, words: list[Word], frames: dict[str, list[s
         if r is not None:
             what = f"{r['kind'].replace('_', ' ')} \"{r['texts'][0][:40]}\""
             if r["early"]:
-                found["text_timing"] = f"{what} shows {-r['gap']:.1f} s before its words"
+                found["text_timing"] = (f"{what} shows {-r['gap']:.1f} s before its words" if r["gap"] is not None
+                                        else f"{what} shows long before its words are spoken")
             elif r["late"]:
                 found["text_timing"] = f"{what} shows after its words were spoken"
             elif r["unanchored"] and not r["card"]:
