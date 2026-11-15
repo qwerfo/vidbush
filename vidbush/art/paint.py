@@ -46,10 +46,11 @@ PAINT_SYSTEM = (
 
 # Phrased as a repaint of the given image: models keep the outlines of an image they edit far better than of
 # one they take as loose inspiration (run 3 probe: regional views were redrawn when asked for "a map of").
-PROMPT_VERSION = "p3"  # in variant file names: a changed prompt never reuses paintings of the old one
+PROMPT_VERSION = "p4"  # in variant file names: a changed prompt never reuses paintings of the old one
 LEAD = ("Repaint this exact map image. It is a map seen from directly above: the tan shapes are land, the blue "
         "shapes are sea, lakes and rivers. Trace every outline exactly where it is in the image, same framing and "
-        "scale; do not move, add or remove any coast, island, bay, lake or river.")
+        "scale; do not move, add or remove any coast, island, bay, lake or river. Strictly top-down and flat like "
+        "an atlas page: no horizon, no sky, no perspective tilt, no mountains rising toward the viewer.")
 FIXED_RULES = ("No text, no letters, no labels, no numbers, no place names, no borders or dividing lines, no legend, "
                "no compass rose, no frame, no map grid.")
 MAP_STYLE = ("An illustrated, hand-painted relief map in the style of an animation-heavy geography documentary: "

@@ -153,7 +153,7 @@ class Prove:
         with self.lock:
             self.items.append(item)
             name = {"ai-clips": "art_report_ai_clips.json", "maps": "art_report_maps.json",
-                    "extra-illustrations": "art_report_extra_ills.json"}.get(self.args.only, "art_report.json")
+                    "extra-illustrations": f"art_report_{Path(self.args.picks_file).stem}.json"}.get(self.args.only, "art_report.json")
             common.write_report(self.ctx, name, self.items)
 
     # ------------------------------------------------------------ maps
@@ -256,9 +256,11 @@ class Prove:
     def run_illustrations(self) -> None:
         out = self.root / "work" / "art" / "illustrations"
         if self.args.only == "extra-illustrations":  # a second round of picks, never a shot already tried
-            tried = {p["shot_id"] for p in self._cached("prove_picks.json", lambda: [])}
+            art = common.art_dir(self.ctx)
+            tried = {p["shot_id"] for f in art.glob("prove_picks*.json")
+                     for p in json.loads(f.read_text(encoding="utf-8")) if isinstance(p, dict)}
             rest = self.shotlist.model_copy(update={"shots": [s for s in self.shotlist.shots if s.id not in tried]})
-            picks = self._cached("prove_picks_extra.json", lambda: IL.choose(rest, self.ctx, self.args.illustrations))
+            picks = self._cached(self.args.picks_file, lambda: IL.choose(rest, self.ctx, self.args.illustrations))
         else:
             picks = self._cached("prove_picks.json", lambda: IL.choose(self.shotlist, self.ctx, self.args.illustrations))
         for pick in picks:
@@ -376,6 +378,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--ai-clips", type=int, default=4)
     ap.add_argument("--image-cap", type=float, default=300.0)
     ap.add_argument("--stop-clips-at", default="")
+    ap.add_argument("--picks-file", default="prove_picks_extra.json")
     ap.add_argument("--skip-places", nargs="*", default=[], help="place names the gazetteer resolves wrongly")
     ap.add_argument("--only", default="", choices=["", "ai-clips", "extra-illustrations", "maps"])
     args = ap.parse_args(argv)

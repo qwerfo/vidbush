@@ -139,3 +139,10 @@ def test_apply_to_shot_types():
         s = _shot(0, 0, typ=before)
         I.apply_to_shot(s, c)
         assert s.type == after and s.selected == "ill" and s.judge_score == 81 and s.judge_notes == "fits"
+
+
+def test_lettered_artifact_briefs_are_dropped():
+    from vidbush.art.illustrate import TEXT_ARTIFACT
+    assert TEXT_ARTIFACT.search("A printed map of the United States with Alaska as an inset")
+    assert TEXT_ARTIFACT.search("a newspaper headline")
+    assert not TEXT_ARTIFACT.search("A dog team crossing cracked sea ice at dusk")

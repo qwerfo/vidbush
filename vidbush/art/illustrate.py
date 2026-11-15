@@ -54,8 +54,8 @@ HEURISTIC_WORDS = re.compile(
 
 
 # a brief naming a lettered artifact is the renderer's job (maps, charts) or text the model would invent
-TEXT_ARTIFACT = re.compile(r"(maps?|charts?|graphs?|diagrams?|infographics?|documents?|newspapers?|headlines?|"
-                           r"signs?|screens?|labels?|captions?)", re.I)
+TEXT_ARTIFACT = re.compile(r"\b(maps?|charts?|graphs?|diagrams?|infographics?|documents?|newspapers?|headlines?|"
+                           r"signs?|screens?|labels?|captions?)\b", re.I)
 
 
 def _eligible(shot: Shot) -> bool:
