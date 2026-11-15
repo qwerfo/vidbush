@@ -5,7 +5,7 @@ renders frames [frame_range[0], frame_range[1]) of the timeline to
 out_dir/<render_hash>.mp4 and returns the path (reused when it exists).
 
 Layers, bottom to top: visual (trimmed and cover scaled video, or a still
-with sub-pixel Ken Burns; portrait sources sit whole on a blurred fill, HDR
+with sub-pixel Ken Burns; portrait sources and small stills sit whole on a blurred fill, HDR
 sources are tone mapped to SDR bt709, interlaced sources deinterlace to
 fields, short clips use the rest of their file before a blended slowdown), colour LUT (not on motion graphics), alpha
 overlay clip, letterbox bars, burned captions, fades through black.
@@ -39,6 +39,7 @@ EASE_SHARE = 0.35  # share of smoothstep blended into linear Ken Burns progress
 SLATE = "0x0d0d0d"
 HOLD_WARN_S = 0.25  # a held last frame longer than this is logged and flagged held_frame
 PORTRAIT_ASPECT = 1.2  # display aspect below this gets a blurred fill instead of a cover crop
+MAX_STILL_UPSCALE = 1.5  # a still needing more than this to cover the frame sits whole, framed on a blurred fill
 HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
 
 
@@ -273,13 +274,14 @@ def to_8bit_rgb(im: Any) -> Any:
     return im.convert("RGB")
 
 
-def blur_fill_image(im: Any, w: int, h: int, vis_h: int) -> Any:
-    """Portrait still on a w x h canvas: blurred, darkened cover copy behind the whole image fitted to vis_h."""
+def blur_fill_image(im: Any, w: int, h: int, vis_h: int, max_scale: float = MAX_STILL_UPSCALE) -> Any:
+    """Still on a w x h canvas: blurred, darkened cover copy behind the whole image, fitted inside w x vis_h
+    and never enlarged more than max_scale times its native size (a small still stays sharp, framed)."""
     from PIL import Image, ImageEnhance, ImageFilter, ImageOps
     bg = ImageOps.fit(im, (w, h), method=Image.BILINEAR, centering=(0.5, 0.5))
     bg = ImageEnhance.Brightness(bg.filter(ImageFilter.GaussianBlur(max(8, w // 48)))).enhance(0.75)
-    fh = max(2, min(h, vis_h))
-    fw = max(2, min(w, int(round(im.width * fh / max(im.height, 1)))))
+    scale = min(min(h, vis_h) / max(im.height, 1), w / max(im.width, 1), max_scale)
+    fw, fh = max(2, int(round(im.width * scale))), max(2, int(round(im.height * scale)))
     fg = im.resize((fw, fh), Image.LANCZOS)
     bg.paste(fg, ((w - fw) // 2, (h - fh) // 2))
     return bg
@@ -287,14 +289,14 @@ def blur_fill_image(im: Any, w: int, h: int, vis_h: int) -> Any:
 
 def _prepare_still(path: Path, crop: Optional[list[float]], kb: dict[str, float], settings: Settings,
                    cache_dir: Path, vis_h: Optional[int] = None) -> np.ndarray:
-    """RGB array of the still: EXIF upright, cropped, cover resized (or blur filled when portrait) to
-    frame size times max zoom."""
+    """RGB array of the still: EXIF upright, cropped, cover resized (or blur filled when portrait, or when
+    covering the frame would enlarge it more than MAX_STILL_UPSCALE) to frame size times max zoom."""
     from PIL import Image, ImageOps
     r = settings.render
     zmax = max(kb["zoom0"], kb["zoom1"], 1.0)
     w, h = int(np.ceil(r.width * zmax)), int(np.ceil(r.height * zmax))
     vis = int(np.ceil((vis_h or r.height) * zmax))
-    key = stable_hash("still-2", content_fingerprint(path), crop, w, h, vis)
+    key = stable_hash("still-3", content_fingerprint(path), crop, w, h, vis)
     cached = cache_dir / f"{key}.png"
     if cached.exists():
         return np.asarray(Image.open(cached).convert("RGB"))
@@ -302,7 +304,7 @@ def _prepare_still(path: Path, crop: Optional[list[float]], kb: dict[str, float]
     if crop and len(crop) == 4 and 0.01 < crop[2] and 0.01 < crop[3]:
         x, y, cw, ch = crop
         im = im.crop((int(x * im.width), int(y * im.height), int((x + cw) * im.width), int((y + ch) * im.height)))
-    if im.width / max(im.height, 1) < PORTRAIT_ASPECT:
+    if im.width / max(im.height, 1) < PORTRAIT_ASPECT or small_still(im.width, im.height, r.width, r.height):
         im = blur_fill_image(im, w, h, vis)
     else:
         im = ImageOps.fit(im, (w, h), method=Image.LANCZOS, centering=(0.5, 0.5))
@@ -311,6 +313,11 @@ def _prepare_still(path: Path, crop: Optional[list[float]], kb: dict[str, float]
     im.save(tmp, "PNG", compress_level=1)
     os.replace(tmp, cached)
     return np.asarray(im)
+
+
+def small_still(iw: int, ih: int, width: int, height: int) -> bool:
+    """True when covering a width x height frame would enlarge an iw x ih still more than MAX_STILL_UPSCALE."""
+    return max(width / max(iw, 1), height / max(ih, 1)) > MAX_STILL_UPSCALE
 
 
 def kb_progress(i: int, n: int) -> float:
