@@ -476,7 +476,7 @@ def footage_ideas(bc: BeatContext, ent: BeatEntities) -> list[VisualIdea]:
     main = (ent.people[:1] + ent.nouns[:2])[:2] or [bc.topic]
     rest = [n for n in ent.nouns if n not in main][:2]
     variants: list[tuple[list[str], bool]] = [(main, False)]
-    variants.append((rest, False) if rest else ([place or bc.topic], True))
+    variants.append((rest, False) if rest else ([place or main[-1]], True))  # the beat's own subject, wide
     out: list[VisualIdea] = []
     for k, (subj, wide) in enumerate(variants):
         prep = _prep(place)
@@ -486,8 +486,8 @@ def footage_ideas(bc: BeatContext, ent: BeatEntities) -> list[VisualIdea]:
         intent = (f"Wide establishing {kind} of {what}{when}." if wide
                   else f"{kind.capitalize()} of {what}{where}{when}.")
         queries = _queries([[place if place not in subj else "", *subj[:2], era, kind], [*subj[:2], era, kind],
-                            [place, subj[0]], [bc.topic, subj[0], "film" if old else "footage"],
-                            [bc.topic, kind]])
+                            [place, subj[0]], [subj[0], "film" if old else "footage"],
+                            [*subj[:2]]])
         activity = not wide and (bool(ent.people) or any(w.split()[-1] in ACTIVITY_NOUNS for w in subj))
         out.append(VisualIdea(beat_id=bc.beat.id, family="footage", intent=no_em_dash(intent),
                               must_show=subj[:2] + ([place] if place and k == 0 and place not in subj else []),
@@ -517,15 +517,15 @@ def still_ideas(bc: BeatContext, ent: BeatEntities) -> list[VisualIdea]:
                           must_show=subjects + ([place] if place else []),
                           must_avoid=["on-screen text", "watermarks or channel logos"] + era_avoid(bc.era),
                           queries=_queries([[place, *subjects, era, medium], [*subjects, era, medium],
-                                            [place, subjects[0], medium], [bc.topic, subjects[0]],
-                                            [bc.topic, "historical", medium]]),
+                                            [place, subjects[0], medium], [subjects[0], medium],
+                                            [*subjects[:2]]]),
                           priority=0.55, opening_safe=bool(ent.people)))
     if len(out) < 2:
         detail = (ent.nouns[1:2] or ent.nouns[:1] or [bc.topic])[0]
         out.append(VisualIdea(beat_id=bc.beat.id, family="still",
                               intent=f"Close detail {medium} of {noun_phrase(detail)}.",
                               must_show=[detail], must_avoid=["on-screen text", "watermarks"] + era_avoid(bc.era),
-                              queries=_queries([[bc.topic, detail, medium], [detail, era], [detail, "close up"]]),
+                              queries=_queries([[detail, medium], [detail, era], [detail, "close up"]]),
                               priority=0.4, opening_safe=False))
     return out
 
