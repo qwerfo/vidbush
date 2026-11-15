@@ -28,7 +28,8 @@ from ..util import ToolError, media_duration, read_json, run, write_json
 from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, narration_by_beat, parse_verdict
 
 QA_FLAGS = ("mock", "nc_nd", "standard_youtube_licence", "anachronism", "low_res", "no_match_accepted",
-            "held_frame", "missing_media", "segment_repeat", "needs_motion_graphic")
+            "held_frame", "missing_media", "segment_repeat", "needs_motion_graphic", "below_floor", "borrowed_from_beat",
+            "small_archival", "designed_animation")
 SOURCE_NOTES = "source_notes.json"
 SOURCE_LABELS = {"youtube": "YouTube", "pexels": "Pexels", "pixabay": "Pixabay", "wikimedia": "Wikimedia Commons",
                  "archive": "Internet Archive", "loc": "Library of Congress", "nasa": "NASA",
