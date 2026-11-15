@@ -296,15 +296,17 @@ def _prepare_still(path: Path, crop: Optional[list[float]], kb: dict[str, float]
     zmax = max(kb["zoom0"], kb["zoom1"], 1.0)
     w, h = int(np.ceil(r.width * zmax)), int(np.ceil(r.height * zmax))
     vis = int(np.ceil((vis_h or r.height) * zmax))
-    key = stable_hash("still-3", content_fingerprint(path), crop, w, h, vis)
+    key = stable_hash("still-4", content_fingerprint(path), crop, w, h, vis)
     cached = cache_dir / f"{key}.png"
     if cached.exists():
         return np.asarray(Image.open(cached).convert("RGB"))
     im = to_8bit_rgb(ImageOps.exif_transpose(Image.open(path)))
+    # small is judged on the native source: a crop is a deliberate zoom (derive refuses crops under MIN_CROP_PX)
+    small = small_still(im.width, im.height, r.width, r.height)
     if crop and len(crop) == 4 and 0.01 < crop[2] and 0.01 < crop[3]:
         x, y, cw, ch = crop
         im = im.crop((int(x * im.width), int(y * im.height), int((x + cw) * im.width), int((y + ch) * im.height)))
-    if im.width / max(im.height, 1) < PORTRAIT_ASPECT or small_still(im.width, im.height, r.width, r.height):
+    if im.width / max(im.height, 1) < PORTRAIT_ASPECT or small:
         im = blur_fill_image(im, w, h, vis)
     else:
         im = ImageOps.fit(im, (w, h), method=Image.LANCZOS, centering=(0.5, 0.5))

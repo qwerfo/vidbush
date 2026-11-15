@@ -217,6 +217,10 @@ def test_small_still_renders_whole_on_a_blurred_fill_never_over_1_5x(tmp_path, s
     big = _prepare_still(make_still(tmp_path / "big.png", size=(1600, 1000)), None, kb, settings,
                          tmp_path / "cache", 1080).astype(int)
     assert np.abs(np.diff(big[100:900, 20:300], axis=1)).mean() > 2, "a large still still covers the frame"
+    # a derived detail crop (half of a 1920 still) is a zoom: it still covers the frame, no blurred border
+    full = make_still(tmp_path / "full.png", size=(1920, 1080))
+    zoom = _prepare_still(full, [0.25, 0.25, 0.5, 0.5], kb, settings, tmp_path / "cache", 1080).astype(int)
+    assert np.abs(np.diff(zoom[100:900, 20:300], axis=1)).mean() > 2, "a crop of a large still covers the frame"
 
 
 # ---------------------------------------------------------------- 6. short clip penalty
