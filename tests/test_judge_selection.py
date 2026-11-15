@@ -288,3 +288,49 @@ def test_finalize_flags_small_archival_instead_of_low_res(ctx, monkeypatch):
     out = reg.finalize(shot(0), [pd, stock], ctx)
     assert "small_archival" in out[0].flags and "low_res" not in out[0].flags
     assert "low_res" in out[1].flags
+
+
+def test_a_provider_outage_is_waited_out_not_scored_zero(monkeypatch):
+    """All judge providers failing is not a verdict: the candidate is retried after a wait, never given 0."""
+    from types import SimpleNamespace
+    from vidbush.judge import judge as JM
+    from vidbush.providers.base import ProviderError
+    from vidbush.models import Candidate, Shot, ShotType
+
+    calls = {"n": 0}
+
+    def fake_score(shot, cand, ctx, beat, spoken):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ProviderError("all providers failed for judge: closerouter: transport getaddrinfo failed")
+        return 81.0, "fits the words", None
+
+    monkeypatch.setattr(JM, "score_candidate", fake_score)
+    monkeypatch.setattr(JM, "narration_by_beat", lambda ctx: {})
+    monkeypatch.setattr(JM, "narration_words", lambda ctx: [])
+    monkeypatch.setattr(JM, "OUTAGE_WAITS_S", (0.01,))
+    log = SimpleNamespace(warn=lambda *a, **k: None, info=lambda *a, **k: None)
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage, intent="x")
+    cand = Candidate(id="c1", source="youtube", media="video", url="https://y/1")
+    JM.score_many([(shot, cand)], SimpleNamespace(log=log), workers=1)
+    assert cand.score == 81.0 and cand.reject_reason is None and calls["n"] == 2
+
+
+def test_an_outage_that_outlasts_the_waits_leaves_the_candidate_unscored(monkeypatch):
+    from types import SimpleNamespace
+    from vidbush.judge import judge as JM
+    from vidbush.providers.base import ProviderError
+    from vidbush.models import Candidate, Shot, ShotType
+
+    def down(*a, **k):
+        raise ProviderError("all providers failed for judge: closerouter: marked down")
+
+    monkeypatch.setattr(JM, "score_candidate", down)
+    monkeypatch.setattr(JM, "narration_by_beat", lambda ctx: {})
+    monkeypatch.setattr(JM, "narration_words", lambda ctx: [])
+    monkeypatch.setattr(JM, "OUTAGE_WAITS_S", (0.01,))
+    log = SimpleNamespace(warn=lambda *a, **k: None, info=lambda *a, **k: None)
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage, intent="x")
+    cand = Candidate(id="c1", source="youtube", media="video", url="https://y/1")
+    JM.score_many([(shot, cand)], SimpleNamespace(log=log), workers=1)
+    assert cand.score is None and cand.reject_reason is None and "unavailable" in cand.judge_reason

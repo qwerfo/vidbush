@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
@@ -20,6 +21,7 @@ from typing import Any, Optional
 from PIL import Image
 
 from .. import models
+from ..providers.base import ProviderError
 from ..models import Candidate, Narration, Script, Shot, SourceKind, Word
 from ..source.licence import is_public_domain, normalise_licence
 
@@ -329,6 +331,11 @@ def apply_result(cand: Candidate, result: Result) -> None:
     cand.score, cand.judge_reason, cand.reject_reason = result
 
 
+# A provider outage (all judge providers failing, then marked down for PROBE_INTERVAL_S) is waited out:
+# the waits add up to more than the probe interval, so every provider gets its probe request again.
+OUTAGE_WAITS_S = (60.0, 240.0, 420.0)
+
+
 def score_many(pairs: list[tuple[Shot, Candidate]], ctx: Any, workers: int = JUDGE_WORKERS) -> None:
     """Score every pair in parallel and store the results. Concurrent model calls never exceed JUDGE_WORKERS."""
     if not pairs:
@@ -336,15 +343,33 @@ def score_many(pairs: list[tuple[Shot, Candidate]], ctx: Any, workers: int = JUD
     beats = narration_by_beat(ctx)
     words = narration_words(ctx)
 
-    def one(pair: tuple[Shot, Candidate]) -> Result:
+    def one(pair: tuple[Shot, Candidate]) -> Optional[Result]:
         try:
             return score_candidate(pair[0], pair[1], ctx, beats.get(pair[0].beat_id, ""),
                                    spoken_in(words, pair[0].start, pair[0].end))
+        except ProviderError as e:
+            if "all providers failed" not in str(e):
+                ctx.log.warn("judge failed for candidate", shot=pair[0].id, candidate=pair[1].id, error=str(e)[:300])
+                return 0.0, f"judge error: {type(e).__name__}", "judge error"
+            # no provider answered (an outage): not a verdict on the picture
+            ctx.log.warn("judge unavailable for candidate", shot=pair[0].id, candidate=pair[1].id, error=str(e)[:200])
+            return None
         except Exception as e:  # noqa: BLE001  one bad file must not sink the stage
             ctx.log.warn("judge failed for candidate", shot=pair[0].id, candidate=pair[1].id, error=str(e)[:300])
             return 0.0, f"judge error: {type(e).__name__}", "judge error"
 
-    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(pairs)))) as pool:
-        results = list(pool.map(one, pairs))
-    for (_, cand), res in zip(pairs, results):
-        apply_result(cand, res)
+    todo = list(pairs)
+    for wait_s in (0.0,) + OUTAGE_WAITS_S:
+        if not todo:
+            break
+        if wait_s:
+            ctx.log.warn("judge providers unreachable, waiting to retry", candidates=len(todo), wait_s=wait_s)
+            time.sleep(wait_s)
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(todo)))) as pool:
+            results = list(pool.map(one, todo))
+        for (_, cand), res in zip(todo, results):
+            if res is not None:
+                apply_result(cand, res)
+        todo = [p for p, res in zip(todo, results) if res is None]
+    for _, cand in todo:  # still unjudged after the waits: left unscored (counts as 0), never a hard reject
+        cand.judge_reason = "judge unavailable (no provider answered)"
