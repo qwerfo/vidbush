@@ -294,12 +294,16 @@ def test_commons_transcode_urls() -> None:
     assert transcode_urls("https://example.com/a.webm") == []
 
 
-def test_youtube_bot_check_disables_youtube(monkeypatch) -> None:
+def test_youtube_bot_check_pauses_youtube_then_asks_again(monkeypatch) -> None:
     from vidbush.source import youtube
+    clock = [100.0]
+    monkeypatch.setattr(youtube.time, "monotonic", lambda: clock[0])
     youtube.BOT_BLOCK.clear()
     youtube.note_bot_block(RuntimeError("ERROR: [youtube] x: Sign in to confirm you're not a bot"))
     assert youtube.BOT_BLOCK.is_set()
     assert youtube.YoutubeAdapter().search("q", "video", 3, None) == []
+    clock[0] += youtube.BOT_PAUSE_S + 1
+    assert not youtube.BOT_BLOCK.is_set()  # paused, not off for the run
     youtube.BOT_BLOCK.clear()
 
 

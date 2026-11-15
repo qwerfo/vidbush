@@ -49,8 +49,8 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import threading
 import re
+import time
 import shutil
 import tempfile
 from pathlib import Path
@@ -484,17 +484,37 @@ def clip_quota(n_windows: int, total: int = MAX_CLIPS_PER_VIDEO) -> list[int]:
 
 # ---------------------------------------------------------------- adapter
 
-BOT_BLOCK = threading.Event()  # set when YouTube demands sign-in; YouTube is skipped for the rest of the process
+BOT_PAUSE_S = 1800.0
+
+
+class _Pause:
+    """Set when YouTube demands sign-in: YouTube is skipped for BOT_PAUSE_S, then asked again, so one bot
+    check costs half an hour of YouTube, not the rest of the run (or of a long running server)."""
+
+    def __init__(self) -> None:
+        self.until = 0.0
+
+    def set(self) -> None:
+        self.until = time.monotonic() + BOT_PAUSE_S
+
+    def clear(self) -> None:
+        self.until = 0.0
+
+    def is_set(self) -> bool:
+        return time.monotonic() < self.until
+
+
+BOT_BLOCK = _Pause()
 BOT_MARKERS = ("confirm you", "not a bot", "sign in to confirm")
 
 
 def note_bot_block(err: Exception) -> None:
-    """Remember a bot check so the run stops wasting requests on YouTube."""
+    """Remember a bot check so the run stops sending requests to YouTube for a while."""
     if any(m in str(err).lower() for m in BOT_MARKERS) and not BOT_BLOCK.is_set():
         BOT_BLOCK.set()
         logging.getLogger("vidbush.source").warning(
-            "YouTube asked to sign in (bot check). YouTube is skipped for this run. "
-            "Set YOUTUBE_COOKIES or YOUTUBE_COOKIES_FROM_BROWSER in .env to fix it.")
+            "YouTube asked to sign in (bot check). YouTube is paused for %d minutes, then tried again. "
+            "Set YOUTUBE_COOKIES or YOUTUBE_COOKIES_FROM_BROWSER in .env to fix it.", BOT_PAUSE_S // 60)
 
 
 class YoutubeAdapter(BaseAdapter):
