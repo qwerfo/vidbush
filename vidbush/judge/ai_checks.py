@@ -113,5 +113,7 @@ def check_still(shot: Shot, cand: Candidate, ctx: Any) -> dict[str, Any]:
         cand.reject_reason = f"{cand.reject_reason}; {why}" if cand.reject_reason else why
         if FAIL_FLAG not in cand.flags:
             cand.flags.append(FAIL_FLAG)
+        if "no_named_face" in failed:  # never the best take: a fake likeness must lose to any other still
+            cand.score = 0.0
         ctx.log.info("ai still failed the fixed-question check", shot=shot.id, candidate=cand.id, failed=failed)
     return cand.checks

@@ -522,8 +522,11 @@ def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None, pr
     text = build_prompt(shot, f"{base.strip().rstrip('.')}. {house_style(letterbox_ratio(ctx))}")
     if problem:
         text = build_prompt(shot, f"{text} Must clearly show: {', '.join(shown) or brief['moment']}.")
-    if brief["people"] and "real_person_photo_wanted" not in shot.flags:
-        shot.flags.append("real_person_photo_wanted")
+    if brief["people"]:
+        # the named person's context, never their likeness: run 2 drew a named spectator's face in close-up
+        text = f"{text} Every person is small in the frame or seen from behind; no face fills the frame."
+        if "real_person_photo_wanted" not in shot.flags:
+            shot.flags.append("real_person_photo_wanted")
     narration = " ".join(dict.fromkeys(x for x in (shot_window_text(shot, ctx),
                                                     narration_by_beat(ctx).get(shot.beat_id, "")) if x))
     text = safe_prompt(text, ctx, keep=shot.must_show, narration=narration, problem=problem, names=brief["people"])

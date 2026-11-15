@@ -326,3 +326,18 @@ def test_add_ai_regenerates_after_a_check_failure_with_the_reason_as_context_onl
     hits = [line for line in retry_user.splitlines() if "stretcher" in line]
     assert len(hits) == 1 and hits[0].startswith("Problem: ")
     assert "stretcher" not in sent[1]
+
+
+def test_a_named_face_loses_to_every_other_take_and_people_are_kept_small(make_ctx, monkeypatch):
+    from vidbush.judge import ai_checks
+    ctx = with_story(make_ctx())
+    fake_llm(ctx, monkeypatch, dict(BRIEF, people=["Larry Csonka"]))
+    sent = image_prompts(ctx, monkeypatch)
+    s = shot()
+    cand = A.generate_ai_candidate(s, ctx)
+    assert "seen from behind; no face fills the frame" in sent[0] and "Csonka" not in sent[0]
+    cand.score = 80.0
+    answers = {q: {"ok": q != "no_named_face", "reason": "a face shown as the named man"} for q in ai_checks.QUESTIONS}
+    monkeypatch.setattr(ctx.seats, "vision_json", lambda *a, **k: {"answers": answers})
+    ai_checks.check_still(s, cand, ctx)
+    assert cand.score == 0.0 and "no_named_face" in cand.reject_reason
