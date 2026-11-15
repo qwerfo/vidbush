@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..models import (SHOT_TYPES, STATIC_CARD_KINDS, FallbackNote, MotionKind, MotionSpec, Narration, QAReport, QAShot,
-                      Shot, ShotList, ShotType, SourceKind, Word)
+                      Script, Shot, ShotList, ShotType, SourceKind, Word)
 from ..shots import ideas as I
 from ..util import ToolError, media_duration, read_json, run, write_json
 from .judge import JUDGE_MOCK_FLAG, JUDGE_WORKERS, REJECT_RULES, narration_by_beat, parse_verdict
@@ -262,40 +262,56 @@ def window_words(words: list[Word], start: float, end: float) -> str:
 
 QA_REJECTS = ("burned_in_captions", "watermark", "channel_logo", "talking_head", "black_frame", "frozen_frame")
 QA_CHECKS = ("matches_words", "text_true", "clean", "one_image", "no_fake_face", "quality")
+LOCAL_CHECKS = ("text_timing", "text_repeat", "text_filler", "picture_repeat")
+SCORE_FLOOR = 40.0  # a score this low fails a shot on its own; above it only a failed check does (calibration)
 QA_SYSTEM = (
     "You check one shot of a finished documentary video from frames taken inside the shot. You get the narration "
-    "spoken during this shot (what the viewer hears while these frames are on screen), the beat narration for "
-    "context, what kind of picture it is, the director's intent and every text the edit draws over it. Ignore "
-    "the black letterbox bars and the single caption line in the bottom band: they are always there. Judge as "
-    "a careful viewer would. Answer each check true when the shot passes it, false when it fails:\n"
-    "matches_words: the picture shows what the narration during this shot is about (its place, subject or "
-    "action), or a fair illustration of it. A picture that illustrates a sentence before or after this "
-    "window, a wrong place, a wrong subject, a wrong count or a wrong agent (who does the action) fails.\n"
+    "spoken during this shot (what the viewer hears while these frames are on screen), the lines just before and "
+    "after it, the video topic, what kind of picture it is, the director's intent and every text the edit draws "
+    "over it. Ignore the black letterbox bars and the single caption line in the bottom band: they are always "
+    "there. First describe literally what the frames show (who or what, how many, doing what, where, the light "
+    "and period, any text). Then answer each check true when the shot passes it, false when it fails. Be "
+    "strict: a careful viewer who knows the subject notices these.\n"
+    "matches_words: the picture shows what the narration during this shot says: its place, subject or action, or "
+    "a fair illustration of it. Fails: a picture that illustrates the line before or after instead, a wrong "
+    "place or a setting that contradicts the named place (mountains, forest or a European village for a flat "
+    "treeless Arctic town), a wrong period, daylight when the words say dark, a wrong agent (who does the "
+    "action: men carrying what the words say a dog team carried), a wrong count, or a generic picture that "
+    "ignores a specific person, object or event the words name.\n"
     "text_true: every text the edit adds (lower third, label, box, arrow, map title or place, number, card) is "
-    "true of the picture and of what is said now: a label naming something the picture does not show, a box or "
-    "arrow around nothing relevant, a map of a place not spoken during the shot, a title repeating the "
-    "narration word for word, or unreadable overlapping labels fail. True when the edit adds no text.\n"
-    "clean: no burned in subtitles from the source, no watermark, channel logo, subscribe button or other "
-    "screen interface, no person speaking to camera, no black or frozen frame.\n"
-    "one_image: one continuous picture, not a split panel, collage or grid.\n"
+    "true of the picture and of what is said now. Fails: a label naming something the picture does not show (a "
+    "town name over empty wilderness, a ship name over another ship), a box or arrow around nothing it names, "
+    "a map of a place not spoken during the shot, a title repeating the narration word for word, a subtitle "
+    "that only adds a country or a decade, or unreadable overlapping labels. True when the edit adds no text.\n"
+    "clean: no burned in subtitles from the source, no watermark, channel logo, subscribe button, browser or "
+    "app screen, no person speaking to camera, no black or frozen frame.\n"
+    "one_image: one continuous picture, not a split panel, collage or grid, unless the words compare several "
+    "places or things side by side.\n"
     "no_fake_face: no AI generated face presented as a named real person.\n"
-    "quality: heads and the main subject are not cut off by the frame or the bars, the picture is not badly "
-    "blurred or low resolution, and an AI still has no obvious artifact (floating objects, extra limbs, "
-    "garbled shapes).\n"
+    "quality: heads and the main subject are not cut off by the frame or the bars, the picture is not soft, "
+    "blurred or low resolution, and an AI still has no obvious artifact (floating objects, extra limbs, garbled "
+    "shapes).\n"
     "Then score 0 to 100 how well the shot serves the viewer at this moment (70 is usable). " + REJECT_RULES
     + ", ".join(QA_REJECTS) + ". Reply with strict JSON only: "
-    '{"checks": {"matches_words": true, "text_true": true, "clean": true, "one_image": true, '
-    '"no_fake_face": true, "quality": true}, "fails": {"<check that is false>": "short reason"}, '
-    '"score": 0-100, "reason": "one line", "rejects": []}'
+    '{"seen": "what the frames show", "checks": {"matches_words": true, "text_true": true, "clean": true, '
+    '"one_image": true, "no_fake_face": true, "quality": true}, "fails": {"<check that is false>": "short '
+    'reason"}, "score": 0-100, "reason": "one line", "rejects": []}'
 )
 
 
-def qa_prompt(shot: Shot, heard: str, beat: str, words: list[Word]) -> str:
+NEIGHBOUR_S = 6.0  # narration this long before and after the shot, so a picture of the next line is recognised
+
+
+def qa_prompt(shot: Shot, heard: str, beat: str, words: list[Word], topic: str = "") -> str:
     """User prompt for one rendered shot: the words spoken during it first, then context."""
     lines = [f"Narration during this shot ({shot.end - shot.start:.1f} s): {heard or '(no narration)'}"]
-    if beat and " ".join(beat.split()) != " ".join(heard.split()):
+    before = window_words(words, shot.start - NEIGHBOUR_S, shot.start) if words else ""
+    after = window_words(words, shot.end, shot.end + NEIGHBOUR_S) if words else ""
+    lines += ([f"Just before this shot: {before}"] if before else []) + ([f"Just after: {after}"] if after else [])
+    if beat and " ".join(beat.split()) != " ".join(heard.split()) and not (before or after):
         lines.append(f"Narration of the whole beat, for context only: {beat}")
-    lines += [f"Picture: {ON_SCREEN_PROMPT[on_screen(shot)]}", f"Director intent (secondary): {shot.intent}"]
+    lines += ([f"Video topic: {topic}"] if topic else []) + [
+        f"Picture: {ON_SCREEN_PROMPT[on_screen(shot)]}", f"Director intent (secondary): {shot.intent}"]
     texts = screen_texts(shot)
     if texts:
         parts = []
@@ -335,22 +351,121 @@ def parse_checks(raw: Any) -> tuple[list[str], dict[str, str]]:
     return failed, {n: " ".join(str(reasons.get(n) or "").split())[:200] for n in failed}
 
 
+LABEL_REPEAT_S = 60.0  # the same on-screen label again within this long tells the viewer nothing new
+PICTURE_REPEAT_S = 60.0  # the same picture again within this long reads as a mistake
+PICTURE_HASH_MAX = 5  # bits of 64 two middle frames may differ by and still be the same picture
+DECADE_RE = re.compile(r"^(?:the\s+)?\d{4}s$", re.I)
+
+
+def _frame_hash(path: str) -> Optional[int]:
+    """64-bit difference hash of the picture area of a rendered frame: the letterbox bars and the caption band
+    are cut away first, so the same picture under other captions or overlays hashes alike."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.size
+            g = im.convert("L").crop((int(w * 0.1), int(h * 0.2), int(w * 0.9), int(h * 0.72))).resize((9, 8))
+            px = list(g.getdata())
+    except (OSError, ValueError):
+        return None
+    if max(px) - min(px) < 12:  # a flat frame (black, fade) says nothing about the picture
+        return None
+    bits = 0
+    for row in range(8):
+        for col in range(8):
+            bits = (bits << 1) | int(px[row * 9 + col] > px[row * 9 + col + 1])
+    return bits
+
+
+def _picture_key(shot: Shot) -> str:
+    """What makes two shots the same picture: one source asset (the same clip may play twice only as two
+    different segments), or AI stills drawn from the same words."""
+    c = shot.selected_candidate()
+    if c is None:
+        return ""
+    if c.source == SourceKind.ai_image:
+        return "ai:" + " ".join((c.prompt or shot.ai_prompt or shot.intent).lower().split())
+    if c.media == "video":
+        return f"{c.url or c.local_path}@{c.in_point:.0f}" if (c.url or c.local_path) else ""
+    return c.url or c.local_path
+
+
+def _filler(text: str) -> bool:
+    """A subtitle that adds nothing: a bare decade or the name of a country."""
+    from ..mg import geo
+    t = " ".join(text.split()).strip(" .")
+    return bool(DECADE_RE.match(t)) or geo.is_country(t)
+
+
+def local_checks(shotlist: ShotList, words: list[Word], frames: dict[str, list[str]]) -> dict[str, dict[str, str]]:
+    """Checks decided without the model, shot id -> {check: reason}. text_timing: an on-screen text item shows
+    more than EARLY_S before or LATE_S after its words, far from any of them, repeats the narration, or leaves
+    before it can be read. text_repeat: the same label was on screen within LABEL_REPEAT_S. text_filler: a
+    lower third subtitle that is a bare decade or a country name. picture_repeat: the middle frame shows the
+    same picture as a shot within PICTURE_REPEAT_S. The model sees one shot at a time and cannot know these."""
+    out: dict[str, dict[str, str]] = {}
+    seen_labels: list[tuple[float, str, str]] = []
+    seen_pics: list[tuple[float, Optional[int], str, str]] = []
+    for s in shotlist.shots:
+        found: dict[str, str] = {}
+        r = text_item_report(s, words)
+        if r is not None:
+            what = f"{r['kind'].replace('_', ' ')} \"{r['texts'][0][:40]}\""
+            if r["early"]:
+                found["text_timing"] = f"{what} shows {-r['gap']:.1f} s before its words"
+            elif r["late"]:
+                found["text_timing"] = f"{what} shows after its words were spoken"
+            elif r["unanchored"] and not r["card"]:
+                found["text_timing"] = f"{what} is not spoken near the shot"
+            elif r["verbatim"]:
+                found["text_timing"] = f"{what} repeats the narration"
+            elif r["short"]:
+                found["text_timing"] = f"{what} leaves before it can be read"
+        for t in screen_texts(s):
+            if t["role"] not in ("title", "label", "number"):
+                continue
+            key = " ".join(t["text"].lower().split())
+            prior = next((sid for at, k, sid in seen_labels if k == key and t["at"] - at < LABEL_REPEAT_S), None)
+            if prior and "text_repeat" not in found:
+                found["text_repeat"] = f"\"{t['text'][:40]}\" was on screen again in {prior}"
+            seen_labels.append((t["at"], key, s.id))
+        for t in screen_texts(s):
+            if t["kind"] == MotionKind.lower_third.value and t["role"] == "subtitle" and _filler(t["text"]):
+                found["text_filler"] = f"subtitle \"{t['text']}\" adds nothing"
+        if on_screen(s) != "graphic":
+            key = _picture_key(s)
+            h = _frame_hash(frames[s.id][0]) if frames.get(s.id) else None
+            twin = next((sid for at, hh, kk, sid in seen_pics if s.start - at < PICTURE_REPEAT_S and (
+                (kk and kk == key) or (h is not None and hh is not None
+                                       and bin(h ^ hh).count("1") <= PICTURE_HASH_MAX))), None)
+            if twin:
+                found["picture_repeat"] = f"same picture as {twin}"
+            seen_pics.append((s.start, h, key, s.id))
+        if found:
+            out[s.id] = found
+    return out
+
+
 def judge_rendered(shotlist: ShotList, frames: dict[str, list[str]], ctx: Any,
                    words: Optional[list[Word]] = None) -> dict[str, dict[str, Any]]:
-    """Frame check per shot: {score, reason, rejects, failed (check names), window, fail}. A shot fails on
-    any failed check, a hard reject, or a score below the judge threshold."""
+    """Frame check per shot: {score, reason, rejects, failed (check names), window, seen, fail}. A shot fails
+    on any failed check (the model's QA_CHECKS and the LOCAL_CHECKS), a hard reject, or a score below
+    SCORE_FLOOR: calibration on run 2 showed the score alone sits near 70 for good and bad shots alike, while
+    the named checks separate them."""
     threshold = float(ctx.settings.judge.threshold)
     if words is None:
         load = getattr(ctx, "maybe_load", None)
         nar = load("narration", Narration) if load else None
         words = nar.words if nar else []
     beats = narration_by_beat(ctx)
+    topic = _topic(ctx)
+    local = local_checks(shotlist, words, frames)
     todo = [s for s in shotlist.shots if frames.get(s.id)]
 
     def one(shot: Shot) -> Optional[dict[str, Any]]:
         imgs = frames[shot.id][:FRAMES_PER_SHOT]
         heard = window_words(words, shot.start, shot.end)
-        prompt = qa_prompt(shot, heard, beats.get(shot.beat_id, ""), words)
+        prompt = qa_prompt(shot, heard, beats.get(shot.beat_id, ""), words, topic)
         try:  # the middle frame is looked at closely, the others confirm
             raw = ctx.seats.vision_json("vision", "qa", QA_SYSTEM, prompt, imgs, ctx.stage or "packaging",
                                         intent=shot.intent, details=["high"] + ["low"] * (len(imgs) - 1))
@@ -362,14 +477,28 @@ def judge_rendered(shotlist: ShotList, frames: dict[str, list[str]], ctx: Any,
             return None
         score, reason, rejects = verdict
         failed, why = ([], {}) if raw.get("_mock") else parse_checks(raw)
+        for name, note in local.get(shot.id, {}).items():
+            failed.append(name)
+            why[name] = note
         notes = [f"{n}: {why[n]}" if why.get(n) else n for n in failed]
         text = "; ".join([reason] + notes + rejects) if (notes or rejects) else reason
         return {"score": score, "reason": text, "rejects": rejects, "failed": failed, "window": heard,
-                "fail": bool(failed or rejects or score < threshold)}
+                "seen": " ".join(str(raw.get("seen") or "").split())[:300],
+                "fail": bool(failed or rejects or score < min(threshold, SCORE_FLOOR))}
 
     with ThreadPoolExecutor(max_workers=JUDGE_WORKERS) as pool:
         results = list(pool.map(one, todo))
     return {s.id: r for s, r in zip(todo, results) if r is not None}
+
+
+def _topic(ctx: Any) -> str:
+    """The video's title, so the checker knows which place and period the words are about."""
+    load = getattr(ctx, "maybe_load", None)
+    try:
+        script = load("script", Script) if load else None
+    except Exception:  # noqa: BLE001  no script: judge without the topic
+        script = None
+    return str(getattr(script, "title", "") or "")
 
 
 def score_post_render(shotlist: ShotList, frames: dict[str, list[str]], ctx: Any) -> dict[str, tuple[float, str]]:
@@ -477,9 +606,11 @@ def animation_share(shotlist: ShotList) -> dict[str, float]:
             "max_card_hold_s": round(max(holds, default=0.0), 2)}
 
 
-EARLY_S = 1.0  # text shown more than this before its words are spoken reads as early
+EARLY_S = 1.0  # a text overlay shown more than this before its words are spoken reads as early
 LATE_S = 1.5  # text shown more than this after its words reads as late (a card's cue window)
-SHORT_S = 2.0  # text on screen for less than this, or less than its reading time, flashes by
+GRAPHIC_LEAD_S = 1.5  # a card, map, chart or number may lead its word by the card cue window
+SHORT_S = 2.5  # text on screen for less than this, or less than its reading time, cannot be found and read
+GRAPHIC_KINDS = {"map", "bar_chart", "line_chart", "number_card", "title_card", "recap_grid"}
 
 
 def text_item_report(shot: Shot, words: list[Word]) -> Optional[dict[str, Any]]:
@@ -510,8 +641,9 @@ def text_item_report(shot: Shot, words: list[Word]) -> Optional[dict[str, Any]]:
             anchor, I.spoken_near(words, far), False))
     gap = None if spoken is None else round(at - spoken, 2)
     read = max(I.READ_MIN_S, I.READ_PER_WORD_S * len(" ".join(t["text"] for t in texts[:2]).split()))
+    lead = GRAPHIC_LEAD_S if card or first["kind"] in GRAPHIC_KINDS else EARLY_S
     return {"kind": first["kind"], "texts": [t["text"] for t in texts], "at": at, "gap": gap, "card": card,
-            "verbatim": bool(verbatim), "early": gap is not None and gap < -EARLY_S,
+            "verbatim": bool(verbatim), "early": gap is not None and gap < -lead,
             "late": (gap is not None and gap > LATE_S) or (far is not None and far < at - I.REPEAT_WINDOW_S),
             "short": until - at < max(SHORT_S, read) - 0.05, "unanchored": spoken is None and far is None}
 
@@ -618,6 +750,8 @@ def _verdict(p: Any) -> Optional[dict[str, Any]]:
 
 
 CHECK_LABELS = {"matches_words": "picture does not match the words", "text_true": "on-screen text not true",
+                "text_timing": "text off its words", "text_repeat": "label repeated within a minute",
+                "text_filler": "filler subtitle", "picture_repeat": "picture repeated within a minute",
                 "clean": "source graphics, logo or talking head", "one_image": "split panel or collage",
                 "no_fake_face": "fake face of a named person", "quality": "framing, blur or artifact",
                 "score": "scored below threshold", "reject": "hard reject"}
