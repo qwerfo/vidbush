@@ -196,14 +196,26 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], used_before: dict[
     return picks, errors
 
 
-def resolve(picks: list[dict], shots: list[dict], ai_tail: int) -> list[dict]:
+def resolve(picks: list[dict], shots: list[dict], ai_tail: int,
+            used_before: Optional[dict[str, str]] = None) -> list[dict]:
     """Make the picks legal after the retries, going up the fallback ladder; records what was changed."""
     run = ai_tail
     last_real: Optional[dict] = None
+    used = dict(used_before or {})
+    prev_key = None
     for p, s in zip(picks, shots):
         dur = s["clauses"][-1].end - s["clauses"][0].start
         rt = s["plan"].get("real_thing") or {}
         cand = p.get("_cand")
+        if cand is not None:
+            key = asset_key(cand)
+            if key in used and key != prev_key and not p.get("callback"):
+                p["resolved"] = f"pick {p.get('pick')} removed: asset already used at {used[key]}"
+                p["pick"] = p["_cand"] = cand = None
+                p["fallback"] = "hold_previous" if last_real is not None else "text_over_footage"
+            else:
+                used.setdefault(key, p.get("clause", ""))
+        prev_key = asset_key(cand) if cand is not None else None
         ai = cand is not None and is_ai(cand)
         bad_ai = ai and (rt.get("kind") in NO_AI_KINDS or dur > V.AI_HOLD_MAX_S + 1e-6 or run + 1 > V.AI_RUN_MAX)
         if bad_ai:
@@ -252,7 +264,7 @@ def edit_scene(seats, scene_plan: dict, clauses: list[Clause], narration: Narrat
         if not errors:
             break
         prompt = P.edit_retry(base, {k: v for k, v in (raw or {}).items() if k != "_mock"}, errors)
-    picks = resolve(picks, shots, ai_tail)
+    picks = resolve(picks, shots, ai_tail, used_before)
     return {"scene": scene_plan["scene"], "pool": pool, "picks": picks, "attempts": attempts,
             "sheets": paths, "mock": bool(isinstance(raw, dict) and raw.get("_mock"))}
 

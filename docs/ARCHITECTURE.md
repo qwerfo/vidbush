@@ -82,6 +82,32 @@ boundary with the project `needs_review` and `project.status_note` set; a
 plain `resume` finishes it. CLI: `batch`, `batch-status`, `batch-pause`,
 `batch-resume` (`vidbush/batch_cli.py`).
 
+## Clause-first planner (vidbush/plan, profile planner: clause)
+
+Selected when the style profile sets `planner: clause`; `shots/director.py build_shotlist` hands over to
+`plan/planner.py plan_shotlist`. The slot planner (`shots/pacing.py`, `assembler.py`, `rules.py`) stays the default.
+
+1. `clauses.py` (code): narration words to clauses from punctuation and timings; one cut per clause at its first
+   word minus 0.1 s. Writes `work/clauses.json` (id, beat, scene, text, start, end, words).
+2. `direct.py` (director seat, one call per scene): scene purpose, then per clause subject, treatment (picture,
+   hold, or one of the eleven layout kinds in `vocab.py`), presentation for route_map, chart, table and timeline,
+   real_thing, medium, anchor, queries per source class, layout elements, grammar labels (sequence, callback,
+   hero, quiet). `validate` checks timing, reading time and hold limits only; problems go back to the model.
+3. `edit.py` (vision seat, one call per scene, after sourcing): numbered contact sheets (`sheets.py`) of the
+   scene's pool; the model picks per shot by comparison, names the in-point frame, answers nothing fits with a
+   fallback, labels only real pictures. `check` and `resolve` enforce the AI still rulings (never for a real person,
+   event or document; at most 2 in a row; at most 4 s), asset repeats and labels. Not yet wired into the judge
+   stage: a live run still picks per shot with the judge; the replay runs the edit on stored candidates.
+4. `emit.py`: one Shot per clause or held clause group, in the existing ShotList contract; layouts in
+   `Shot.layout` (models.LayoutSpec), full-frame layouts as motion_graphic with a title_card placeholder.
+   `work/plan_v2.json` keeps everything the models decided.
+
+Replay on a stored project with no sourcing and no render: `python -m vidbush.plan.replay <project> <out>
+[--scenes s01,s08] [--env <dir with .env>]` writes clauses, plan, shot list and `metrics.json` (cuts per minute,
+anchor inside window and lead, treatments, AI runs, nothing fits, old against new); replies are cached under
+`<out>/cache`. `python -m vidbush.plan.compare <project> <out> <scene> <dir>` draws the old against new review
+sheet.
+
 ## Contracts
 
 All data contracts are pydantic models in `vidbush/models.py`. JSON schemas

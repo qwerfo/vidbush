@@ -145,3 +145,14 @@ def test_sheets_build_ceil_n_over_rows_640_wide(pool, tmp_path):
         assert p.endswith(".jpg")
         with Image.open(p) as im:
             assert im.width == 640
+
+
+def test_resolve_removes_accidental_repeat_but_keeps_adjacent_and_callback(pool):
+    sh = shots([3.0, 3.0, 3.0, 3.0, 3.0])
+    p, errors = E.check(picks(1, 1, 6, 1, {"pick": 1, "callback": True}), sh, pool, {}, 0)
+    assert errors
+    out = E.resolve(p, sh, 0)
+    assert out[1]["_cand"] is not None  # adjacent: the same picture continues
+    assert out[3]["_cand"] is None and out[3]["fallback"] == "hold_previous"
+    assert "already used" in out[3]["resolved"]
+    assert out[4]["_cand"] is not None  # labelled callback stays

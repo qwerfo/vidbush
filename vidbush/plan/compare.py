@@ -44,7 +44,7 @@ def _new_frame(shot: Optional[Shot], plan_rows: dict) -> tuple[Optional[str], st
     if shot is None:
         return None, "no shot"
     c = shot.selected_candidate()
-    if c is None:
+    if c is None or shot.type == ShotType.motion_graphic:
         lay = shot.layout
         return None, (f"LAYOUT {lay.kind}" if lay else "nothing fits")
     row = plan_rows.get(shot.id, {})
