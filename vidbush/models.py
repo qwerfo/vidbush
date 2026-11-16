@@ -424,6 +424,70 @@ PAYLOAD_MODELS: dict[MotionKind, type[BaseModel]] = {
 }
 
 
+# ---------------------------------------------------------------- designed layouts (shared contract with the planner)
+
+class LayoutKind(str, Enum):
+    """Designed full-frame layouts and data panels drawn by our own renderer (vidbush/mg/layouts)."""
+
+    split_comparison = "split_comparison"
+    number_over_footage = "number_over_footage"
+    name_card = "name_card"
+    list_slideshow = "list_slideshow"
+    date_title = "date_title"
+    route_map = "route_map"
+    equals_card = "equals_card"
+    chart = "chart"
+    table = "table"
+    timeline = "timeline"
+    document_focus = "document_focus"
+
+
+# The kinds that may be shown as a panel over the shot's picture; every other kind is always full frame.
+PANEL_LAYOUT_KINDS = frozenset({LayoutKind.route_map, LayoutKind.chart, LayoutKind.table, LayoutKind.timeline})
+LayoutPresentation = Literal["full", "panel", "full_then_dock", "panel_then_expand"]
+
+# Element roles each kind reads, in the order a viewer meets them. Unknown roles are ignored by the renderer.
+# Text formats: chart "bar" or "point" elements are "<label>: <value><unit>" ("Alaska: 82%"); table "header"
+# and "row" cells are separated by " | "; timeline "event" is "<date>: <label>" ("1925: Serum run"); route_map
+# "route" is "<from place> to <to place>" (optional " by <road|rail|river|sea|air|trail>").
+LAYOUT_ROLES: dict[LayoutKind, tuple[str, ...]] = {
+    LayoutKind.split_comparison: ("left", "right"),
+    LayoutKind.number_over_footage: ("background", "number", "label"),
+    LayoutKind.name_card: ("portrait", "name", "role"),
+    LayoutKind.list_slideshow: ("item",),
+    LayoutKind.date_title: ("background", "date", "label"),
+    LayoutKind.route_map: ("place", "route", "distance"),
+    LayoutKind.equals_card: ("left", "right"),
+    LayoutKind.chart: ("bar", "point"),
+    LayoutKind.table: ("header", "row"),
+    LayoutKind.timeline: ("event",),
+    LayoutKind.document_focus: ("document", "quote", "source"),
+}
+
+
+class LayoutElement(Model):
+    role: str
+    text: str = ""
+    anchor: str = ""  # the exact narration words this element appears on
+    picture: Optional[str] = None  # a candidate reference (Candidate.id, or a local path), or null
+    stage: Literal[1, 2] = 1  # stage 2 elements appear only after a panel_then_expand has grown
+
+
+class LayoutSpec(Model):
+    kind: LayoutKind
+    elements: list[LayoutElement] = Field(default_factory=list)  # in spoken order
+    title: str = ""
+    presentation: Optional[LayoutPresentation] = None  # route_map, chart, table and timeline only; None is full
+    id: str = ""  # timeline: a later spec with the same id returns to it with the earlier events in place
+
+
+class StillSequence(Model):
+    """One high resolution photograph serving consecutive shots (planner labelled): whole, closer, detail."""
+
+    id: str
+    step: Literal["whole", "closer", "detail"] = "whole"
+
+
 # ---------------------------------------------------------------- shots
 
 class Candidate(Model):
@@ -481,6 +545,9 @@ class Shot(Model):
     kenburns: Optional[dict[str, float]] = None  # optional explicit {zoom0, zoom1, x0, y0, x1, y1}
     render_segment_path: str = ""
     render_hash: str = ""
+    layout: Optional[LayoutSpec] = None  # a designed layout or data panel for this shot (vidbush/mg/layouts)
+    still_sequence: Optional[StillSequence] = None
+    layout_notes: list[str] = Field(default_factory=list)  # render decisions a review can read (panel place, why)
 
     def selected_candidate(self) -> Optional[Candidate]:
         for c in self.candidates:
@@ -600,6 +667,12 @@ class Transitions(Model):
 
 class ColourGrade(Model):
     lut_path: Optional[str] = None
+    # matched look (vidbush/render/look.py): each real source is brought part of the way toward one exposure,
+    # white balance and saturation, so sources from many providers do not sit side by side unmatched;
+    # black and white archival keeps its own look (exposure only)
+    match_look: bool = False
+    match_strength: float = 0.6  # share of the measured difference that is corrected (mild)
+    brand_grade: str = ""  # optional named house grade applied after the match ("" = none; see look.GRADES)
 
 
 class MusicStyle(Model):
@@ -735,6 +808,9 @@ class Brand(Model):
     illustration_style: str = ""
     language: str = "en"
     licence_policy: LicencePolicy = Field(default_factory=LicencePolicy)
+    # house style block (vidbush/mg/house.py): overrides of the one type, colour and motion set every layout,
+    # panel, label and map frame in a video shares, e.g. {"accent": "#E8A33D"}; empty keeps the house defaults
+    house_style: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------- edit ops
