@@ -37,8 +37,14 @@ def make_job(spec: LayoutSpec, words: Sequence[Any], clip_start: float, duration
     """Cues from the narration (clip_start is the narration time the clip starts at), pictures from pool
     (keyed by Candidate.id; a picture value that is an existing path is used directly)."""
     cues = cue_times(spec.elements, words, clip_start, clip_start + duration)
+    near = [{"text": w["text"] if isinstance(w, dict) else w.text,
+             "start": float(w["start"] if isinstance(w, dict) else w.start),
+             "end": float(w["end"] if isinstance(w, dict) else w.end)} for w in words]
+    near = [w for w in near if clip_start - 2.0 <= w["start"] <= clip_start + duration + 2.0]
+    ex = {"words": near, "clip_start": clip_start}  # word by word effects (a quote underlined as it is read)
+    ex.update(extra or {})
     job = LayoutJob(spec=spec, cues=cues, duration=duration, width=width, height=height, fps=fps,
-                    frame=frame or FrameProfile(), house=house or house_style(), extra=dict(extra or {}))
+                    frame=frame or FrameProfile(), house=house or house_style(), extra=ex)
     for i, el in enumerate(spec.elements):
         if not el.picture:
             continue

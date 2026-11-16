@@ -77,6 +77,8 @@ def _panel_window(job: LayoutJob, presentation: str, shot_dur: float) -> tuple[f
 
 
 def _shift(job: LayoutJob, by: float) -> None:
+    if "clip_start" in job.extra:
+        job.extra["clip_start"] += by
     for c in job.cues:
         c.appear, c.word, c.word_end = c.appear - by, c.word - by, c.word_end - by
 
@@ -205,7 +207,13 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             continue
         spec = shot.layout
         shot.layout_notes = []
-        extra = {"history": _history(shotlist.shots, idx, spec)} if spec.kind == LayoutKind.timeline else {}
+        extra: dict[str, Any] = {}
+        if spec.kind == LayoutKind.timeline:
+            extra["history"] = _history(shotlist.shots, idx, spec)
+        if spec.kind == LayoutKind.route_map:  # the art lane's registered painted bases for this project
+            art = ctx.work / "art" / "maps"
+            if art.is_dir():
+                extra["art_bases"] = [str(art)]
         pres = presentation_of(shot)
         job = make_job(spec, words, shot.start, shot.duration, pool, frame, house, r.width, r.height, r.fps, extra)
         plan = None

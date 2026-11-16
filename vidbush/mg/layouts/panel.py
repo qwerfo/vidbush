@@ -128,7 +128,10 @@ class PanelComp:
     def content(self, i: int, t: float, w: int, h: int) -> np.ndarray:
         p = self.plan
         if p.presentation == "panel":
-            return self.small.render(i)
+            img = self.small.render(i)
+            if img.shape[1] != w or img.shape[0] != h:
+                img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+            return img
         first, second = (self.large, self.small) if p.presentation == "full_then_dock" else (self.small, self.large)
         u = self.phase(t)
         if u <= 0.0:
@@ -162,13 +165,11 @@ class PanelComp:
         x2, y2 = cx - w2 / 2, cy - h2 / 2
         full = w2 >= self.W - 2 and h2 >= self.H * 0.95
         img = self.content(i, t, w2, h2)
-        r = 0 if full else max(3, int(6 * self.k))
-        m = _round_rect_mask(w2, h2, r).astype(np.float32) / 255.0 if r else np.ones((h2, w2), np.float32)
+        m, ring, shadow = self._chrome(w2, h2, full)
         if not full:  # thin paper rule around the panel, so it reads as a designed object over the picture
-            edge = cv2.erode(m, np.ones((3, 3), np.uint8), iterations=max(1, int(2 * self.k)))
-            ring = (m - edge)[..., None]
             img = (img.astype(np.float32) * (1 - ring * 0.85) + 238.0 * ring * 0.85).astype(np.uint8)
-            self._shadow(frame, x2, y2, w2, h2, m, op)
+            pad = int(28 * self.k) + 2
+            blit(frame, shadow, x2 - pad, y2 - pad, op)
         body = np.empty((h2, w2, 4), np.uint8)
         body[..., :3] = (img.astype(np.float32) * m[..., None]).astype(np.uint8)
         body[..., 3] = (m * 255).astype(np.uint8)
@@ -179,7 +180,24 @@ class PanelComp:
                 blit(frame, rect(rw, max(3, int(5 * self.k)), self.accent), x2 + int(14 * self.k), y2 - int(9 * self.k), op)
         return frame
 
-    def _shadow(self, frame: np.ndarray, x: float, y: float, w: int, h: int, m: np.ndarray, op: float) -> None:
+    def _chrome(self, w: int, h: int, full: bool) -> tuple:
+        """Mask, border ring and shadow for a panel size, built once per size (sizes repeat at rest)."""
+        key = (w, h, full)
+        cache = self.__dict__.setdefault("_chrome_cache", {})
+        if key not in cache:
+            r = 0 if full else max(3, int(6 * self.k))
+            m = _round_rect_mask(w, h, r).astype(np.float32) / 255.0 if r else np.ones((h, w), np.float32)
+            ring = shadow = None
+            if not full:
+                edge = cv2.erode(m, np.ones((3, 3), np.uint8), iterations=max(1, int(2 * self.k)))
+                ring = (m - edge)[..., None]
+                shadow = self._shadow_sprite(w, h, m)
+            if len(cache) > 64:
+                cache.clear()
+            cache[key] = (m, ring, shadow)
+        return cache[key]
+
+    def _shadow_sprite(self, w: int, h: int, m: np.ndarray) -> np.ndarray:
         pad = int(28 * self.k) + 2
         a = np.zeros((h + 2 * pad, w + 2 * pad), np.float32)
         off = int(8 * self.k)
@@ -187,7 +205,7 @@ class PanelComp:
         a = cv2.GaussianBlur(a, (0, 0), 14 * self.k + 1) * 0.6
         sh = np.zeros(a.shape + (4,), np.uint8)
         sh[..., 3] = (a * 255).astype(np.uint8)
-        blit(frame, sh, x - pad, y - pad, op)
+        return sh
 
     def close(self) -> None:
         for c in (self.small, self.large):
