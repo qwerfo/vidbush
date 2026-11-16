@@ -450,3 +450,15 @@ One line each: the decision and why.
 - run3/stills merged at 15:31 (READY ac1bed7); the only conflict was appended DECISIONS sections, both kept; full suite 1378 passed, 17 skipped.
 - QA, screen time and the mix count what is on screen in five kinds: real footage, real stills, photo-style AI (stills and clips), designed animation (models.DESIGNED_SOURCES or a painted map base) and graphics: designed art is openly non-photographic, so counting it as AI or as a graphic would hide both.
 - The main lane's own commits got an independent review before the art merge; its findings (duplicate wide ideas on one-noun beats, a single query per idea, an empty designed set after the art merge) were fixed and a guard test now fails if a SourceKind is neither sourced nor in exactly one generated set.
+
+## Fable review (2026-11-16, branch fable-review)
+
+- Scope: Adam chose review and redesign only; no pipeline code changed and no live spend. Report: docs/FABLE_REVIEW.md.
+- Benchmark: the Vidrush render at C:/projects/CaseFile/inbox/alaska/vidrush-alaska.mp4 is the target and was measured for the first time.
+- Measure: quality is judged by a tile audit (one frame per 2 s against the spoken words), not by the judge score or the QA pass rate; evidence in E:/coding projects/Vidbush/fable_review.
+- Run 3 (finished by another session on 2026-11-16) is taken as the state of the current code: 24 percent of tiles noticeable against 49 for run 2 and 19 for Vidrush.
+- Disagree with "a deterministic pacing engine assigns typed, timed slots" (first section above): cuts should come from narration clauses and pictures from the found pool.
+- Disagree with "full_screen_cards 5" and card_spacing_s 75: Vidrush is 42 percent designed full-frame material; run 1's cards failed on design and hold time, not on being cards.
+- Recommend AI stills never stand in for a named real person, a real event or a document; a designed layout or a map is the fallback.
+- Next work is split into lanes A to F in docs/FABLE_REVIEW.md section 11; lane A (audit command, stage snapshots, reply cache) goes first because it proves the others.
+- Left to Adam: letterbox and always-on captions, Standard YouTube Licence footage, AI for real people.
