@@ -40,7 +40,7 @@ class House:
     muted: str = "#A7AFB8"  # secondary type
     accent: str = "#E8A33D"  # amber: the one signal colour (rules, the spoken row, the line being drawn)
     accent2: str = "#5FB3A6"  # sea teal: the second side of a comparison, second series
-    shade: float = 0.42  # brightness kept on footage under type (darkened background)
+    shade: float = 0.36  # brightness kept on footage under type (darkened background)
     frame_px: int = 4  # picture frame thickness at 1080p
     radius_px: int = 6  # picture and panel corner radius at 1080p
     grain: float = 3.5  # paper grain strength on the ink ground

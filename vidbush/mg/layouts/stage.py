@@ -129,6 +129,46 @@ def underlying_frames(shot: Shot, profile: StyleProfile, settings: Any, times: l
 
 # ---------------------------------------------------------------- stage
 
+def legacy_panel(shot: Shot) -> Optional[Any]:
+    """A planned map or chart inset (old MotionSpec overlay) as a panel LayoutSpec: every marker or bar is an
+    element anchored on its own name, so it appears when named instead of arriving complete in a fixed box."""
+    from ...models import LayoutElement, LayoutSpec, MotionKind
+    from ..inset import is_inset
+    ov = shot.overlay
+    if shot.layout is not None or ov is None or not is_inset(ov):
+        return None
+    try:
+        pay = ov.typed_payload()
+    except Exception:  # noqa: BLE001  an invalid payload stays on the old path
+        return None
+    els: list[Any] = []
+    if ov.kind == MotionKind.map:
+        names: list[str] = []
+        for m in pay.markers:
+            if m.label and m.label not in names:
+                names.append(m.label)
+        for r in pay.routes:
+            for n in (r.from_place, r.to_place):
+                if n and n not in names:
+                    names.append(n)
+        els = [LayoutElement(role="place", text=n, anchor=n) for n in names]
+        for r in pay.routes:
+            if r.from_place and r.to_place:
+                via = f" by {r.via}" if r.via else ""
+                els.append(LayoutElement(role="route", text=f"{r.from_place} to {r.to_place}{via}",
+                                         anchor=r.to_place))
+        kind = LayoutKind.route_map
+    else:
+        vals = pay.series[0].values if pay.series else []
+        role = "point" if ov.kind == MotionKind.line_chart else "bar"
+        els = [LayoutElement(role=role, text=f"{lab}: {v:g}{pay.units}", anchor=lab)
+               for lab, v in zip(pay.labels, vals)]
+        kind = LayoutKind.chart
+    if not els:
+        return None
+    return LayoutSpec(kind=kind, elements=els, title=getattr(pay, "title", ""), presentation="panel")
+
+
 def _pool(shotlist: ShotList) -> dict[str, Candidate]:
     return {c.id: c for s in shotlist.shots for c in s.candidates}
 
@@ -142,6 +182,11 @@ def _key(job: LayoutJob, plan: Optional[PanelPlan]) -> str:
 
 def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
     """Render every shot's layout; returns render seconds per kind (summed), for the stage report."""
+    for s in shotlist.shots:
+        conv = legacy_panel(s)
+        if conv is not None:
+            s.layout, s.overlay, s.overlay_path = conv, None, ""
+            s.layout_notes = ["legacy map or chart inset converted to a word-timed, placed panel"]
     shots = [s for s in shotlist.shots if s.layout is not None]
     if not shots:
         return {}
@@ -164,6 +209,11 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
         pres = presentation_of(shot)
         job = make_job(spec, words, shot.start, shot.duration, pool, frame, house, r.width, r.height, r.fps, extra)
         plan = None
+        if not any(c.found and -1.0 <= c.word <= shot.duration for c in job.cues) and any(e.anchor for e in spec.elements):
+            # nothing it shows is spoken during the shot: a graphic at the wrong moment is worse than none
+            shot.layout_notes.append(f"{spec.kind.value} dropped: none of its words are spoken during the shot")
+            shot.layout, shot.overlay_path, shot.layout_at = None, "", 0.0
+            continue
         if pres != "full":
             plan, why = _plan_panel(shot, job, pres, previous, ctx)
             if plan is None:
@@ -178,6 +228,11 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             if not FULL_MIN_S <= shot.duration <= FULL_MAX_S:
                 shot.layout_notes.append(f"full layout held {shot.duration:.1f} s, outside {FULL_MIN_S:g} to "
                                          f"{FULL_MAX_S:g} s")
+        if spec.kind == LayoutKind.name_card and pres == "full":
+            from .pictures import NameCard
+            if NameCard.fallback_needed(job):
+                _name_lower_third(shot, job, out_dir, ctx, seconds)
+                continue
         shot.layout_notes += job.notes
         key = _key(job, plan)
         out = out_dir / f"layout_{key}.{'mov' if plan else 'mp4'}"
@@ -197,6 +252,33 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             shot.candidates = [c for c in shot.candidates if c.id != cand.id] + [cand]
             shot.selected = cand.id
     return seconds
+
+
+def _name_lower_third(shot: Shot, job: LayoutJob, out_dir: Path, ctx: Any, seconds: dict[str, float]) -> None:
+    """No real portrait: the name goes on a lower third over the shot's own picture, from its words to the cut.
+    Never over a generated picture: a name on an AI portrait would give a made-up face a real identity."""
+    from ...models import GENERATED_SOURCES
+    from ...render.mg_python import FrameSink
+    from .pictures import NameLowerThird
+    shot.layout_notes += job.notes
+    pic = shot.selected_candidate()
+    if pic is None or pic.source in GENERATED_SOURCES or pic.source == SourceKind.motion:
+        shot.layout_notes.append("name card: no real portrait and the shot's picture is not a real one; no name shown")
+        shot.overlay_path, shot.layout_at = "", 0.0
+        return
+    start = min((c.appear for c in job.cues if c.found), default=0.0)
+    _shift(job, start)
+    job.duration = max(0.5, shot.duration - start)
+    out = out_dir / f"layout_{_key(job, None)}_lt.mov"
+    if not out.exists():
+        t0 = time.perf_counter()
+        comp = NameLowerThird(job, job.width, job.height, False)
+        with FrameSink(out, job.width, job.height, job.fps, True, "veryfast") as sink:
+            for i in range(max(1, round(job.duration * job.fps))):
+                sink.write(comp.render_rgba(i))
+        seconds["name_lower_third"] = seconds.get("name_lower_third", 0.0) + time.perf_counter() - t0
+    shot.overlay_path, shot.layout_at = str(out), round(start, 3)
+    shot.layout_notes.append("name card: no real portrait, shown as a lower third on the shot's picture")
 
 
 def plan_start(shot: Shot, job: LayoutJob) -> float:
