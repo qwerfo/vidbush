@@ -835,6 +835,111 @@ few seconds; `algrow` and `elevate` write `data/live_probe/<seat>_tts.mp3`, say
 `words_returned: false`, and show `aligned_by: whisper` with word times that
 look right when you play the file.
 
+## 11. Art layer: illustrated maps, illustrations, clips (run 3)
+
+Designed visuals that are openly illustrations or animations, counted as animation and never as photographs.
+Code: `vidbush/art/` and `vidbush/providers/video_elevate.py`; architecture in `docs/ARCHITECTURE.md` (Art layer);
+every rule with its reason in `docs/DECISIONS.md` (Run 3: art layer); Elevate's catalogue, credits and limits in
+`docs/PROVIDER_NOTES.md` (Elevate catalogue, image and video).
+
+### 11a. What it does
+
+- **Illustrated maps.** The exact map view is rendered with no text and sent to `nano_banana_pro` as a reference
+  image. The prompt is written by the director seat from the narration at that moment and the map's places,
+  with names and digits removed. The prompt is phrased as a repaint, so the model keeps the outlines. Of three
+  variants (two nano_banana_pro, one gemini_flash_image), only those that pass three checks count: registration
+  against the true coast, OCR (no text), and a vision call (no painted text or lines). The best of those by
+  appeal and fit becomes the painted base. The renderer draws markers, routes, labels, title and credit on top,
+  plus the true borders and river names. With no passing variant the plain map stays. Maps that make a precise
+  point (route, arrow, shaded region, distance or border words) always stay plain.
+- **Illustrations.** For moments no footage can show, in the brand's one style line
+  (`illustration_style` in `config/brands/default.yaml`). Each must have no text and no painted bars, and must
+  pass the normal judge against its shot window. They replace only AI photo-style stills or weak picks, never
+  good real material.
+- **Clips.** veo_3_1 image to video from an illustration, a painted map or a photo-style AI still, never from a
+  real photograph. The shot holds the still, then moves for 3 to 5 s. A clip is used only when:
+  - its first frame matches the still;
+  - fixed yes or no vision questions pass (same subject, same layout, no new objects, no text, no morphing);
+  - for a map, its middle and last frames register onto the view without moving.
+
+  Otherwise the still keeps its Ken Burns move.
+
+### 11b. Turning it on and off
+
+`config/style_profiles/documentary_default.yaml` now carries `art: {illustrated_maps: 0.5, illustrations: 0.05,
+clip_every_s: 90, clip_opening_s: 60}`. Every other profile has no art, because every `ArtProfile` default is
+off. To turn it off for a run, set the shares to 0 or remove the `art:` line. Other keys: `map_variants`,
+`illustration_variants`, `map_repeat_s` (180), `map_model`, `map_fallback_model`, `illustration_model`,
+`clip_min_s`, `clip_max_s`, `clip_from_ai_stills` (false: photo-style AI stills stay still), and `hour_credit_cap` (skip new art while the shared
+key has used this many image credits this hour; 0 means no cap).
+
+The video seat is `elevate_video` (veo_3_1, 1080p, 2 credits a clip) first in the `video` role of
+`config/seats.yaml`. Set `options.resolution: "720p"` there to halve the credits. `python -m vidbush doctor --probe`
+now checks it.
+
+### 11c. Cost and time on Adam's Elevate key
+
+- Map view: three paintings, about 13 credits (5 + 5 + 3) and 2 to 3 minutes.
+- Illustration: two paintings, 10 credits.
+- Clip: 2 credits at 1080p, about 6 minutes each. The key allows one clip at a time and 40 clips (80 credits)
+  an hour.
+- At the default shares, a 11 minute documentary with 9 maps, 130 shots and 7 clips spends about 60 + 70 image
+  credits and 14 video credits. Clip generation adds about 45 minutes to the visuals stage, because clips run
+  one after another.
+
+### 11d. Proving it on a finished project
+
+```powershell
+python -m vidbush.art.prove --source "E:\coding projects\Vidbush\output\alaska_run2" --review "E:\coding projects\Vidbush\review_run3" --maps 8 --illustrations 10 --clips 16 --ai-clips 4 --image-cap 300
+python -m vidbush.art.sheet --review "E:\coding projects\Vidbush\review_run3"
+```
+
+The source project is only read. Everything is written under `<review>\art_project`. The sheet step writes
+`art_contact_sheet.png`, `clip_NN.mp4`, `clips.md` and `yield.json` beside it. The director's moments and
+picks are cached, so a restart reuses every paid file.
+
+### 11e. Proving run on the Alaska script (2026-11-15)
+
+Run 2's narration and shot list were used read only. Everything is in `E:\coding projects\Vidbush\review_run3\`:
+- `art_contact_sheet.png`: 12 numbered items, each with its timestamp and narration line;
+- `clip_01.mp4` to `clip_06.mp4`, listed in `clips.md`;
+- `yield.json`;
+- `art_project\work\art\`: every painting, illustration, clip, check frame and report.
+
+Yield. Every paid file and every check is counted once. A clip counts only when every check it had passed.
+
+| | made | passed every check | on the sheet or numbered |
+|---|---|---|---|
+| Illustrated maps | 66 paintings of 26 views | 13 paintings; 5 narration moments have a painted map (Alaska twice at two zooms, Bethel, Texas, Cleveland and Los Angeles, Jacksonville) | 5 maps |
+| Illustrations | 47 images for 26 shots | 9 shots after the one-scene and lettered-artifact rules (2 collages and 1 classroom wall map dropped) | 7 illustrations |
+| Clips | 23 checked (10 illustration, 8 AI still, 5 painted map) | 6: 4 from illustrations, 2 from photo-style AI stills; 0 of 5 map clips | 6 clips |
+
+What the run showed:
+- **Wide views work, regional views mostly do not.**
+  - Views with a clear coastline at state or country scale work: Alaska at zoom 4.4 and 4.6, Texas, the lower 48, Florida.
+  - Regional views at zoom 5 or more, inland views and views with frozen sea mostly fail. The models paint an oblique landscape, a close-up village or sea ice instead of the map, and registration rightly rejects them.
+  - The prompt went through five versions (`paint.PROMPT_VERSION` p5): a repaint lead, top-down only, touches as tiny map symbols, and the trace rule repeated at the end.
+- **Veo moves the camera on every map clip** (3 to 5 percent zoom or drift) despite the prompt. The near-identity check rejects them, so painted maps keep their push-in over the static painting.
+- **Clip vision checks are not deterministic.** The same clip passed one run and failed the next. The sheet counts a clip only when every check passed, and a checked clip is never queued again.
+- **My own judgement** of what I would put in a video:
+  - the 5 maps;
+  - 6 of the 7 illustrations. The biplane hangar at 4:30 shows an aircraft for a line about expired antitoxin.
+  - 4 of the 6 clips. Not the two from photo-style AI stills; see the decision that turned those off.
+  - The school bus clip adds snow falling inside the bus. The check passed it, but Adam should judge it.
+
+Credits and cost:
+- Images: about 570 credits, counted from the files Elevate returned. Tasks that failed server side are not in that count; the key's hourly counters, which other lanes share, showed more.
+- Video: about 51 credits (25 clips at 1080p plus one 720p probe).
+- Image credits per UTC hour on the shared key: 05:00 about 170, 07:00 412, 08:00 127. New image work stopped at 08:30, apart from one capped round after 09:00 of about 80 credits.
+- Text and vision calls: well under 1 USD. The cost report was overwritten by the concurrent proving processes; the last one alone recorded 0.09 USD.
+
+Not proven:
+- Nothing has run inside the pipeline end to end. `apply_art` is covered by unit tests only, and no video was rendered with art.
+- The moving-base map clip has not reached the screen, because no map clip passed.
+- Invented lakes next to a true river still pass registration (the Alaska painting has a seaplane lake).
+- The gazetteer resolves "Manhattan" to Manhattan, Kansas. Pipeline maps go through `verify_map`; the proving run skipped that place.
+- The illustration scene check and the split-brief filter came late. The earlier rounds were filtered after the fact, not before paying.
+
 See also: `docs/ARCHITECTURE.md` (stage graph, contracts, cache rule),
 `docs/DECISIONS.md`, `docs/PROGRESS.md`, `docs/BLOCKERS.md`, `docs/SPEC.md`.
 

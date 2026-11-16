@@ -207,3 +207,51 @@ Every seat in the 2026-11-11 policy answered on this laptop, which verifies the 
 - tts: elevenlabs `eleven_v4` (voice Brian), elevate_tts and algrow_tts (`eleven_v4`, 1125 Algrow credits) ok.
 - image: Elevate `gpt-image-2.5-fast` and Algrow `gpt-image-2.5` ok.
 - video and search have no configured provider (as in live run 1); no stage of the Alaska run calls them.
+
+## Elevate catalogue, image and video (2026-11-15, run 3 art lane, read live with Adam's key)
+
+Source: `GET /v2/media/types`. The catalogue is the model list; there is no model endpoint (`GET /v2/media/models`
+answers 422 because `models` is parsed as a task id, `GET /v2/models` answers 404; the Elevate MCP
+`get_media_types` returns the same text). Credits per image were measured from `GET /v2/media/usage`
+`image.hourly.credits_used` before and after one call each, while no other work used the key. Raw replies:
+`E:\coding projects\Vidbush\review_run3\catalogue\`.
+
+Image models (`POST /v2/media {type: image, model, prompt, aspect_ratio, seed, params, reference_images}`):
+
+| id | reference images | credits | time | output (landscape) | notes |
+|---|---|---|---|---|---|
+| `nano_banana_pro` | up to 10, seed | 5 (measured) | about 41 s | 1376x768 PNG | best map painter: keeps the reference coast, no watermark seen; the art layer's map and illustration model |
+| `nano_banana_2` | up to 10 | 5 (measured) | about 40 s | 1376x768 | close to pro; drifted the Yukon delta coast in the probe |
+| `gemini_flash_image` | 1 (switches to edit mode) | 3 (measured) | about 32 s | 1365x768 | registered well; the art layer's map fallback |
+| `gpt-image-2.5-fast` | up to 10 | 4 (catalogue and measured) | about 39 s | 1672x941 with a reference | reframed the map and copied the reference's border line, so it fails registration |
+| `gpt-image-2.5-thinking` | up to 10 | 7 (catalogue) | about 70 s | not probed | |
+| `Batman` | none (text only) | 0 (launch promo) | about 6 s | | `params.style`: default, portrait, ghibli, anime, cinematic, 3d, pixel, oil, sketch, sticker |
+
+- `params.resolution: "2K"` is ignored by `nano_banana_pro` (still 1376x768); painted bases are upscaled at render time.
+- No sparkle watermark was visible on the nano_banana and gemini outputs, so painted maps use no edge trim (the
+  image seat's `edge_trim: 0.05` is for gpt-image).
+
+Video models (`POST /v2/media {type: video, model, prompt, operation, source_image, aspect_ratio, params}`):
+
+| id | operations | credits | duration | output | time |
+|---|---|---|---|---|---|
+| `veo_3_1` (Veo 3.1) | `prompt` (text to video) and `image` (image to video, `source_image` as a base64 data URL) | 720p 1, 1080p 2 (default) | 7.93 s whatever is asked (no duration field) | 1280x720 at 720p, 24 fps, H.264 with an AAC audio track | 363 s for one 720p clip on 2026-11-15 |
+
+- It is the only video model listed. Choice: `veo_3_1` at 1080p. Runner-up and fallback: `veo_3_1` at 720p (half
+  the credits). fal stays configured second in the video role when a key is set.
+- The first frame of an image to video clip is the source still. Veo added clouds and a slight camera drift to a
+  painted map despite "no camera move" in the prompt. The art layer's map motion line now asks for sea ripples
+  and light only, and a map clip must pass registration on its last frame.
+- Limits on this key (`GET /v2/media/usage`): image 3 at once, 200 tasks and 800 credits an hour; video 1 at
+  once, 40 clips and 80 credits an hour, no daily cap (`daily: null`); tts 3 at once. Budgets reset at the top
+  of the UTC hour (`resets_at`) and are shared with the dashboard and every other session on the key. Image and
+  video credits are separate budgets.
+- Adapter: `vidbush/providers/video_elevate.py`, provider type `elevate_video`, registered in
+  `seats.VIDEO_TYPES` and in `doctor --probe` (usage with the key, then `data.video.status` must be operational).
+  It submits, polls every 10 s for up to 900 s, and downloads without auth. The task id is kept beside the output
+  (`<out>.task.json`), so a timeout or a restart resumes the running task instead of paying twice. The
+  concurrent limit is waited out (usage before the submit, the capacity 429 during it). A refused task is never
+  resubmitted.
+- In the proving run veo moved the camera (3 to 5 percent zoom or drift) on all 5 painted map clips and added objects or morphing to 4 of 8 photo-style AI stills; 6 of 10 illustration clips passed every check. Throughput was about one clip every 6 to 8 minutes on the one-at-a-time lane.
+- Images with references for the art layer: `vidbush/art/elevate.py` (RadioPlay's `reference_images` shape),
+  through the image seat's own client, envelope and polling.
