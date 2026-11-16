@@ -62,12 +62,13 @@ def find(words: Sequence[Word], phrase: str) -> Optional[int]:
         return None
     seq = folded(words)
     need = max(1, math.ceil(0.6 * len(content)))
-    width = len(ptoks) + 2
+    width = len(ptoks) + 2  # in words: a spoken number adds a digit token beside its words
     best: Optional[tuple[int, int]] = None  # (-hits, word index)
     for s in range(len(seq)):
         if seq[s][0] not in content:
             continue
-        window = [t for t, _ in seq[s:s + width]]
+        w0 = seq[s][1]
+        window = [t for t, wi in seq[s:] if wi < w0 + width]
         hits = sum(1 for t in set(content) if t in window)
         if hits >= need and (best is None or -hits < best[0]):
             best = (-hits, seq[s][1])

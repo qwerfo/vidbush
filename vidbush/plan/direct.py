@@ -47,7 +47,8 @@ def validate(raw: Any, clauses: list[Clause], narration: Narration) -> tuple[lis
     """Normalised clause plans in clause order plus a list of plain-language problems."""
     errors: list[str] = []
     if not isinstance(raw, dict) or not isinstance(raw.get("clauses"), list):
-        return [], ["The reply must be an object with scene_purpose and a clauses list."]
+        errors.append("The reply must be an object with scene_purpose and a clauses list.")
+        raw = {"scene_purpose": "x", "clauses": []}  # every clause is then planned as missing
     if not str(raw.get("scene_purpose", "")).strip():
         errors.append("scene_purpose is missing.")
     by_id: dict[str, dict] = {}

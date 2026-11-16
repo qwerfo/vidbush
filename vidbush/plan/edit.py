@@ -21,7 +21,7 @@ from .clauses import Clause
 RETRIES = 1
 SEAT, TASK, STAGE = "vision", "plan_edit", "judge"
 FRAME_POS = {"a": 0.2, "b": 0.5, "c": 0.8}  # where source/keyframes.py samples a clip
-FALLBACKS = ("layout", "map", "hold_previous", "text_over_footage", "ai_still")
+FALLBACKS = ("map", "hold_previous", "text_over_footage", "ai_still")
 NO_AI_KINDS = ("person", "event", "document")
 _YEAR = re.compile(r"\b(1[5-9]\d\d|20\d\d)\b")
 
@@ -113,83 +113,122 @@ def catalogue(pool: list[Candidate], used_before: dict[str, str]) -> list[dict]:
     return out
 
 
+def _cand_at(pool: list[Candidate], n: Any) -> Optional[Candidate]:
+    try:
+        i = int(n)
+    except (TypeError, ValueError):
+        return None
+    return pool[i - 1] if 1 <= i <= len(pool) else None
+
+
+def _limit(c: Candidate) -> float:
+    return V.AI_HOLD_MAX_S if is_ai(c) else V.HOLD_MAX_S
+
+
 def check(raw: Any, shots: list[dict], pool: list[Candidate], used_before: dict[str, str],
           ai_tail: int) -> tuple[list[dict], list[str]]:
     """Normalised picks, one per shot in order, and plain-language problems."""
     errors: list[str] = []
     items = raw.get("picks") if isinstance(raw, dict) else None
     if not isinstance(items, list):
-        return [{"clause": s["clauses"][0].id, "pick": None} for s in shots], ["The reply needs a picks list."]
+        return ([{"clause": s["clauses"][0].id, "pick": None, "_cand": None, "element_picks": []} for s in shots],
+                ["The reply needs a picks list."])
     by = {str(i.get("clause")): i for i in items if isinstance(i, dict)}
     picks: list[dict] = []
     used: dict[str, str] = {}
     run = ai_tail
+    prev_key, prev_secs = None, 0.0
+
+    def seen(key: str) -> Optional[str]:
+        return used.get(key) or used_before.get(key)
+
     for s in shots:
         cid = s["clauses"][0].id
         p = dict(by.get(cid) or {"clause": cid, "pick": None, "reason": "no answer for this clause"})
         dur = s["clauses"][-1].end - s["clauses"][0].start
+        rt = s["plan"].get("real_thing") or {}
         n = p.get("pick")
-        cand: Optional[Candidate] = None
-        if n is not None:
-            try:
-                cand = pool[int(n) - 1]
-                if int(n) < 1:
-                    raise IndexError
-            except (TypeError, ValueError, IndexError):
-                errors.append(f"{cid}: pick {n} is not a candidate number.")
-                p["pick"] = cand = None
+        cand = _cand_at(pool, n) if n is not None else None
+        if n is not None and cand is None:
+            errors.append(f"{cid}: pick {n} is not a candidate number.")
+            p["pick"] = None
+        ai_here = False
         if cand is not None:
             fr = str(p.get("frame") or "a").lower()
-            if cand.media != "video" and fr != "a":
+            if cand.media != "video":
                 fr = "a"
             if fr not in FRAME_POS:
                 errors.append(f"{cid}: frame must be a, b or c.")
                 fr = "a"
             p["frame"] = fr
             key = asset_key(cand)
-            prev_cid = picks[-1]["clause"] if picks else None
-            adjacent = prev_cid is not None and picks[-1].get("_key") == key
-            earlier = used.get(key) or used_before.get(key)
-            if earlier and not adjacent and not p.get("callback"):
-                errors.append(f"{cid}: candidate {n} is already used at {earlier}; pick another, or mark it a "
+            adjacent = key == prev_key
+            if seen(key) and not adjacent and not p.get("callback"):
+                errors.append(f"{cid}: candidate {n} is already used at {seen(key)}; pick another, or mark it a "
                               f"callback and say what changed.")
-            p["_key"] = key
-            rt = s["plan"].get("real_thing") or {}
+            on_screen = dur + (prev_secs if adjacent else 0.0)
+            if on_screen > _limit(cand) + 1e-6:
+                errors.append(f"{cid}: candidate {n} would stay on screen {on_screen:.1f} s; the limit is "
+                              f"{_limit(cand):g} s{' for an AI still' if is_ai(cand) else ''}. Use another picture.")
             if is_ai(cand):
+                ai_here = True
                 if rt.get("kind") in NO_AI_KINDS:
                     errors.append(f"{cid}: candidate {n} is an AI still, never allowed for a real {rt['kind']} "
                                   f"({rt.get('name', '')}).")
-                if dur > V.AI_HOLD_MAX_S + 1e-6:
-                    errors.append(f"{cid}: this shot lasts {dur:.1f} s; an AI still may hold at most "
-                                  f"{V.AI_HOLD_MAX_S:g} s. Use a real picture or a fallback.")
                 if p.get("label"):
                     errors.append(f"{cid}: a label is only for a real picture of the thing named, not an AI still.")
-                run += 1
-                if run > V.AI_RUN_MAX:
-                    errors.append(f"{cid}: this would be AI still number {run} in a row; at most "
-                                  f"{V.AI_RUN_MAX}. Go up the ladder: a layout, a map, hold the previous real "
-                                  f"picture, or text over related real footage.")
-            else:
-                run = 0
             used.setdefault(key, cid)
+            prev_key, prev_secs = key, on_screen
         else:
-            if needs_pick(s["plan"]) and p.get("fallback") not in FALLBACKS:
+            prev_key, prev_secs = None, 0.0
+            fb = p.get("fallback")
+            if needs_pick(s["plan"]) and fb not in FALLBACKS:
                 errors.append(f"{cid}: no pick, so give fallback, one of {', '.join(FALLBACKS)}.")
-            if p.get("fallback") == "ai_still":
-                rt = s["plan"].get("real_thing") or {}
+            if fb == "ai_still":
+                ai_here = True
                 if rt.get("kind") in NO_AI_KINDS:
                     errors.append(f"{cid}: ai_still is not allowed for a real {rt['kind']}; choose another fallback.")
-                run += 1
-            else:
-                run = 0 if p.get("fallback") in ("hold_previous", "text_over_footage") else run
+                if dur > V.AI_HOLD_MAX_S + 1e-6:
+                    errors.append(f"{cid}: ai_still on a {dur:.1f} s shot is over the {V.AI_HOLD_MAX_S:g} s limit.")
+            if fb == "text_over_footage":
+                fc = _cand_at(pool, p.get("fallback_pick"))
+                if fc is None or is_ai(fc):
+                    errors.append(f"{cid}: text_over_footage needs fallback_pick, a real candidate number.")
+                elif seen(asset_key(fc)):
+                    errors.append(f"{cid}: fallback_pick {p.get('fallback_pick')} is already used at "
+                                  f"{seen(asset_key(fc))}.")
+                else:
+                    used.setdefault(asset_key(fc), cid)
+                p["_fallback_cand"] = fc if fc is not None and not is_ai(fc) else None
+            if fb == "map" and not str(p.get("map_place") or (rt.get("place") or rt.get("name") or "")).strip():
+                errors.append(f"{cid}: a map fallback needs map_place.")
+        if ai_here:
+            run += 1
+            if run > V.AI_RUN_MAX:
+                errors.append(f"{cid}: this would be AI still number {run} in a row; at most {V.AI_RUN_MAX}. Go up "
+                              f"the ladder: a map, hold the previous real picture, or text over related real footage.")
+        else:
+            run = 0
+        n_els = len((s["plan"].get("layout") or {}).get("elements", []))
         eps = []
         for ep in p.get("element_picks") or []:
+            ec = _cand_at(pool, ep.get("pick")) if isinstance(ep, dict) else None
             try:
-                ec = pool[int(ep.get("pick")) - 1]
-                eps.append({"element": int(ep.get("element", 0)), "pick": int(ep["pick"]),
-                            "frame": str(ep.get("frame") or "a").lower(), "_cand": ec})
-            except (TypeError, ValueError, IndexError, KeyError):
+                k = int(ep.get("element", -1))
+            except (TypeError, ValueError, AttributeError):
+                k = -1
+            if ec is None or not 0 <= k < n_els:
+                errors.append(f"{cid}: element pick {ep} names no element of this layout or no candidate.")
                 continue
+            if is_ai(ec) and (rt.get("kind") in NO_AI_KINDS or s["plan"]["treatment"] == "name_card"):
+                errors.append(f"{cid}: element {k} cannot be an AI still: this layout shows a real "
+                              f"{rt.get('kind') or 'person'}.")
+            ek = asset_key(ec)
+            if seen(ek) and seen(ek) != cid and not p.get("callback"):
+                errors.append(f"{cid}: element {k} candidate {ep.get('pick')} is already used at {seen(ek)}.")
+            used.setdefault(ek, cid)
+            eps.append({"element": k, "pick": int(ep["pick"]), "frame": str(ep.get("frame") or "a").lower(),
+                        "_cand": ec})
         p["element_picks"] = eps
         p["_cand"] = cand
         picks.append(p)
@@ -198,42 +237,71 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], used_before: dict[
 
 def resolve(picks: list[dict], shots: list[dict], ai_tail: int,
             used_before: Optional[dict[str, str]] = None) -> list[dict]:
-    """Make the picks legal after the retries, going up the fallback ladder; records what was changed."""
+    """Make the picks legal after the retries, going up the fallback ladder; records what was changed.
+
+    Applies the same rules as check() and never adds content: an illegal pick becomes a hold of the previous real
+    picture, or a clause with nothing on it (text over footage with no footage) for the edit to report.
+    """
     run = ai_tail
     last_real: Optional[dict] = None
     used = dict(used_before or {})
-    prev_key = None
+    prev_key, prev_secs = None, 0.0
+
+    def drop(p: dict, why: str) -> None:
+        p["resolved"] = (p.get("resolved", "") + "; " + why).strip("; ")
+        p["pick"] = p["_cand"] = None
+        p["fallback"] = "hold_previous" if last_real is not None else "text_over_footage"
+        p["_fallback_cand"] = None
+
     for p, s in zip(picks, shots):
         dur = s["clauses"][-1].end - s["clauses"][0].start
         rt = s["plan"].get("real_thing") or {}
         cand = p.get("_cand")
         if cand is not None:
             key = asset_key(cand)
-            if key in used and key != prev_key and not p.get("callback"):
-                p["resolved"] = f"pick {p.get('pick')} removed: asset already used at {used[key]}"
-                p["pick"] = p["_cand"] = cand = None
-                p["fallback"] = "hold_previous" if last_real is not None else "text_over_footage"
-            else:
+            adjacent = key == prev_key
+            on_screen = dur + (prev_secs if adjacent else 0.0)
+            if key in used and not adjacent and not p.get("callback"):
+                drop(p, f"pick {p.get('pick')} removed: asset already used at {used[key]}")
+            elif on_screen > _limit(cand) + 1e-6:
+                drop(p, f"pick {p.get('pick')} removed: {on_screen:.1f} s on screen is over the limit")
+            elif is_ai(cand) and (rt.get("kind") in NO_AI_KINDS or run + 1 > V.AI_RUN_MAX):
+                drop(p, f"AI pick {p.get('pick')} removed by the AI rulings")
+            cand = p.get("_cand")
+            if cand is not None:
                 used.setdefault(key, p.get("clause", ""))
-        prev_key = asset_key(cand) if cand is not None else None
-        ai = cand is not None and is_ai(cand)
-        bad_ai = ai and (rt.get("kind") in NO_AI_KINDS or dur > V.AI_HOLD_MAX_S + 1e-6 or run + 1 > V.AI_RUN_MAX)
-        if bad_ai:
-            p["resolved"] = f"AI pick {p.get('pick')} removed by the AI rulings"
-            p["pick"] = p["_cand"] = None
-            p["fallback"] = "hold_previous" if last_real is not None else "text_over_footage"
-            cand, ai = None, False
-        if p.get("fallback") == "ai_still" and (rt.get("kind") in NO_AI_KINDS or dur > V.AI_HOLD_MAX_S
+                prev_key, prev_secs = key, on_screen
+            else:
+                prev_key, prev_secs = None, 0.0
+        else:
+            prev_key, prev_secs = None, 0.0
+        fc = p.get("_fallback_cand")
+        if fc is not None and asset_key(fc) in used and used[asset_key(fc)] != p.get("clause"):
+            p["_fallback_cand"] = None
+        elif fc is not None:
+            used.setdefault(asset_key(fc), p.get("clause", ""))
+        if p.get("fallback") == "ai_still" and (rt.get("kind") in NO_AI_KINDS or dur > V.AI_HOLD_MAX_S + 1e-6
                                                  or run + 1 > V.AI_RUN_MAX):
-            p["resolved"] = "ai_still fallback refused by the AI rulings"
+            p["resolved"] = (p.get("resolved", "") + "; ai_still fallback refused by the AI rulings").strip("; ")
             p["fallback"] = "hold_previous" if last_real is not None else "text_over_footage"
+        ai = cand is not None and is_ai(cand)
         if p.get("label") and (cand is None or ai):
             p["label"] = ""
+        keep = []
+        for ep in p.get("element_picks", []):
+            ec = ep["_cand"]
+            ek = asset_key(ec)
+            if is_ai(ec) and (rt.get("kind") in NO_AI_KINDS or s["plan"]["treatment"] == "name_card"):
+                continue
+            if ek in used and used[ek] != p.get("clause") and not p.get("callback"):
+                continue
+            used.setdefault(ek, p.get("clause", ""))
+            keep.append(ep)
+        p["element_picks"] = keep
         p.pop("_key", None)
         if cand is not None and not ai:
             last_real = p
-            run = 0
-        elif ai or p.get("fallback") == "ai_still":
+        if ai or (cand is None and p.get("fallback") == "ai_still"):
             run += 1
         else:
             run = 0

@@ -73,12 +73,24 @@ def _cand_copy(c: Candidate, frame: str, seconds: float) -> Candidate:
     return cc
 
 
+def _retime(shot: Shot, orig: Optional[tuple[Candidate, str]]) -> None:
+    """After a shot grows, its clip and its specs follow the new duration."""
+    if orig is not None:
+        c = shot.selected_candidate()
+        if c is not None:
+            c.in_point, c.out_point = in_point(orig[0], orig[1], shot.duration)
+    for spec in (shot.motion, shot.overlay):
+        if spec is not None:
+            spec.duration = shot.duration
+
+
 def emit(project_id: str, script: Script, narration: Narration, clauses: list[Clause], scene_plans: list[dict],
          edits: Optional[list[dict]] = None) -> tuple[dict, ShotList]:
     """plan_v2 dict (everything decided) and the ShotList. edits may be None (live run before sourcing)."""
     edit_by_scene = {e["scene"]: e for e in (edits or [])}
     shots: list[Shot] = []
     plan_scenes: list[dict[str, Any]] = []
+    origin: dict[str, tuple[Candidate, str]] = {}  # emitted candidate id: (stored candidate, frame)
     for sp in scene_plans:
         cl = [c for c in clauses if c.scene == sp["scene"]]
         groups = shots_of(sp["clauses"], cl)
@@ -98,15 +110,23 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
                 if end - prev.start <= limit:
                     prev.end = end
                     prev.duration = round(end - prev.start, 3)
+                    _retime(prev, origin.get(prev.selected or ""))
                     prev.flags.append(f"held_over:{gc[0].id}")
                     rows.append(_row(plan, gc, pk, "held into previous shot"))
                     continue
                 fallback = "text_over_footage"
                 pk["resolved"] = (pk.get("resolved", "") + "; hold over the limit, text over footage").strip("; ")
-            if fallback == "text_over_footage" and cand is None and shots and shots[-1].selected:
-                base = shots[-1].selected_candidate()
-                if base is not None and not is_ai(base):
-                    cand = base
+            overlay_text = ""
+            if fallback == "text_over_footage" and cand is None:
+                cand = pk.get("_fallback_cand")  # the model's related real footage; never the previous shot's
+                overlay_text = str(pk.get("overlay_text") or (plan.get("real_thing") or {}).get("name", "")
+                                   or plan.get("anchor", ""))[:60]
+            if fallback == "map" and cand is None:
+                place = str(pk.get("map_place") or (plan.get("real_thing") or {}).get("place", "")
+                            or (plan.get("real_thing") or {}).get("name", ""))
+                plan = dict(plan, treatment="route_map", presentation="full",
+                            layout={"title": place, "elements": [{"role": "place", "text": place,
+                                                                  "anchor": plan.get("anchor", ""), "at": gc[0].speech_start}]})
             typ = _shot_type(plan, cand, fallback)
             lay = _layout(plan, start, pk)
             shot = Shot(id="", beat_id=gc[0].beat, scene_id=sp["scene"], start=start, end=end, duration=dur,
@@ -126,6 +146,12 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
                 cc = _cand_copy(cand, pk.get("frame", "a"), dur)
                 shot.candidates.append(cc)
                 shot.selected = cc.id
+                origin[cc.id] = (cand, pk.get("frame", "a"))
+            if overlay_text and cand is not None:
+                shot.type = ShotType.footage_overlay if cand.media == "video" else ShotType.image_overlay
+                shot.overlay = MotionSpec(kind=MotionKind.text_overlay, duration=dur, background="transparent",
+                                          payload={"title": overlay_text, "subtitle": ""},
+                                          anchor=str(plan.get("anchor", "")))
             for ep in pk.get("element_picks", []):
                 if ep["_cand"].id not in {c.id for c in shot.candidates}:
                     shot.candidates.append(_cand_copy(ep["_cand"], ep.get("frame", "a"), dur))

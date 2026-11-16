@@ -78,7 +78,7 @@ def test_ai_tail_from_previous_scene_counts(pool):
 
 def test_ai_still_over_hold_limit_is_an_error(pool):
     _, errors = E.check(picks(3), shots([4.5]), pool, {}, 0)
-    assert any("at most 4 s" in e for e in errors)
+    assert any("limit is 4 s" in e for e in errors)
     _, errors = E.check(picks(3), shots([4.0]), pool, {}, 0)
     assert errors == []
 

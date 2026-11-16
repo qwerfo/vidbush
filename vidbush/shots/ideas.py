@@ -699,6 +699,8 @@ def phrase_times(phrase: str, words: list[Word]) -> list[float]:
     while i < len(words):
         if i in runs:
             span.append((words[i].start, runs[i][1]))
+            for w in words[i:runs[i][0] + 1]:  # the words too, so a phrase written in words still matches
+                span += [(w.start, t) for t in norm_tokens(w.text)]
             i = runs[i][0] + 1
         else:
             span += [(words[i].start, t) for t in norm_tokens(words[i].text)]

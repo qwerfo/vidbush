@@ -56,6 +56,8 @@ DIRECTOR_RULES = [
     "picture_subject is the real picture the element needs, or empty. stage is 1, or 2 for detail that "
     "appears after a panel_then_expand. A timeline has a timeline_id; reuse that id in a later clause to "
     "return to the same timeline with its earlier events still on it.",
+    "Each element must stay readable: it appears on its anchor words and needs 0.3 s per word, at least 1 s, "
+    "before the shot ends; elements are listed in the order their anchors are spoken.",
     "grammar: a list, possibly empty, of labels you deliberately use: sequence (wide, then medium, then "
     "detail of the same subject or the same photograph across consecutive clauses), callback (showing an "
     "earlier picture again because its meaning has changed; set callback_to to that clause id), hero (one of "
@@ -146,8 +148,10 @@ EDIT_RULES = [
     f"on screen at most {V.AI_HOLD_MAX_S:g} s. Where a stretch has no real picture, go up the ladder before "
     "a third AI still: ask for a layout, a map, hold the previous real picture longer (pick it again on "
     "the next clause), or text over related real footage.",
-    "fallback, for a clause with no pick: one of layout, map, hold_previous, text_over_footage, ai_still, "
-    "with fallback_pick set to a related real candidate when text_over_footage needs footage beneath.",
+    "fallback, for a clause with no pick: one of map, hold_previous, text_over_footage, ai_still. map: a "
+    "map of the place the clause is about (set map_place). text_over_footage: a short title over related real "
+    "footage (set fallback_pick to that candidate and overlay_text to the words, at most 6). Never an AI still "
+    "for fallback_pick.",
     "For layout clauses, pick pictures for the layout elements that have a picture_subject (element_picks), "
     "and for over-picture layouts and panels also the picture beneath (pick).",
     "No em dash characters anywhere.",
@@ -155,7 +159,7 @@ EDIT_RULES = [
 
 EDIT_OUTPUT = {
     "picks": [{"clause": "c001", "pick": 12, "frame": "b", "label": "", "callback": False,
-               "reason": "short", "fallback": "", "fallback_pick": None,
+               "reason": "short", "fallback": "", "fallback_pick": None, "overlay_text": "", "map_place": "",
                "element_picks": [{"element": 0, "pick": 7, "frame": "a"}]}],
 }
 

@@ -28,14 +28,10 @@ class CachedSeats:
         self.hits = 0
         self.calls = 0
 
-    def _key(self, *parts: Any) -> Path:
-        h = hashlib.sha256()
-        for p in parts:
-            if isinstance(p, list):
-                for img in p:
-                    h.update(Path(img).read_bytes() if Path(img).exists() else str(img).encode())
-            else:
-                h.update(str(p).encode("utf-8"))
+    def _key(self, *parts: Any, images: Optional[list] = None) -> Path:
+        h = hashlib.sha256(json.dumps([str(p) for p in parts], ensure_ascii=False).encode("utf-8"))
+        for img in images or []:
+            h.update(b"\0" + (Path(img).read_bytes() if Path(img).exists() else str(img).encode()))
         return self.dir / f"{h.hexdigest()[:24]}.json"
 
     def _cached(self, key: Path, fn):
@@ -49,11 +45,11 @@ class CachedSeats:
         return val
 
     def llm_json(self, role, task, system, user, stage, **kw):
-        return self._cached(self._key(role, task, system, user),
+        return self._cached(self._key(role, task, system, user, stage, sorted(kw.items())),
                             lambda: self.seats.llm_json(role, task, system, user, stage, **kw))
 
     def vision_json(self, role, task, system, prompt, images, stage, **kw):
-        return self._cached(self._key(role, task, system, prompt, list(images), kw.get("details")),
+        return self._cached(self._key(role, task, system, prompt, stage, sorted(kw.items()), images=list(images)),
                             lambda: self.seats.vision_json(role, task, system, prompt, images, stage, **kw))
 
 
