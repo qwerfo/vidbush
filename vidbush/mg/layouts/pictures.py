@@ -16,7 +16,7 @@ import numpy as np
 from ...models import LayoutKind
 from .. import easing as ez
 from ..house import MIN_BODY_PX, MIN_HEAD_PX, MIN_HERO_PX, MIN_LABEL_PX
-from ..textdraw import Sprite, blit, fit_text, font, rect, round_rect, scaled, text_sprite, with_shadow
+from ..textdraw import ELLIPSIS, Sprite, blit, fit_text, font, rect, round_rect, scaled, text_sprite, with_shadow
 from . import register
 from .base import Footage, LayoutComp, LayoutJob, darken, framed, ink_ground
 
@@ -71,13 +71,13 @@ class NumberOverFootage(PictureGround):
         self.num_cue = num[2] if num else None
         head, unit = split_number(num[1].text if num else "")
         self.head = head
-        hero = self.fs(250, MIN_HERO_PX)
+        hero = self.fs(320, MIN_HERO_PX)
         f = font("Black", hero)
         while f.getlength(head) > self.bw * 0.9 and f.size > self.fs(MIN_HERO_PX, MIN_HERO_PX):
             f = font("Black", int(f.size * 0.92))
         self.nf = f
         self.num = text_sprite(head, f, self.house.rgb("paper"), -0.02 * f.size, shadow=0.5)
-        self.unit = self.label(unit, 64, "accent", max_w=self.bw * 0.8, floor=MIN_BODY_PX, tracking_em=0.22,
+        self.unit = self.label(unit, 72, "accent", max_w=self.bw * 0.8, floor=MIN_BODY_PX, tracking_em=0.22,
                                shadow=0.5) if unit else None
         lab = self.job.first("label")
         self.lab = (self.label(lab[1].text, 44, "paper", "Medium", caps=False, max_w=self.bw * 0.7, lines=2,
@@ -175,6 +175,25 @@ class PictureComp(LayoutComp):
             blit(card, t, (w - t.w) / 2, (h - t.h) / 2)
         return Sprite(card, 0)
 
+    def balanced(self, text: str, base: float, color: str, max_w: float, floor: float, tracking_em: float,
+                 weight: str = "SemiBold", caps: bool = True) -> Sprite:
+        """A label of at most two lines; when it must wrap, the narrowest width that keeps the same size and
+        two lines, so the lines are balanced (no orphan word on line two)."""
+        t = text.upper() if caps else text
+        size, fl, tr = self.fs(base, floor), self.fs(floor, floor), tracking_em if caps else 0.0
+        f, ln = fit_text(t, weight, size, max_w, 2, fl, tr)
+        if len(ln) == 2 and ELLIPSIS not in ln[-1]:
+            lo, hi = max_w / 2, max_w
+            for _ in range(12):
+                mid = (lo + hi) / 2
+                f2, ln2 = fit_text(t, weight, size, mid, 2, fl, tr)
+                if f2.size == f.size and len(ln2) == 2 and ELLIPSIS not in ln2[-1]:
+                    hi = mid
+                else:
+                    lo = mid
+            max_w = hi + 1
+        return self.label(text, base, color, weight, caps, max_w, 2, floor, tracking_em)
+
 
 # ---------------------------------------------------------------- split comparison
 
@@ -194,14 +213,14 @@ class SplitComparison(PictureComp):
     def setup(self) -> None:
         self.sides = []
         half = self.bw / 2
-        pw = half * 0.8
+        pw = min(0.40 * self.W, half * 0.96)  # each picture about 40% of the frame width
         caps = []
         for role in ("left", "right"):
             got = self.job.first(role)
             if got is None:
                 continue
             i, el, cue = got
-            cap = self.label(el.text, 46, max_w=pw, lines=2, floor=MIN_BODY_PX, align="center") if el.text else None
+            cap = self.label(el.text, 52, max_w=pw, lines=2, floor=MIN_BODY_PX, align="center") if el.text else None
             caps.append((i, el, cue, cap))
         ch = max((c[3].h for c in caps if c[3] is not None), default=0)
         self.gap = self.px(26)
@@ -262,17 +281,18 @@ class NameCard(PictureComp):
         no_pic = self.fallback_needed(self.job)
         if no_pic:
             self.job.notes.append("name_card: no real portrait, use NameLowerThird over the shot's picture")
-        ph = self.bh * 0.86
+        ph = self.bh * 0.78  # the portrait fills most of the box height
         pw = ph * 0.8
         self.gap = self.px(64)
-        tw = self.bw * 0.86 if no_pic else min(self.bw * 0.52, self.bw - pw - self.gap)
-        if not no_pic and self.bw - tw - self.gap < pw:
+        tw = self.bw * 0.86 if no_pic else min(0.45 * self.W, self.bw - pw - self.gap)
+        if not no_pic and tw < 0.3 * self.W:  # a narrow frame: the portrait gives way to the text column
+            tw = 0.3 * self.W
             pw = self.bw - tw - self.gap
             ph = pw / 0.8
-        self.name = (self.label(name[1].text, 104, "paper", "Bold", caps=False, max_w=tw, lines=2,
-                                floor=MIN_HEAD_PX), name[2]) if name and name[1].text else None
-        self.role = (self.label(role[1].text, 40, "muted", max_w=tw, lines=2, floor=MIN_BODY_PX,
-                                tracking_em=0.14), role[2]) if role and role[1].text else None
+        self.name = (self.balanced(name[1].text, 120, "paper", tw, MIN_HEAD_PX, 0.0, "Bold", caps=False),
+                     name[2]) if name and name[1].text else None
+        self.role = (self.balanced(role[1].text, 40, "muted", tw, MIN_BODY_PX, 0.14), role[2]) \
+            if role and role[1].text else None
         if self.role is not None and self.name is not None:  # the role never comes before the name
             c = self.role[1]
             self.role = (self.role[0], replace(c, appear=max(c.appear, self.name[1].appear + 0.3)))
@@ -400,11 +420,12 @@ class ListSlideshow(PictureComp):
                 for _, el, _ in items]
         ch = max((c.h for c in caps if c is not None), default=0)
         self.cgap = self.px(22)
-        ax0 = self.box[0] + col + gap
-        aw = self.box[2] - ax0
-        hh = min(aw / 1.5, self.bh - ch - self.cgap)
-        hw = hh * 1.5
-        self.hero = (ax0 + (aw - hw) / 2, self.box[1] + (self.bh - hh - ch - self.cgap) / 2)
+        avail = self.bh - ch - self.cgap
+        hw = min(0.53 * self.W, self.bw - col - gap, avail * 1.78)  # the hero about half the frame width
+        hh = min(hw / 1.5, avail)
+        a = hw / hh
+        x0 = self.box[0] + (self.bw - col - gap - hw) / 2  # column and hero centred as one group
+        self.hero = (x0 + col + gap, self.box[1] + (self.bh - hh - ch - self.cgap) / 2)
         self.hw, self.hh = hw, hh
         smalls = [self.label(el.text, MIN_LABEL_PX, max_w=col, floor=MIN_LABEL_PX) if el.text and m else None
                   for _, el, _ in items]
@@ -413,9 +434,9 @@ class ListSlideshow(PictureComp):
         if m:
             vgap = self.px(20)
             slot = (self.bh - (m - 1) * vgap) / m
-            th = min(slot - sch - self.sgap, col / 1.5)
+            th = min(slot - sch - self.sgap, col / a)
             self.s = th / hh
-            self.slots = [(self.box[0] + (col - th * 1.5) / 2,
+            self.slots = [(x0 + (col - th * a) / 2,
                            self.box[1] + r * (slot + vgap) + (slot - th - sch - self.sgap) / 2) for r in range(m)]
         else:
             self.s, self.slots = 1.0, []
@@ -493,9 +514,9 @@ class DateTitle(PictureGround):
         text = d[1].text.strip() if d else ""
         m = DATE_RE.match(text)
         head, year = (m.group("head").strip(), m.group("year")) if m and m.group("head").strip() else (text, "")
-        self.head = self.label(head, 170, "paper", "Bold", caps=False, max_w=self.bw * 0.9, floor=MIN_HEAD_PX,
+        self.head = self.label(head, 210, "paper", "Bold", caps=False, max_w=self.bw * 0.9, floor=MIN_HEAD_PX,
                                shadow=0.45) if head else None
-        self.year = self.label(year, 64, "paper", max_w=self.bw * 0.9, floor=MIN_BODY_PX, tracking_em=0.45,
+        self.year = self.label(year, 76, "paper", max_w=self.bw * 0.9, floor=MIN_BODY_PX, tracking_em=0.45,
                                shadow=0.45) if year else None
         lab = self.job.first("label")
         self.lab = None
@@ -551,7 +572,7 @@ class EqualsCard(LayoutComp):
         self.eqw, self.gx = self.px(96), self.px(60)
         self.mw = (self.bw - self.eqw - 2 * self.gx) / 2
         texts = [e[1].text.upper() for e in (left, right) if e and e[1].text]
-        big, floor = self.fs(132, MIN_HEAD_PX), self.fs(MIN_HEAD_PX, MIN_HEAD_PX)
+        big, floor = self.fs(168, MIN_HEAD_PX), self.fs(MIN_HEAD_PX, MIN_HEAD_PX)
         # one size for both sides (the smaller fit), so the two quantities read as equals
         size = min([fit_text(tx, "Black", big, self.mw, 2, floor, 0.02)[0].size for tx in texts] or [big])
         self.sides = []
