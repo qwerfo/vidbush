@@ -415,6 +415,32 @@ PAYLOAD_MODELS: dict[MotionKind, type[BaseModel]] = {
 }
 
 
+# ---------------------------------------------------------------- layouts (clause-first planner, v2)
+# Kind names are shared with the layouts lane: keep them in step with vidbush/plan/vocab.py.
+LayoutKind = Literal["split_comparison", "number_over_footage", "name_card", "list_slideshow", "date_title",
+                     "route_map", "equals_card", "chart", "table", "timeline", "document_focus"]
+Presentation = Literal["full", "panel", "full_then_dock", "panel_then_expand"]
+
+
+class LayoutElement(Model):
+    role: str = ""
+    text: str = ""  # typed on screen; a number carries its unit
+    anchor: str = ""  # the exact narration words it appears on
+    picture_subject: str = ""  # the real picture this element needs, or empty
+    stage: int = 1  # 2: detail that appears after a panel_then_expand
+    at: float = 0.0  # seconds into the shot its anchor is spoken
+    pick: str = ""  # candidate id chosen for its picture
+
+
+class LayoutSpec(Model):
+    kind: LayoutKind
+    presentation: Optional[Presentation] = None  # route_map, chart, table, timeline only
+    reason: str = ""
+    title: str = ""
+    timeline_id: str = ""  # a later shot can return to the same timeline
+    elements: list[LayoutElement] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------- shots
 
 class Candidate(Model):
@@ -472,6 +498,7 @@ class Shot(Model):
     kenburns: Optional[dict[str, float]] = None  # optional explicit {zoom0, zoom1, x0, y0, x1, y1}
     render_segment_path: str = ""
     render_hash: str = ""
+    layout: Optional[LayoutSpec] = None  # clause-first planner: a designed layout for this shot
 
     def selected_candidate(self) -> Optional[Candidate]:
         for c in self.candidates:
@@ -635,6 +662,7 @@ class StyleProfile(Model):
     motion: MotionStyle = Field(default_factory=MotionStyle)
     palette: str = "documentary_warm"
     top10: bool = False  # number cards, item lower thirds, recap grid
+    planner: str = ""  # "clause" routes build_shotlist to vidbush/plan (clause-first); empty keeps the slot planner
     provenance: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from ..mg.inset import INSET_KINDS
 from ..models import Beat, FactCard, MotionKind, MotionSpec, Research, Scene, ScenePurpose, VisualIdea, Word
+from ..plan.numbers import spoken_numbers
 from ..util import no_em_dash
 
 # ---------------------------------------------------------------- vocabulary
@@ -688,10 +689,20 @@ def read_seconds(spec: MotionSpec) -> float:
 def phrase_times(phrase: str, words: list[Word]) -> list[float]:
     """Starts of the words where a phrase is spoken, best matches only: a match holds the most of the phrase's
     content words (at least half) within its length plus two tokens. A word is matched by its own tokens
-    (Nenana's, dog-sled)."""
+    (Nenana's, dog-sled); a number said over several words (nineteen fifty-nine) is one digit token (1959) at
+    its first word."""
     toks = norm_tokens(phrase)
     want = {t for t in toks if t not in STOP} or set(toks)
-    span = [(w.start, t) for w in words for t in norm_tokens(w.text)]
+    runs = {a: (b, d) for a, b, d in spoken_numbers([w.text for w in words]) if b > a}
+    span: list[tuple[float, str]] = []
+    i = 0
+    while i < len(words):
+        if i in runs:
+            span.append((words[i].start, runs[i][1]))
+            i = runs[i][0] + 1
+        else:
+            span += [(words[i].start, t) for t in norm_tokens(words[i].text)]
+            i += 1
     hits: list[tuple[int, float]] = []
     for i, (start, tok) in enumerate(span):
         if tok in want:
