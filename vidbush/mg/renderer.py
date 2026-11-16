@@ -23,12 +23,15 @@ from typing import Any, Optional
 
 from pydantic import ValidationError
 
-from ..models import Candidate, MotionSpec, ShotList, ShotType, SourceKind
+from ..models import GENERATED_SOURCES, Candidate, MotionKind, MotionSpec, ShotList, ShotType, SourceKind
 from ..util import ToolError, run, stable_hash, write_json
 
 OVERLAY_SHOT_TYPES = {ShotType.footage_overlay, ShotType.image_overlay, ShotType.ai_image, ShotType.ai_video}
 REMOTION_DIR = "renderer"
-MG_RENDER_VERSION = "mg-5"  # mg-5: one collision set for all map text and chrome, locator on close-up maps
+MG_RENDER_VERSION = "mg-6"  # mg-6: label boxes reveal with their text, no centre callouts
+# Bare full-frame text cards (title card, text card, callout) are not rendered (V2 layouts): run 1's beige text
+# cards restating the caption were the most noticed fault. A shot planned as one shows its best real picture.
+BARE_TEXT_KINDS = {MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout}
 
 
 def renderer_kind(settings: Any) -> str:
@@ -150,6 +153,15 @@ def _plan(shotlist: ShotList, ctx: Any, mg_dir: Path) -> list[tuple[Any, MotionS
     """(shot, spec, out path, alpha) for every render this shot list needs; clears stale overlay paths."""
     jobs = []
     for shot in shotlist.shots:
+        if shot.layout is not None:  # designed layouts and panels render in layouts.stage
+            continue
+        if shot.type == ShotType.motion_graphic and shot.motion is not None and shot.motion.kind in BARE_TEXT_KINDS:
+            real = picture_instead(shot)
+            if real is not None:
+                shot.selected = real.id
+                shot.layout_notes.append(f"bare {shot.motion.kind.value} card removed; shows {real.id} instead")
+                continue
+            shot.layout_notes.append(f"bare {shot.motion.kind.value} card kept: the shot has no picture to show")
         if shot.type == ShotType.motion_graphic and shot.motion is not None:
             spec, warn = prepare_spec(shot.motion, shot.duration, shotlist, shot.intent, False)
             if warn:
@@ -164,6 +176,32 @@ def _plan(shotlist: ShotList, ctx: Any, mg_dir: Path) -> list[tuple[Any, MotionS
         elif shot.overlay_path:
             shot.overlay_path = ""
     return jobs
+
+
+def _still_notes_and_grades(shotlist: ShotList, ctx: Any) -> None:
+    """Record each still's destination move in its notes, and set the matched look grades."""
+    from ..render.cache import still_motion
+    from ..render.look import assign_grades
+    r = ctx.settings.render
+    for shot in shotlist.shots:
+        shot.layout_notes = [n for n in shot.layout_notes if not n.startswith("still motion: ")]
+        try:
+            kb, why = still_motion(shot, ctx.profile, r.width, r.height)
+        except Exception as e:  # noqa: BLE001
+            kb, why = None, f"analysis failed ({type(e).__name__})"
+        if kb is not None:
+            shot.layout_notes.append(f"still motion: {why}")
+    graded = assign_grades(shotlist, ctx.profile)
+    if graded:
+        ctx.log.info("matched look", graded=graded, brand_grade=ctx.profile.colour.brand_grade or None)
+
+
+def picture_instead(shot):  # noqa: ANN001, ANN201
+    """The shot's best usable picture: real before generated, not rejected, highest judge score."""
+    cands = [c for c in shot.candidates if c.source != SourceKind.motion and not c.reject_reason and c.local_path]
+    if not cands:
+        return None
+    return max(cands, key=lambda c: (c.source not in GENERATED_SOURCES, c.score or 0.0))
 
 
 def _run_jobs(todo: list[tuple[MotionSpec, Path, bool]], ctx: Any) -> dict[Path, Path]:
@@ -188,7 +226,12 @@ def render_all_motion(shotlist: ShotList, ctx: Any) -> tuple[ShotList, list[Path
     """Render motion graphic shots and overlays (cached by spec hash) and wire them into the shot list."""
     mg_dir = ctx.work / "mg"
     mg_dir.mkdir(parents=True, exist_ok=True)
+    from .layouts.stage import render_shot_layouts
+    layout_seconds = render_shot_layouts(shotlist, ctx)
+    if layout_seconds:
+        ctx.log.info("layouts", render_seconds={k: round(v, 1) for k, v in layout_seconds.items()})
     jobs = _plan(shotlist, ctx, mg_dir)
+    _still_notes_and_grades(shotlist, ctx)
     seen: set[Path] = set()
     todo = []
     for _, spec, out, alpha in jobs:

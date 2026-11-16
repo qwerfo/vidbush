@@ -331,7 +331,8 @@ class PanelOverlay(CompBase):
         layer = np.zeros((self.ph + 2 * s, self.pw + 2 * s, 4), np.uint8)
         blit(layer, self.panel, s, s)
         for k, (spr, x, y) in enumerate(self.items):
-            o = ez.ease_out_cubic(ez.progress(e_in, 0.35 + 0.12 * k, 0.8 + 0.12 * k))
+            # text reveals with the wipe itself, so the box is never on screen empty (V2 layouts rule)
+            o = ez.ease_out_cubic(ez.progress(e_in, 0.1 + 0.06 * k, 0.45 + 0.06 * k))
             o *= 1 - ez.progress(e_out, 0, 0.45)
             dx = self.px(26) * (1 - o) * (1 if self.right else -1) if self.axis == "x" else 0
             dy = self.px(18) * (1 - o) if self.axis == "y" else 0
@@ -392,7 +393,9 @@ class Callout(PanelOverlay):
         if payload.subtitle:
             sf, sl = fit_text(payload.subtitle, "Regular", self.px(30), self.W * 0.4, 2, self.px(18))
             items.append((text_block(sl, sf, pal.rgb("muted"), "left", 1.2), 0.0, y + self.px(14)))
-        self.setup(items, (self.px(36), self.px(28)), payload.position, 30)
+        # no centre-frame callouts: a callout sits in a lower corner like a strap, off the picture's subject
+        pos = payload.position if payload.position != "center" else "lower_left"
+        self.setup(items, (self.px(36), self.px(28)), pos, 30)
 
 
 # ---------------------------------------------------------------- text overlay

@@ -95,16 +95,16 @@ def _text(rgb: np.ndarray) -> list[tuple[float, float, float, float]]:
     return out
 
 
-def _saliency(grey: np.ndarray) -> np.ndarray:
-    """Spectral residual saliency (Hou and Zhang 2007), 0..1."""
-    small = cv2.resize(grey, (64, 64 * grey.shape[0] // max(1, grey.shape[1]) or 36)).astype(np.float32)
-    f = np.fft.fft2(small)
-    log_amp = np.log(np.abs(f) + 1e-6)
-    resid = log_amp - cv2.blur(log_amp, (3, 3))
-    sal = np.abs(np.fft.ifft2(np.exp(resid + 1j * np.angle(f)))) ** 2
-    sal = cv2.GaussianBlur(sal.astype(np.float32), (0, 0), 2.5)
-    sal = cv2.resize(sal, (grey.shape[1], grey.shape[0]))
-    return sal / (sal.max() + 1e-6)
+def _saliency(img: np.ndarray) -> np.ndarray:
+    """Frequency tuned saliency (Achanta et al. 2009): distance of each softly blurred pixel from the
+    picture's mean colour, 0..1. Works on grey (2D) or colour (3D, Lab) input."""
+    f = img.astype(np.float32)
+    if f.ndim == 3:
+        f = cv2.cvtColor(img, cv2.COLOR_RGB2LAB).astype(np.float32)
+    blur = cv2.GaussianBlur(f, (0, 0), max(1.0, img.shape[1] / 160))
+    mean = f.reshape(-1, f.shape[-1]).mean(axis=0) if f.ndim == 3 else f.mean()
+    d = np.sqrt(((blur - mean) ** 2).sum(axis=-1)) if f.ndim == 3 else np.abs(blur - mean)
+    return d / (d.max() + 1e-6)
 
 
 def analyse(frame_rgb: np.ndarray, ocr: bool = True) -> Analysis:
@@ -118,7 +118,7 @@ def analyse(frame_rgb: np.ndarray, ocr: bool = True) -> Analysis:
     gx, gy = cv2.Sobel(grey, cv2.CV_32F, 1, 0), cv2.Sobel(grey, cv2.CV_32F, 0, 1)
     mag = cv2.GaussianBlur(np.sqrt(gx * gx + gy * gy), (0, 0), 6)
     detail = np.clip(mag / (np.percentile(mag, 98) + 1e-6), 0, 1)
-    return Analysis(faces, text, detail, _saliency(grey))
+    return Analysis(faces, text, detail, _saliency(frame_rgb))
 
 
 # ---------------------------------------------------------------- choice

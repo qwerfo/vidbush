@@ -548,6 +548,8 @@ class Shot(Model):
     layout: Optional[LayoutSpec] = None  # a designed layout or data panel for this shot (vidbush/mg/layouts)
     still_sequence: Optional[StillSequence] = None
     layout_notes: list[str] = Field(default_factory=list)  # render decisions a review can read (panel place, why)
+    layout_at: float = 0.0  # seconds into the shot a layout panel overlay starts (its first element's lead)
+    grade: str = ""  # matched look filter for this shot's source (render/look.py), set by the motion stage
 
     def selected_candidate(self) -> Optional[Candidate]:
         for c in self.candidates:
