@@ -141,7 +141,7 @@ class DataComp(LayoutComp):
         hide = spec.presentation == "panel_then_expand"
         cues = [Cue(i, NEVER if hide and e.stage == 2 else 0.0, NEVER if hide and e.stage == 2 else 0.0,
                     NEVER if hide and e.stage == 2 else 0.0, True, e.stage) for i, e in enumerate(spec.elements)]
-        job = LayoutJob(spec=spec, cues=cues, duration=1.0, width=W, height=H, extra=dict(extra or {}))
+        job = LayoutJob(spec=spec, cues=cues, duration=1.0, width=W, height=H, extra={**(extra or {}), "_no_zoom": True})
         (w, h), (mw, mh) = cls.share_start, cls.share_max
 
         def make(a: float, b: float) -> "DataComp":
@@ -161,12 +161,33 @@ class DataComp(LayoutComp):
             c = make(w, h)
         return round(w, 3), round(h, 3)
 
+    z = 1.0  # zoom over the design sizes; setup() picks the largest that fits the box
+
+    def fs(self, base: float, floor: float = MIN_LABEL_PX) -> int:
+        """Design px times the zoom, never under the floor of the output frame."""
+        return int(round(max(base * self.k * self.z, floor * self.OH / 1080.0)))
+
     def fits(self) -> bool:
         """All text at or above its floor, nothing cut, content inside the box."""
         return self.ok and self.need[0] <= self.bw + 0.5 and self.need[1] <= self.bh + 0.5
 
     def setup(self) -> None:
+        """Lay out at the largest zoom that fits: design sizes (cells 64, title 72 at a full 1080 frame) are
+        the cap, the floors the minimum. panel_share() sizes at zoom 1 (the floors in a small panel)."""
+        zmax = 1.0 if self.job.extra.get("_no_zoom") else max(1.0, (self.OH / 1080.0) / max(self.k, 1e-6))
+        z = zmax
+        while True:
+            self.z = z
+            self._layout()
+            if z <= 1.0 or (self.ok and not self.shrunk and self.used_h <= self.bh + 0.5):
+                break
+            z = max(1.0, z * 0.93)
+        self.dx = max(0.0, (self.bw - self.used_w) / 2)
+        self.dy = 0.0 if self.fills else max(0.0, (self.bh - self.used_h) / 2)
+
+    def _layout(self) -> None:
         self.ok = True
+        self.shrunk = self.fills = False
         self.need = [0.0, 0.0]
         self.t0 = min((c.appear for c in self.job.cues if _live(c)), default=NEVER)
         self.c_accent, self.c_paper, self.c_muted = (self.house.rgb(k) for k in ("accent", "paper", "muted"))
@@ -176,11 +197,12 @@ class DataComp(LayoutComp):
         if self.spec.title.strip():
             floor = MIN_BODY_PX if self.panel else MIN_HEAD_PX
             t = self.spec.title.strip()
-            self.title_spr = self.txt(t, 60, floor, "SemiBold", True, self.bw, 2, tracking_em=0.08)
+            self.title_spr = self.txt(t, 72, floor, "SemiBold", True, self.bw, 2, tracking_em=0.08)
             fl = self.fs(floor, floor)
             self.need_w(_min2(t.upper(), font("SemiBold", fl), 0.08 * fl))
             self.rule_h, self.rule_gap = max(3, self.fs(5, 4)), self.fs(14, 10)
             self.title_h = self.title_spr.h + self.rule_gap + self.rule_h + self.fs(40, 26)
+        self.used_w, self.used_h = self.bw, self.bh  # builders set the size their content really takes
         self.build()
 
     def pre_build(self) -> None:
@@ -197,7 +219,10 @@ class DataComp(LayoutComp):
             align: str = "left") -> Sprite:
         """Text fitted to max_w: shrink to the floor, wrap to `lines`; a cut (ellipsis) marks the layout not ok."""
         t = text.upper() if caps else text
-        f, ln = fit_text(t, weight, self.fs(base, floor), max_w or self.bw, lines, self.fs(floor, floor), tracking_em)
+        want = self.fs(base, floor)
+        f, ln = fit_text(t, weight, want, max_w or self.bw, lines, self.fs(floor, floor), tracking_em)
+        if f.size < want:
+            self.shrunk = True
         if ELLIPSIS not in t and any(ELLIPSIS in s for s in ln):
             self.ok = False
         tr = tracking_em * f.size
@@ -210,7 +235,7 @@ class DataComp(LayoutComp):
     def off(self, t: float) -> tuple[float, float]:
         """The slow drift of the whole content over the clip (centred, well inside the margins)."""
         p = ez.ease_in_out_sine(ez.clamp01(t / max(self.dur, 1e-3))) - 0.5
-        return 0.014 * self.bw * p, 0.008 * self.bh * p
+        return self.dx + 0.014 * self.bw * p, self.dy + 0.008 * self.bh * p
 
     def draw_title(self, frame: np.ndarray, t: float, ox: float, oy: float) -> None:
         if self.title_spr is None:
@@ -265,8 +290,10 @@ class Chart(DataComp):
         for it in self.items:
             it["ls"] = self.txt(it["lab"], 54, MIN_BODY_PX, "Medium", max_w=lab_max, lines=2)
         vw = self._value_sprites(96, 48)
-        self.bt = self.fs(84, 30)
         self.lgap, self.vgap = self.fs(12, 8), self.fs(20, 14)
+        top = self.box[1] + self.title_h
+        avail = self.box[3] - top
+        self.bt = max(self.fs(84, 30), min(self.fs(150, 30), int(avail / n / 3)))  # about a third of the row step
         self.base_w = max(2, self.fs(4, 3))
         labw = max(it["ls"].w for it in self.items)
         lab_need = max(_min2(it["lab"], fl) for it in self.items)
@@ -281,11 +308,9 @@ class Chart(DataComp):
             self.need_w(lab_need + ind + self.base_w)
             self.need_w(max(vw * 3.2 + self.vgap, labw + ind) + self.base_w)
         mingap, maxgap = self.fs(30, 20 if inline else 24), self.fs(110, 30)
-        top = self.box[1] + self.title_h
-        avail = self.box[3] - top
         gap = min(maxgap, max(mingap, (avail - sum(rows)) / n)) if n > 1 else 0.0
         block = sum(rows) + gap * (n - 1)
-        y = top + max(0.0, (avail - block) / 2)
+        y = top
         for it, rh in zip(self.items, rows):
             if inline:
                 it["lx"], it["ly"], it["by"] = self.box[0], y + (rh - it["ls"].h) / 2, y + (rh - self.bt) / 2
@@ -293,8 +318,12 @@ class Chart(DataComp):
                 it["lx"], it["ly"], it["by"] = self.x0 + ind, y, y + it["ls"].h + self.lgap
             y += rh + gap
         self.L = self.box[2] - self.x0 - vw - self.vgap - 2
+        if self.L < 2.2 * vw:
+            self.shrunk = True
         self.vmax = max(max(it["v"] for it in self.items), 1e-9)
-        self.need[1] = self.title_h + sum(rows) + mingap * (n - 1)
+        thin = self.bt - self.fs(84, 30)  # the need counts the thinnest bar, so a panel does not chase its own height
+        self.need[1] = self.title_h + sum(rows) - n * thin + mingap * (n - 1)
+        self.used_h = self.title_h + block
         self.axis = (self.items[0]["by"] - self.fs(10, 6), self.items[-1]["by"] + self.bt + self.fs(10, 6))
 
     def _draw_bars(self, frame: np.ndarray, t: float, ox: float, oy: float) -> None:
@@ -335,6 +364,7 @@ class Chart(DataComp):
         self.top = self.box[1] + self.title_h + v_h + g
         self.bottom = self.box[3] - xl_h - g
         self.need[1] = self.title_h + v_h + g + self.fs(200, 140) + g + xl_h
+        self.used_h, self.fills = self.need[1], True  # the plot stretches to the box: zoom checked, never centred
         vals = [it["v"] for it in self.items]
         lo, hi = min(0.0, min(vals)), max(vals)
         hi = hi if hi > lo else lo + 1.0
@@ -444,6 +474,7 @@ class Table(DataComp):
         while sum(nat) > avail and size > floor_sz:
             size = max(floor_sz, int(size * 0.94))
             nat = natural(size)
+            self.shrunk = True
         fb, fh = font("Medium", size), font("SemiBold", size)
         m2 = [max([_min2(r[c], fb) for r in body] + [_min2(hdr[c].upper(), fh, trh * size)]) for c in range(nc)]
         widths = list(nat)
@@ -454,13 +485,14 @@ class Table(DataComp):
             cut = min(deficit, widths[c] - m2[c])
             widths[c] -= cut
             deficit -= cut
+            self.shrunk = self.shrunk or cut > 0
         nat_floor = natural(floor_sz)
         self.need_w(fixed + sum(nat_floor))  # one line per cell at the floor: the panel size to aim for
         if deficit > 0:
             self.ok = False
         extra = avail - sum(widths)
         if nc > 1 and extra > 0:
-            gapc += min(extra / (nc - 1), gapc)
+            gapc += min(extra / (nc - 1), gapc * 0.5)
         self.widths, self.gapc = widths, gapc
         self.table_w = lead + sum(widths) + gapc * (nc - 1) + self.padx
         xs, x = [], self.box[0] + lead
@@ -486,7 +518,9 @@ class Table(DataComp):
         top = self.box[1] + self.title_h
         block = self.hh + sum(self.rh)
         self.need[1] = self.title_h + block
-        self.y0 = top + max(0.0, self.box[3] - top - block) * 0.4
+        self.y0 = top
+        self.used_h = self.title_h + block
+        self.used_w = max(self.table_w, self.title_spr.w if self.title_spr is not None else 0)
         self.line_h = max(2, self.fs(2, 2))
 
     def _cell_x(self, c: int, spr: Sprite) -> float:
@@ -586,7 +620,8 @@ class Timeline(DataComp):
         content = above + self.stem + 2 * self.r + (self.stem + below if below else 0)
         top = self.box[1] + self.title_h
         self.need[1] = self.title_h + content
-        self.axis_y = top + max(0.0, self.box[3] - top - content) * 0.5 + above + self.stem + self.r
+        self.axis_y = top + above + self.stem + self.r
+        self.used_h = self.title_h + content
         lo, hi = self.box[0] + wl / 2, self.box[2] - wl / 2
         years = [ev["year"] for ev in order]
         if n == 1:
