@@ -139,10 +139,21 @@ def subject_core(sal: Optional[np.ndarray]) -> Optional[np.ndarray]:
     not one subject, and only the detail cost applies."""
     if sal is None or sal.max() <= 0:
         return None
+    h, w = sal.shape
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    # centre prior: a documentary subject is framed toward the middle more often than at the edges
+    prior = np.exp(-(((xx - w / 2) / (0.45 * w)) ** 2 + ((yy - h * 0.55) / (0.5 * h)) ** 2))
+    sal = sal * (0.4 + 0.6 * prior)
     for level in (SUBJECT_CORE, 0.8):
-        core = sal >= level * sal.max()
-        if core.mean() <= SUBJECT_MAX:
-            return core
+        core = (sal >= level * sal.max()).astype(np.uint8)
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(core, connectivity=8)
+        if n <= 1:
+            return None
+        # the main subject is the strongest single blob, not every salient pixel in the picture
+        best = max(range(1, n), key=lambda k: float(sal[lab == k].sum()))
+        blob = lab == best
+        if blob.mean() <= SUBJECT_MAX:
+            return blob
     return None
 
 

@@ -238,6 +238,10 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
         if pres == "full":
             job = make_job(spec, words, shot.start, shot.duration, pool, frame, house, r.width, r.height, r.fps,
                            extra)
+            first = min((c.word for c in job.cues if c.found), default=0.0)
+            if first > 1.5 and spec.kind != LayoutKind.document_focus:  # a document is first seen whole
+                shot.layout_notes.append(f"full layout's first words come {first:.1f} s after the cut: start the "
+                                         "layout nearer its words")
             if not FULL_MIN_S <= shot.duration <= FULL_MAX_S:
                 shot.layout_notes.append(f"full layout held {shot.duration:.1f} s, outside {FULL_MIN_S:g} to "
                                          f"{FULL_MAX_S:g} s")
