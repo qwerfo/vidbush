@@ -22,6 +22,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import cv2
 import numpy as np
 from pydantic import ValidationError
 
@@ -133,7 +134,12 @@ class FrameSink:
         return self
 
     def write(self, frame: np.ndarray) -> None:
-        data = unpremultiply(frame) if self.alpha else frame
+        data = frame
+        if self.alpha:  # only the painted region needs unpremultiplying (panels cover a small part of the frame)
+            x, y, w, h = cv2.boundingRect(frame[..., 3])
+            if w and h:
+                data = frame.copy() if (w * h) < frame.shape[0] * frame.shape[1] else frame
+                data[y:y + h, x:x + w] = unpremultiply(np.ascontiguousarray(frame[y:y + h, x:x + w]))
         try:
             self.proc.stdin.write(np.ascontiguousarray(data).tobytes())
         except BrokenPipeError as e:

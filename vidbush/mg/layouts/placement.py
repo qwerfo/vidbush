@@ -23,6 +23,7 @@ POSITIONS = ("upper_left", "upper_right", "lower_left", "lower_right", "left_cen
 WORK_W = 480
 REPEAT_PENALTY = 0.12
 SUBJECT_CORE = 0.6  # saliency share of the peak that counts as the subject's core
+SUBJECT_MAX = 0.2  # a subject core wider than this share of the picture is not one subject
 SUBJECT_OVERLAP = 0.12  # a panel may cover at most this share of the subject core
 MARGIN = 0.035  # gap between the panel and the picture edge, share of frame width
 
@@ -132,6 +133,19 @@ def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float,
     return ix * iy / area
 
 
+def subject_core(sal: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    """Mask of the main subject: the most salient pixels. A core spread over more than SUBJECT_MAX of the
+    picture is tried at a stricter level; still that wide, it is texture or light (a bright sky, a glacier),
+    not one subject, and only the detail cost applies."""
+    if sal is None or sal.max() <= 0:
+        return None
+    for level in (SUBJECT_CORE, 0.8):
+        core = sal >= level * sal.max()
+        if core.mean() <= SUBJECT_MAX:
+            return core
+    return None
+
+
 def choose(samples: Sequence[Analysis], size: tuple[float, float], visible: tuple[float, float, float, float],
            W: int, H: int, previous: str = "", allowed: Sequence[str] = POSITIONS) -> Placement:
     """The calmest clear position for a panel of size (w, h) px, or position None with the reason."""
@@ -150,7 +164,7 @@ def choose(samples: Sequence[Analysis], size: tuple[float, float], visible: tupl
                 why = "covers text"
                 break
             sal = a.saliency
-            core = sal >= SUBJECT_CORE * sal.max() if sal is not None else None
+            core = subject_core(sal)
             sh, sw = a.detail.shape
             ys, xs = slice(int(box[1] * sh), int(box[3] * sh)), slice(int(box[0] * sw), int(box[2] * sw))
             if core is not None and core.sum() > 0 and core[ys, xs].sum() / core.sum() > SUBJECT_OVERLAP:

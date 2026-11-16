@@ -503,3 +503,42 @@ One line each: the decision and why.
 - Map paintings name the narration's touches as tiny map symbols and close with the trace rule again, because vivid scene words (a village on the ice, boats, golden light) made every model paint a close-up landscape instead of the map.
 - An illustration must answer two fixed vision questions the right way (one single scene, not split panels or a collage; no painted frame or band), because the judge passed a triptych and a two-panel picture that the prompt forbade; a mock or missing answer is no evidence of a single scene and rejects.
 - The contact sheet keeps one item per moment and counts a clip only when every check its still ever had passed, so neither duplicates nor a re-rolled check inflate the yield.
+
+## V2: layouts (parallel2, branch v2/layouts)
+
+- Merged run3/art: DESIGNED_SOURCES now holds the art lane's three values in models.py only, live-run-3's empty set removed, so every reader follows one definition.
+- The AI disclosure line counts designed art (illustrated maps, illustrations, art clips) with photo-style AI stills, because both are AI generated.
+- The painted map base no longer draws river names: live-run-3 draws them per frame over any base, so drawing them in the base too would print every river twice.
+- The layout contract (LayoutKind, LayoutElement, LayoutSpec, Shot.layout) lives in models.py with the field names fixed with the planner lane; role names per kind are in LAYOUT_ROLES so the planner and renderer read one list.
+- Shot notes are a new field, layout_notes, not notes, so a planner field of that name cannot collide.
+- One house style (mg/house.py, overridable per brand by Brand.house_style): ink ground, paper type, amber as the one signal colour, teal as the second voice, Inter only, thin paper frames; our own look, not the benchmark's black and green cards, red numbers or yellow chips.
+- Type floors in output pixels at 1080p: 34 px for any label (panels included), 40 px for sentences and table cells, 56 px for names and titles, 150 px for a hero number, because at living room distance 34 px Inter is about 16 mm cap height and run 3's 20 px panel type was unreadable.
+- Every element starts entering 0.25 s before its first anchor word and never more than 0.3 s before, because the benchmark's worst card faults are text arriving seconds before its word.
+- An element whose anchor is not spoken appears with the layout's first element rather than at a guessed time.
+- Anchors match narration tokens with hyphens split ("twenty-nine" matches "twenty nine"), nearest the shot, in spoken order, because spoken numbers are written out in the narration.
+- A count-up only rolls in the last 0.35 s before the spoken number, smeared vertically and at 40 percent opacity so no false value is readable, and lands on the true value as the word starts.
+- Every full layout drifts (a 3.5 percent push over its hold) on top of its own motion, so nothing on screen is static.
+- Full layouts held outside 3 to 7 s are rendered and noted in the shot's notes rather than stretched or cut, because the cut belongs to the planner.
+- Panel content is laid out twice (large and panel size), each at the type floor, and cross-fades during the 0.8 s size change, so text is never shrunk below the floor once the move settles.
+- full_then_dock docks once its stage 1 content has been read (last stage 1 word plus 1.2 s, at least 2.4 s after opening) and keeps at least 2 s docked.
+- panel_then_expand grows so the growth ends as the first stage 2 element is due; a stage 2 element may wait for the growth, never appear early.
+- A panel appears with its first element and leaves 2.5 s after its last element is spoken (at least 3 s on screen), so it does not run to the cut.
+- Panel placement reads the shot's own picture across the panel's visible time (stills sampled as they move): prefilter face cascade plus profile faces, prefilter OCR for text, gradient detail and frequency tuned saliency for the subject.
+- A position is ruled out if it covers a face, text or more than 12 percent of the subject core; the calmest of the rest wins; the previous panel's position pays a penalty so two panels in a row differ unless the picture forces it.
+- A salient area wider than 20 percent of the picture (bright sky, glacier) is texture, not a subject, so it only adds detail cost; otherwise a sky ruled out every position on the train shot.
+- With no clear position the content is shown full frame and the shot's notes say why; placement and its reason are written to layout_notes.
+- Panel sizes come from the content (panel_share per kind: a two-place map about 0.34 by 0.40 of the frame, a five-row table about half the frame).
+- A graphic none of whose words are spoken during its shot is dropped with a note, because run 3's worst overlay faults were maps shown 20 s before their words.
+- Old map and chart insets are converted to panels whose markers and bars are anchored on their own names, so they appear when named and are placed from the picture instead of the fixed upper right box.
+- Bare full-frame text cards (title card, text card, callout) are not rendered: the shot shows its best real picture, real before generated, and keeps the card only when it has no picture at all.
+- Callouts have no centre position (centre becomes lower left), because centre callouts covered the subject.
+- Lower thirds and callouts reveal their text with the box wipe, so a label box is never on screen empty.
+- A name card needs a real portrait; without one the name goes on a lower third over the shot's own picture, and never over a generated picture, which would give a made-up face a real name.
+- Layouts refuse every generated picture (make_job), so no layout can carry an AI image of a named person, a real event or a document.
+- The Alaska "Texas No Longer Largest" moment gets no document layout: no real page in the pool carries the headline, a different paper beside the quote would misattribute it, and the quote alone would be a bare text card.
+- Still motion has a destination from the picture: short shots hold, a small subject is revealed from its detail, a larger one is travelled toward, a picture with no subject drifts across; the reason goes to the shot's notes.
+- A planner labelled still sequence (Shot.still_sequence: whole, closer, detail) reuses one photograph, with zoom capped so it is never enlarged past 1.5 times its native pixels.
+- A still narrower than half the frame (fitted to the picture height, at most 1.5x) is framed on the house ground with a slow push, never shown on blurred bars.
+- Matched look (colour.match_look, default off until Adam has seen it): each real source moves 60 percent of the way toward the video's median exposure, white balance and saturation, clamped; black and white sources only change exposure; an optional named brand grade follows.
+- The letterbox and always-on caption switches are the existing letterbox.enabled and captions.enabled (defaults unchanged); every layout reads them through FrameProfile and keeps type out of the bars or the caption band.
+- RENDER_VERSION seg-7 and MG_RENDER_VERSION mg-6, because still framing, motion and label reveals change pixels.

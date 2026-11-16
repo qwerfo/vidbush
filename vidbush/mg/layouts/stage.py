@@ -59,10 +59,15 @@ def _history(shots: list[Shot], upto: int, spec: Any) -> list[str]:
     return out
 
 
-def panel_share(spec: Any) -> tuple[float, float]:
+def panel_share(spec: Any, extra: Optional[dict] = None) -> tuple[float, float]:
     cls = comp_class(spec.kind)
     share = getattr(cls, "panel_share", None)
-    return tuple(share(spec)) if callable(share) else tuple(cls.panel_size)  # type: ignore[return-value]
+    if not callable(share):
+        return tuple(cls.panel_size)  # type: ignore[return-value]
+    try:
+        return tuple(share(spec, extra))  # type: ignore[return-value]
+    except TypeError:  # kinds whose size does not depend on the job's extra
+        return tuple(share(spec))  # type: ignore[return-value]
 
 
 def _panel_window(job: LayoutJob, presentation: str, shot_dur: float) -> tuple[float, float]:
@@ -300,7 +305,7 @@ def _plan_panel(shot: Shot, job: LayoutJob, pres: str, previous: str, ctx: Any) 
     job.duration = max(0.5, end - start)
     job.extra["_start"] = start
     W, H = job.width, job.height
-    share = panel_share(job.spec)
+    share = panel_share(job.spec, job.extra)
     size = (share[0] * W, share[1] * H)
     change = change_time(job, pres)
     if pres == "full_then_dock":  # the panel rests only after the dock; read the picture over that time

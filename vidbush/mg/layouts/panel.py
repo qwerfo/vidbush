@@ -141,7 +141,7 @@ class PanelComp:
         else:
             a = cv2.resize(first.render(i), (w, h), interpolation=cv2.INTER_AREA)
             b = cv2.resize(second.render(i), (w, h), interpolation=cv2.INTER_AREA)
-            mixu = ez.clamp01((u - 0.2) / 0.6)
+            mixu = ez.clamp01((u - 0.42) / 0.16)  # a short swap mid-move: no double text ghosting
             return cv2.addWeighted(a, 1 - mixu, b, mixu, 0)
         if img.shape[1] != w or img.shape[0] != h:
             img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
