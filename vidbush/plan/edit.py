@@ -70,10 +70,15 @@ def shots_of(plans: list[dict], clauses: list[Clause]) -> list[dict]:
 
 
 def needs_pick(plan: dict) -> bool:
+    """A picture on screen beneath (or as) this shot is needed."""
     t = plan["treatment"]
     if t == "picture" or t in V.OVER_PICTURE_KINDS:
         return True
     return t in V.PRESENTED_KINDS and plan.get("presentation") in ("panel", "full_then_dock", "panel_then_expand")
+
+
+def needs_document(plan: dict) -> bool:
+    return plan["treatment"] == "document_focus"
 
 
 def _clause_row(shot: dict, narration: Narration) -> dict:
@@ -82,6 +87,9 @@ def _clause_row(shot: dict, narration: Narration) -> dict:
     row = {"clause": cl[0].id, "seconds": round(cl[-1].end - cl[0].start, 2),
            "words": " ".join(w.text for w in narration.words[lo:hi + 1]),
            "subject": p.get("subject", ""), "treatment": p["treatment"], "needs_pick": needs_pick(p)}
+    if needs_document(p):
+        row["needs_document_pick"] = True
+        row["document_purpose"] = (p.get("layout") or {}).get("purpose", "")
     if p.get("presentation"):
         row["presentation"] = p["presentation"]
     if p.get("real_thing"):
@@ -230,6 +238,16 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], used_before: dict[
             eps.append({"element": k, "pick": int(ep["pick"]), "frame": str(ep.get("frame") or "a").lower(),
                         "_cand": ec})
         p["element_picks"] = eps
+        p["_doc"] = None
+        if needs_document(s["plan"]) and p.get("document_pick") is not None:
+            dc = _cand_at(pool, p.get("document_pick"))
+            if dc is None or is_ai(dc):
+                errors.append(f"{cid}: document_pick {p.get('document_pick')} must be a real candidate, never AI.")
+            elif seen(asset_key(dc)) and seen(asset_key(dc)) != cid and not p.get("callback"):
+                errors.append(f"{cid}: document_pick {p.get('document_pick')} is already used at {seen(asset_key(dc))}.")
+            else:
+                used.setdefault(asset_key(dc), cid)
+                p["_doc"] = dc
         p["_cand"] = cand
         picks.append(p)
     return picks, errors
@@ -298,6 +316,12 @@ def resolve(picks: list[dict], shots: list[dict], ai_tail: int,
             used.setdefault(ek, p.get("clause", ""))
             keep.append(ep)
         p["element_picks"] = keep
+        dc = p.get("_doc")
+        if dc is not None:
+            if is_ai(dc) or (asset_key(dc) in used and used[asset_key(dc)] != p.get("clause") and not p.get("callback")):
+                p["_doc"] = None
+            else:
+                used.setdefault(asset_key(dc), p.get("clause", ""))
         p.pop("_key", None)
         if cand is not None and not ai:
             last_real = p

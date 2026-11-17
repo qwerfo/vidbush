@@ -89,8 +89,14 @@ def report(clauses: list[Clause], plan: dict, sl: ShotList, narration: Narration
     nothing = [{"clause": r["clauses"][0], "subject": r.get("subject", ""), "reason": r["edit"].get("reason", ""),
                 "fallback": r["edit"].get("fallback", ""), "resolved": r["edit"].get("resolved", "")}
                for r in rows if r.get("edit") and r["edit"]["pick"] is None
-               and (r["treatment"] == "picture" or r["treatment"] in ("number_over_footage", "date_title", "document_focus")
+               and (r["treatment"] == "picture" or r["treatment"] in ("number_over_footage", "date_title")
                     or r.get("presentation") in ("panel", "full_then_dock", "panel_then_expand"))]
+    documents = [{"clause": r["clauses"][0], "document": (r.get("real_thing") or {}).get("name", ""),
+                  "purpose": (r.get("layout") or {}).get("purpose", ""), "presentation": r.get("presentation"),
+                  "reason": r.get("presentation_reason") or r.get("reason", ""),
+                  "passages": [e.get("text", "") for e in (r.get("layout") or {}).get("elements", [])],
+                  "document_pick": (r.get("edit") or {}).get("document_pick")}
+                 for r in rows if r["treatment"] == "document_focus"]
     pictures = [r for r in rows if r["treatment"] == "picture"]
     unused = [r for r in pictures if r.get("edit") and r["edit"]["pick"] is None]
     new_shots = _span_shots(sl, lo, hi)
@@ -107,7 +113,7 @@ def report(clauses: list[Clause], plan: dict, sl: ShotList, narration: Narration
             "treatments": dict(treat), "presentations": dict(pres), "grammar": dict(grammar),
             "types": dict(Counter(s.type.value for s in new_shots)),
             "ai_picks": len(ai_picks), "longest_ai_run": _longest_ai_run(sl, lo, hi),
-            "nothing_fits": nothing, "director_pictures": len(pictures), "director_pictures_unused": len(unused),
+            "nothing_fits": nothing, "documents": documents, "director_pictures": len(pictures), "director_pictures_unused": len(unused),
         },
         "old": {
             "shots": len(old_shots), "cuts_per_minute": round((len(old_shots) - 1) / minutes, 2) if minutes else 0,

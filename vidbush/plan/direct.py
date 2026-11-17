@@ -123,10 +123,21 @@ def validate(raw: Any, clauses: list[Clause], narration: Narration) -> tuple[lis
             lay = head.get("layout") if isinstance(head.get("layout"), dict) else {}
             els = [e for e in (lay.get("elements") or []) if isinstance(e, dict)]
             head["layout"] = {"title": str(lay.get("title", "")), "timeline_id": str(lay.get("timeline_id", "")),
-                              "elements": els}
+                              "purpose": str(lay.get("purpose", "")).strip(), "elements": els}
+            doc = t == "document_focus"
             if t == "timeline" and not head["layout"]["timeline_id"]:
                 errors.append(f"{c0.id}: a timeline needs a timeline_id.")
-            if not els:
+            if doc:
+                purpose = head["layout"]["purpose"]
+                if purpose not in V.DOC_PURPOSES:
+                    errors.append(f"{c0.id}: a document_focus needs layout.purpose, one of {', '.join(V.DOC_PURPOSES)}.")
+                if purpose in V.MARKED_PURPOSES and not els:
+                    errors.append(f"{c0.id}: a document used as {purpose} needs the passages to mark as elements.")
+                if head.get("presentation") != "panel" and not els:
+                    errors.append(f"{c0.id}: a document is never a static full page; with presentation "
+                                  f"{head.get('presentation')} it needs passages marked as they are spoken, or "
+                                  f"it rides as a panel.")
+            elif not els:
                 errors.append(f"{c0.id}: layout {t} has no elements.")
             words = _words_of(g, clauses, narration)
             last = -1
@@ -134,9 +145,9 @@ def validate(raw: Any, clauses: list[Clause], narration: Narration) -> tuple[lis
                 text = str(e.get("text", "")).strip()
                 if not text:
                     errors.append(f"{c0.id} element {k}: text is empty.")
-                if len(text.split()) > 6:
+                if len(text.split()) > 6 and not doc:  # a marked passage is page text, not typed text
                     errors.append(f"{c0.id} element {k}: '{text}' is over 6 words.")
-                if _has_digit(text) and not _is_year(text) and not any(ch.isalpha() or ch in "%$" for ch in text):
+                if not doc and _has_digit(text) and not _is_year(text) and not any(ch.isalpha() or ch in "%$" for ch in text):
                     errors.append(f"{c0.id} element {k}: the number '{text}' needs its unit.")
                 try:
                     e["stage"] = int(e.get("stage", 1))
@@ -172,7 +183,7 @@ def repair(plans: list[dict], clauses: list[Clause], narration: Narration) -> li
             p.update(treatment="hold" if prev else "picture", reason="not planned by the director",
                      subject=(prev or {}).get("subject", c.text))
             notes.append("missing")
-        if p["treatment"] not in ("picture", "hold"):
+        if p["treatment"] not in ("picture", "hold", "document_focus"):  # a period document needs no element
             lay = p.get("layout") or {}
             words = clause_words(c, narration)
             good = [e for e in lay.get("elements", []) if "at" in e]
@@ -181,8 +192,18 @@ def repair(plans: list[dict], clauses: list[Clause], narration: Narration) -> li
                 notes.append(f"layout {p['treatment']} had no valid element; shown as a picture")
                 p["treatment"] = "picture"
         if p["treatment"] in V.PRESENTED_KINDS and p.get("presentation") not in V.PRESENTATIONS:
-            p["presentation"] = "full"
-            notes.append("presentation defaulted to full")
+            p["presentation"] = "panel" if p["treatment"] == "document_focus" else "full"
+            notes.append(f"presentation defaulted to {p['presentation']}")
+        if p["treatment"] == "document_focus":
+            lay = p.get("layout") or {}
+            lay["elements"] = [e for e in lay.get("elements", []) if "at" in e]  # only passages actually spoken
+            if lay.get("purpose") not in V.DOC_PURPOSES:
+                lay["purpose"] = "evidence" if lay.get("elements") else "period"
+                notes.append(f"document purpose defaulted to {lay['purpose']}")
+            if p["presentation"] != "panel" and not lay.get("elements"):
+                p["presentation"] = "panel"  # never a static full page
+                notes.append("document with no marked passage shown as a panel")
+            p["layout"] = lay
         if p["treatment"] != "hold" and A.find(clause_words(c, narration), str(p.get("anchor", ""))) is None:
             p["anchor"] = c.text
             notes.append("anchor set to the clause")

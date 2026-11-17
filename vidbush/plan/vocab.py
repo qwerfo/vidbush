@@ -4,10 +4,12 @@ from __future__ import annotations
 LAYOUT_KINDS = ("split_comparison", "number_over_footage", "name_card", "list_slideshow", "date_title",
                 "route_map", "equals_card", "chart", "table", "timeline", "document_focus")
 TREATMENTS = ("picture", "hold") + LAYOUT_KINDS
-PRESENTED_KINDS = ("route_map", "chart", "table", "timeline")  # these take a presentation
+PRESENTED_KINDS = ("route_map", "chart", "table", "timeline", "document_focus")  # these take a presentation
+DOC_PURPOSES = ("evidence", "period", "subject")  # why a document is on screen
+MARKED_PURPOSES = ("evidence", "subject")  # these mark passages on the page
 PRESENTATIONS = ("full", "panel", "full_then_dock", "panel_then_expand")
 # layouts drawn over the clause's own picture: the edit picks that picture
-OVER_PICTURE_KINDS = ("number_over_footage", "date_title", "document_focus")
+OVER_PICTURE_KINDS = ("number_over_footage", "date_title")
 REAL_KINDS = ("person", "place", "document", "object", "event")
 GRAMMAR = ("sequence", "callback", "hero", "quiet")
 MEDIA = ("moving", "still", "either")
@@ -28,7 +30,8 @@ TREATMENT_NOTES = {
     "chart": "bars or a line for two or more comparable numbers the narration gives",
     "table": "a small table of named items and their values, rows appearing as they are spoken",
     "timeline": "a line of dated events, each added as it is spoken; a later clause can return to it",
-    "document_focus": "a real document, letter, newspaper page or record shown close with its key line marked",
+    "document_focus": "a real document, letter, newspaper page or record; how it is shown depends on why it is "
+                      "there (purpose) and is never a static full page",
 }
 
 PRESENTATION_NOTES = {

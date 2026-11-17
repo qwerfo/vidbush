@@ -33,7 +33,7 @@ def flat_queries(q: dict[str, list[str]]) -> list[str]:
 
 def _shot_type(plan: dict, cand: Optional[Candidate], fallback: str) -> ShotType:
     t = plan["treatment"]
-    if t in V.LAYOUT_KINDS and not needs_pick(plan):
+    if t in V.LAYOUT_KINDS and not needs_pick(plan) and cand is None:
         return ShotType.motion_graphic
     if cand is not None:
         if is_ai(cand):
@@ -57,8 +57,10 @@ def _layout(plan: dict, shot_start: float, picks: dict) -> Optional[LayoutSpec]:
                                  anchor=str(e.get("anchor", "")), picture_subject=str(e.get("picture_subject", "")),
                                  stage=int(e.get("stage", 1) or 1), at=round(max(0.0, e.get("at", shot_start) - shot_start), 3),
                                  pick=ep["_cand"].id if ep else ""))
-    return LayoutSpec(kind=t, presentation=plan.get("presentation"), reason=str(plan.get("reason", "")),
-                      title=str(lay.get("title", "")), timeline_id=str(lay.get("timeline_id", "")), elements=els)
+    return LayoutSpec(kind=t, presentation=plan.get("presentation"),
+                      reason=str(plan.get("presentation_reason") or plan.get("reason", "")),
+                      title=str(lay.get("title", "")), timeline_id=str(lay.get("timeline_id", "")),
+                      purpose=str(lay.get("purpose", "")), elements=els)
 
 
 def _placeholder(layout: LayoutSpec, duration: float) -> MotionSpec:
@@ -102,6 +104,9 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
             start, end = gc[0].start, gc[-1].end
             dur = round(end - start, 3)
             cand = pk.get("_cand")
+            doc = pk.get("_doc")
+            if doc is not None and plan.get("presentation") == "full":
+                cand = doc  # the document fills the frame, its passages marked: it is the picture
             fallback = pk.get("fallback", "") if cand is None else ""
             # hold_previous: extend the previous shot when it stays inside the hold limit
             if fallback == "hold_previous" and shots and shots[-1].scene_id == sp["scene"]:
@@ -152,6 +157,10 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
                 shot.overlay = MotionSpec(kind=MotionKind.text_overlay, duration=dur, background="transparent",
                                           payload={"title": overlay_text, "subtitle": ""},
                                           anchor=str(plan.get("anchor", "")))
+            if doc is not None and lay is not None:
+                if doc.id not in {c.id for c in shot.candidates}:
+                    shot.candidates.append(_cand_copy(doc, "a", dur))
+                lay.document = doc.id
             for ep in pk.get("element_picks", []):
                 if ep["_cand"].id not in {c.id for c in shot.candidates}:
                     shot.candidates.append(_cand_copy(ep["_cand"], ep.get("frame", "a"), dur))
@@ -182,7 +191,8 @@ def _row(plan: dict, gc: list[Clause], pk: dict, note: str) -> dict:
                        "label": pk.get("label", ""), "callback": bool(pk.get("callback")),
                        "reason": pk.get("reason", ""), "fallback": pk.get("fallback", ""),
                        "resolved": pk.get("resolved", ""), "ai": bool(cand is not None and is_ai(cand)),
-                       "element_picks": [{"element": e["element"], "pick": e["_cand"].id} for e in pk.get("element_picks", [])]}
+                       "element_picks": [{"element": e["element"], "pick": e["_cand"].id} for e in pk.get("element_picks", [])],
+                       "document_pick": pk["_doc"].id if pk.get("_doc") is not None else None}
     if note:
         row["note"] = note
     return row

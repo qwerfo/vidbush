@@ -438,6 +438,8 @@ class LayoutSpec(Model):
     reason: str = ""
     title: str = ""
     timeline_id: str = ""  # a later shot can return to the same timeline
+    purpose: str = ""  # document_focus: evidence, period or subject
+    document: str = ""  # document_focus: candidate id of the document itself (the picked picture is beneath it)
     elements: list[LayoutElement] = Field(default_factory=list)
 
 

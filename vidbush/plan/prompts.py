@@ -40,6 +40,17 @@ DIRECTOR_RULES = [
     "orients the viewer; full_then_dock when it is introduced full screen and stays useful as context while "
     "the narration moves on; panel_then_expand when it sits as a panel and grows to full screen when the "
     "narration turns to its detail (stage 2 elements appear then). Do not choose a position on screen.",
+    "document_focus takes a presentation and a presentation_reason like the graphics, and a purpose in "
+    "layout.purpose: evidence (a specific passage is quoted or referred to), period (the document is there for "
+    "atmosphere or to place the story in time) or subject (the narration is about the document itself). How to "
+    "choose, and why: a document proves something only when the viewer can see the words being quoted, so "
+    "evidence goes in close and marks the passage; a document used for atmosphere should not stop the story, "
+    "so it rides as a panel over footage; a full frame is for when the document is what the narration is about. "
+    "A document is never a static full page: whenever it fills the frame, passages are marked as they are "
+    "spoken. For evidence and subject give the passages to mark in spoken order as elements: text is the exact "
+    "words expected on the page, anchor the narration words it is marked on. Example (invented): 'the council "
+    "minutes record that the bridge was condemned in the spring' is evidence; the element text is 'bridge "
+    "condemned' and its anchor 'the bridge was condemned'.",
     "real_thing, when the clause names something that exists: name, kind (person, place, document, object, "
     "event), date and place, as precisely as the script allows. null otherwise.",
     "medium: moving when the subject is an action or a place best seen in motion, still when it is a "
@@ -79,7 +90,8 @@ OUTPUT_SHAPE = {
         "anchor": "exact words from the clause",
         "real_thing": {"name": "", "kind": "person|place|document|object|event", "date": "", "place": ""},
         "queries": {"archive": ["Name 1920"], "stock": ["plain description"]},
-        "layout": {"title": "", "timeline_id": "", "elements": [
+        "layout": {"title": "", "timeline_id": "", "purpose": "evidence|period|subject (document_focus)",
+                   "elements": [
             {"role": "", "text": "", "anchor": "", "picture_subject": "", "stage": 1}]},
         "grammar": [], "grammar_note": "", "callback_to": "",
     }],
@@ -153,14 +165,16 @@ EDIT_RULES = [
     "footage (set fallback_pick to that candidate and overlay_text to the words, at most 6). Never an AI still "
     "for fallback_pick.",
     "For layout clauses, pick pictures for the layout elements that have a picture_subject (element_picks), "
-    "and for over-picture layouts and panels also the picture beneath (pick).",
+    "and for over-picture layouts and panels also the picture beneath (pick). For a document_focus, "
+    "document_pick is the document itself (never an AI still); pick is the footage beneath it unless its "
+    "presentation is full.",
     "No em dash characters anywhere.",
 ]
 
 EDIT_OUTPUT = {
     "picks": [{"clause": "c001", "pick": 12, "frame": "b", "label": "", "callback": False,
                "reason": "short", "fallback": "", "fallback_pick": None, "overlay_text": "", "map_place": "",
-               "element_picks": [{"element": 0, "pick": 7, "frame": "a"}]}],
+               "element_picks": [{"element": 0, "pick": 7, "frame": "a"}], "document_pick": None}],
 }
 
 
