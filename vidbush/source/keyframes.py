@@ -1,7 +1,9 @@
 """Keyframe extraction for candidates (inputs to the judge and the shot editor).
 
 extract_keyframes(candidate, out_dir) writes 640 px wide jpgs: three frames
-at 20, 50 and 80 percent of [in_point, out_point] for video, the image
+at 20, 50 and 80 percent of [in_point, out_point] for video (of its first play_s
+seconds when given: the part a shot of that length plays, so the judge never sees frames
+the render does not show), the image
 itself for stills. It also fills candidate.width/height (ffprobe or
 Pillow), fixes a missing out_point and sets candidate.keyframes.
 """
@@ -41,7 +43,7 @@ def _frame(path: Path, t: float, out: Path) -> Path:
     return out
 
 
-def video_keyframes(cand: Candidate, out_dir: Path) -> list[str]:
+def video_keyframes(cand: Candidate, out_dir: Path, play_s: float = 0.0) -> list[str]:
     src = Path(cand.local_path)
     w, h, dur = _probe_video(src)
     if w and h:
@@ -50,6 +52,8 @@ def video_keyframes(cand: Candidate, out_dir: Path) -> list[str]:
         cand.in_point = min(cand.in_point, max(0.0, dur - 0.5))
         cand.out_point = round(dur, 3)
     span = max(0.0, cand.out_point - cand.in_point)
+    if play_s > 0:
+        span = min(span, play_s)
     outs = []
     for i, p in enumerate(POSITIONS):
         t = min(cand.in_point + span * p, max(0.0, dur - 0.1)) if dur else cand.in_point + span * p
@@ -71,12 +75,12 @@ def image_keyframe(cand: Candidate, out_dir: Path) -> list[str]:
     return [str(out)]
 
 
-def extract_keyframes(candidate: Candidate, out_dir: Path | str) -> list[str]:
+def extract_keyframes(candidate: Candidate, out_dir: Path | str, play_s: float = 0.0) -> list[str]:
     """Write keyframes for one candidate; returns their paths and stores them on the candidate."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     if candidate.media == "video":
-        frames = video_keyframes(candidate, out_dir)
+        frames = video_keyframes(candidate, out_dir, play_s)
     else:
         frames = image_keyframe(candidate, out_dir)
     candidate.keyframes = frames

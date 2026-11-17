@@ -1,0 +1,356 @@
+{
+ "/service/ndnp/curiv/batch_curiv_ocotillo_ver01/data/sn92070146/00414189696/1924112001/1270.xml": {
+  "width": "23372",
+  "height": "29600",
+  "coords": {
+   "wilson": [
+    {
+     "coordinates": [
+      2584.0,
+      2249.0,
+      1011.0,
+      335.0
+     ],
+     "language": "eng",
+     "position": [
+      1,
+      5
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      2140.0,
+      3416.0,
+      520.0,
+      123.0
+     ],
+     "language": "eng",
+     "position": [
+      2,
+      7
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      1507.0,
+      3898.0,
+      605.0,
+      109.0
+     ],
+     "language": "eng",
+     "position": [
+      2,
+      23
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      841.0,
+      5357.0,
+      874.0,
+      123.0
+     ],
+     "language": "eng",
+     "position": [
+      2,
+      72
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      898.0,
+      5660.0,
+      647.0,
+      137.0
+     ],
+     "language": "eng",
+     "position": [
+      2,
+      84
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      543.0,
+      6676.0,
+      591.0,
+      113.0
+     ],
+     "language": "eng",
+     "position": [
+      3,
+      12
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      1129.0,
+      7134.0,
+      463.0,
+      109.0
+     ],
+     "language": "eng",
+     "position": [
+      3,
+      26
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      2674.0,
+      7913.0,
+      458.0,
+      104.0
+     ],
+     "language": "eng",
+     "position": [
+      4,
+      11
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      3600.0,
+      3879.0,
+      520.0,
+      118.0
+     ],
+     "language": "eng",
+     "position": [
+      8,
+      26
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      4077.0,
+      4493.0,
+      449.0,
+      99.0
+     ],
+     "language": "eng",
+     "position": [
+      8,
+      50
+     ],
+     "term": "wilson"
+    },
+    {
+     "coordinates": [
+      4087.0,
+      7654.0,
+      444.0,
+      99.0
+     ],
+     "language": "eng",
+     "position": [
+      9,
+      88
+     ],
+     "term": "wilson"
+    }
+   ],
+   "woodrow": [
+    {
+     "coordinates": [
+      964.0,
+      2216.0,
+      1446.0,
+      350.0
+     ],
+     "language": "eng",
+     "position": [
+      1,
+      4
+     ],
+     "term": "woodrow"
+    },
+    {
+     "coordinates": [
+      1361.0,
+      3392.0,
+      666.0,
+      128.0
+     ],
+     "language": "eng",
+     "position": [
+      2,
+      6
+     ],
+     "term": "woodrow"
+    }
+   ],
+   "love": [
+    {
+     "coordinates": [
+      2419.0,
+      1833.0,
+      671.0,
+      326.0
+     ],
+     "language": "eng",
+     "position": [
+      1,
+      1
+     ],
+     "term": "love"
+    },
+    {
+     "coordinates": [
+      2891.0,
+      3912.0,
+      293.0,
+      113.0
+     ],
+     "language": "eng",
+     "position": [
+      2,
+      26
+     ],
+     "term": "love"
+    },
+    {
+     "coordinates": [
+      1228.0,
+      6690.0,
+      411.0,
+      104.0
+     ],
+     "language": "eng",
+     "position": [
+      3,
+      13
+     ],
+     "term": "love"
+    }
+   ],
+   "affairs": [
+    {
+     "coordinates": [
+      3369.0,
+      1838.0,
+      1106.0,
+      331.0
+     ],
+     "language": "eng",
+     "position": [
+      1,
+      2
+     ],
+     "term": "affairs"
+    },
+    {
+     "coordinates": [
+      1729.0,
+      6690.0,
+      624.0,
+      118.0
+     ],
+     "language": "eng",
+     "position": [
+      3,
+      14
+     ],
+     "term": "affairs"
+    },
+    {
+     "coordinates": [
+      7063.0,
+      12156.0,
+      468.0,
+      109.0
+     ],
+     "language": "eng",
+     "position": [
+      15,
+      145
+     ],
+     "term": "affairs"
+    }
+   ],
+   "editor": [
+    {
+     "coordinates": [
+      5008.0,
+      2669.0,
+      907.0,
+      331.0
+     ],
+     "language": "eng",
+     "position": [
+      1,
+      12
+     ],
+     "term": "editor"
+    },
+    {
+     "coordinates": [
+      2773.0,
+      4521.0,
+      430.0,
+      113.0
+     ],
+     "language": "eng",
+     "position": [
+      2,
+      49
+     ],
+     "term": "editor"
+    },
+    {
+     "coordinates": [
+      2485.0,
+      6860.0,
+      406.0,
+      109.0
+     ],
+     "language": "eng",
+     "position": [
+      3,
+      21
+     ],
+     "term": "editor"
+    }
+   ],
+   "letters": [
+    {
+     "coordinates": [
+      1838.0,
+      5386.0,
+      435.0,
+      104.0
+     ],
+     "language": "eng",
+     "position": [
+      2,
+      73
+     ],
+     "term": "letters"
+    },
+    {
+     "coordinates": [
+      5428.0,
+      6430.0,
+      420.0,
+      109.0
+     ],
+     "language": "eng",
+     "position": [
+      9,
+      39
+     ],
+     "term": "letters"
+    }
+   ]
+  }
+ }
+}

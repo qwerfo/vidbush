@@ -105,7 +105,7 @@ def test_fetch_photo_and_section_of_large_film(monkeypatch, online, tmp_path) ->
     assert sidecar["page_url"] == photo.page_url and "US National Archives" in sidecar["attribution"]
 
     sections: list[tuple[str, float]] = []
-    monkeypatch.setattr(base, "cached_video", lambda url, ext, s, d, duration=0.0, size=0.0:
+    monkeypatch.setattr(base, "cached_video", lambda url, ext, s, d, duration=0.0, size=0.0, **kw:
                         sections.append((url, size)) or _tiny_video(tmp_path))
     monkeypatch.setattr(base, "detect_scenes", lambda p: [(0.0, 8.0)])
     film = nara.parse_search(recorded("nara_search_films.json"), "video")[0]

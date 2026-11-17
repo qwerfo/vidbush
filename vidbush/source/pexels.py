@@ -73,6 +73,7 @@ def stock_spans(duration: float, shot: Shot) -> list[tuple[float, float]]:
 
 class PexelsAdapter(BaseAdapter):
     name = "pexels"
+    classes = frozenset({"stock"})
     media = {"video", "image"}
     key_name = "PEXELS_API_KEY"
 

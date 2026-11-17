@@ -1,9 +1,9 @@
 """YouTube adapter via the yt-dlp Python API.
 
-Search "ytsearch10:<query>" (flat), score uploads: archival, documentary,
-newsreel, public domain and Creative Commons uploads rank up; reaction,
-vlog, podcast, interview, review, explained, top 10 and shorts rank down
-or are dropped. When the brand's licence policy prefers Creative Commons
+Search "ytsearch10:<query>" (flat), kept in YouTube's own order (v2: the old
+reorder by title words threw that ranking away; "film" boosted almost anything
+and "review" penalised "preview"); shorts, uploads under 45 s and live streams
+are dropped. When the brand's licence policy prefers Creative Commons
 (the registry passes prefer_cc=True), a first pass runs the YouTube search
 URL with the Creative Commons filter (sp=EgIwAQ%3D%3D, read by yt-dlp's
 youtube:search_url extractor) and the normal pass follows; results are
@@ -12,7 +12,10 @@ pass counts against the run's search budget (the registry takes it).
 
 Fetch reads the full info dict, skips videos without a 720p
 (settings.sources.youtube_min_height) rendition and picks the windows to
-download: the transcript window (subtitles or automatic captions, fetched
+download. v2: a long video's window is centred where its storyboard frames
+(the scrub bar previews, read without downloading the video) show the shot's
+subject, one cached vision call per video and subject (segment.py). Without a
+vision seat or a frame that shows it, the old rule: the transcript window (subtitles or automatic captions, fetched
 through ydl_fetch_text) or chapter whose text best matches the shot's
 intent and must_show (keyword overlap, stopwords removed, must_show terms
 weigh double), else up to settings.sources.youtube_windows short windows
@@ -64,12 +67,6 @@ from . import base, throttle
 from .base import BaseAdapter, Media, RawResult, link_into, make_candidates
 from .local import tokens as keyword_tokens
 
-BOOST = {"archival": 0.25, "archive": 0.2, "documentary": 0.2, "newsreel": 0.3, "public domain": 0.3,
-         "creative commons": 0.25, "historical footage": 0.2, "film": 0.05, "footage": 0.1, "1080p": 0.05,
-         "restored": 0.1, "4k": 0.05}
-PENALTY = {"reaction": 0.5, "reacts": 0.5, "vlog": 0.4, "podcast": 0.5, "interview": 0.35, "review": 0.35,
-           "explained": 0.3, "top 10": 0.4, "top10": 0.4, "#shorts": 0.8, "shorts": 0.5, "unboxing": 0.5,
-           "livestream": 0.4, "tutorial": 0.3, "gameplay": 0.6, "trailer": 0.2, "lyrics": 0.5}
 PADDING_S = 10.0
 RUNTIMES = ("deno", "node", "bun")
 YDL_MAX_WAIT_S = 120.0
@@ -159,16 +156,13 @@ def _base_opts(settings: Optional[Settings] = None) -> dict[str, Any]:
 
 
 def score_entry(entry: dict[str, Any]) -> Optional[float]:
-    """Relevance multiplier in 0..1 for a flat search entry, None when it must be skipped."""
+    """None for an entry that is never usable footage (a short, under 45 s, live), else 1.0: results keep
+    YouTube's own order (its rank is stored on each result by the registry)."""
     url = str(entry.get("url") or entry.get("webpage_url") or "")
     dur = float(entry.get("duration") or 0)
     if "/shorts/" in url or (0 < dur < 45) or entry.get("live_status") in {"is_live", "is_upcoming"}:
         return None
-    text = " ".join(str(entry.get(k) or "") for k in ("title", "channel", "uploader", "description")).lower()
-    score = 0.5 + sum(v for k, v in BOOST.items() if k in text) - sum(v for k, v in PENALTY.items() if k in text)
-    if dur > 3 * 3600:
-        score -= 0.2
-    return None if score <= 0.05 else round(clamp(score, 0.05, 1.0), 3)
+    return 1.0
 
 
 # ---------------------------------------------------------------- network seams
@@ -259,11 +253,15 @@ def parse_search(info: dict[str, Any], cc: bool = False) -> list[RawResult]:
             continue
         page = e.get("webpage_url") or f"https://www.youtube.com/watch?v={e['id']}"
         extra: dict[str, Any] = {"id": e["id"], "cc_search": True} if cc else {"id": e["id"]}
+        if e.get("description"):
+            extra["description"] = str(e["description"])[:600]
+        if e.get("upload_date") or e.get("release_year"):
+            extra["date"] = str(e.get("upload_date") or e.get("release_year"))
         out.append(RawResult(source="youtube", url=page, page_url=page, title=clean_title(str(e.get("title") or "")),
                              author=str(e.get("channel") or e.get("uploader") or ""),
                              licence=CC_LICENCE if cc else STANDARD_LICENCE, media="video",
                              duration=float(e.get("duration") or 0), score=s, extra=extra))
-    return sorted(out, key=lambda r: -r.score)
+    return out
 
 
 def merge_passes(passes: list[list[RawResult]]) -> list[RawResult]:
@@ -448,6 +446,20 @@ def pad_windows(windows: list[tuple[float, float]], duration: float) -> list[tup
     return out
 
 
+def frame_window(info: dict[str, Any], shot: Shot, settings: Settings) -> Optional[tuple[float, float]]:
+    """Padded window centred where the storyboard frames show the shot's subject (segment.py), or None."""
+    from . import segment
+    duration = float(info.get("duration") or 0)
+    length = window_length(shot)
+    if duration <= length + 2 * PADDING_S or not segment.available():
+        return None
+    key = f"youtube:{info.get('id') or info.get('webpage_url') or ''}"
+    t = segment.choose_time(key, lambda: segment.youtube_frames(info), shot, settings, str(info.get("title") or ""))
+    if t is None:
+        return None
+    return pad_windows([_centred(t, length, duration)], duration)[0]
+
+
 def choose_windows(info: dict[str, Any], shot: Shot, settings: Settings,
                    cues: Optional[list[Cue]] = None) -> list[tuple[float, float]]:
     """Padded download windows: whole short videos, the best matching section, else spread windows."""
@@ -520,6 +532,8 @@ def note_bot_block(err: Exception) -> None:
 class YoutubeAdapter(BaseAdapter):
     name = "youtube"
     media = {"video"}
+    classes = frozenset({"web_video"})
+    matches_description = True  # YouTube search matches descriptions and captions, not only titles
     search_hints = ("prefer_cc", "language")  # keyword arguments the registry may pass to search()
 
     def available(self, settings: Settings) -> bool:
@@ -578,8 +592,12 @@ class YoutubeAdapter(BaseAdapter):
         if max_height(info) < cfg.youtube_min_height:
             raise base.Rejected(f"{max_height(info)}p is below the {cfg.youtube_min_height}p floor")
         info = {**info, "duration": float(info.get("duration") or raw.duration)}
-        cues = transcript_cues(info, settings, str(raw.extra.get("lang") or ""))
-        windows = choose_windows(info, shot, settings, cues)
+        framed = frame_window(info, shot, settings)
+        if framed is not None:
+            windows = [framed]
+        else:
+            cues = transcript_cues(info, settings, str(raw.extra.get("lang") or ""))
+            windows = choose_windows(info, shot, settings, cues)
         files = self._download_windows(raw.url, windows, settings)
         full = raw.model_copy(update={"licence": youtube_licence(info), "width": int(info.get("width") or 0),
                                       "height": int(info.get("height") or 0), "download_url": raw.url,

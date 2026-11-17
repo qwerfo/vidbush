@@ -58,15 +58,24 @@ DEFAULT_RATES: dict[str, tuple[float, float]] = {
     "youtube": (0.5, 1),  # pseudo host for yt-dlp calls
     "commons.wikimedia.org": (5.0, 5), "archive.org": (2.0, 4), "images-api.nasa.gov": (2.0, 4),
     "catalog.archives.gov": (1.0, 2),  # no published limit: one request a second
+    "www.wikidata.org": (5.0, 5),
+    # Openverse anonymous: about 100 requests a day and a small burst; keep well inside it
+    "api.openverse.org": (1 / 4, 3),
+    "api.firecrawl.dev": (1.0, 2), "google.serper.dev": (2.0, 4), "api.search.brave.com": (1.0, 1),
+    "api.tavily.com": (1.0, 2), "tile.loc.gov": (1.0, 3),
 }
 SERIAL_HOSTS = {"youtube"}
 # Pause after a bot check page. loc.gov blocks for an hour and restarts the hour on any request made
 # during the block, so it waits longer than that before one more try.
-CHALLENGE_COOLDOWN_S: dict[str, float] = {"www.loc.gov": 3900.0, "loc.gov": 3900.0, "*": 900.0}
+# v2: loc.gov challenges every request from some connections (Cloudflare). A 10 minute pause keeps its
+# searches refused at once (never waited on) without an hour-long block outlasting the stage; the run
+# budget caps how often it is asked again.
+CHALLENGE_COOLDOWN_S: dict[str, float] = {"www.loc.gov": 600.0, "loc.gov": 600.0, "*": 900.0}
 DEFAULT_MAX_CONCURRENCY = 6
 OTHER_HOST_SLOTS = 2  # global slots always left over the YouTube download slots
 # searches per run (one pipeline run of one project) and adapter; "*" is every other adapter
-DEFAULT_BUDGET: dict[str, int] = {"pexels": 300, "pixabay": 600, "loc": 300, "nara": 300, "youtube": 500, "*": 800}
+DEFAULT_BUDGET: dict[str, int] = {"pexels": 300, "pixabay": 600, "loc": 300, "nara": 300, "youtube": 500,
+                                  "openverse": 90, "webimage": 300, "chronam": 200, "*": 800}
 
 
 class Throttled(Exception):

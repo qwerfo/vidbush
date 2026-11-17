@@ -25,6 +25,15 @@ run, the budget and whether it ran out are persisted in
 work/source_notes.json (record_usage) so the QA report shows them after a
 resume.
 
+Query routing (v2): a shot's queries may arrive per source class (Shot.source_queries, or a
+{real_thing, queries: {class: [...]}} structure passed to source_shot); each adapter gets the queries of
+the classes it serves (adapter.classes), at most QUERIES_PER_SHOT. A flat list still goes to every source.
+Every result keeps the query that found it, its rank in that source's answer and the query class
+(RawResult.extra, then Candidate fields). The download cap counts distinct assets: a shot takes at most
+one clip per asset until max_candidates assets are in, so its candidates come from as many different
+assets as were found (up to the cap). source_pool sources a stretch of shots (a scene) into one shared
+pool with every asset fetched once.
+
 Search hints: an adapter that lists keyword names in search_hints gets them
 from the brand (prefer_cc from brand.licence_policy.prefer_creative_commons,
 language from brand.language); adapters without the attribute are called as
@@ -44,9 +53,9 @@ import uuid
 from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterable, NamedTuple, Optional, Union
 
-from ..models import FOOTAGE_TYPES, GENERATED_SOURCES, Candidate, Shot, ShotList, ShotType
+from ..models import FOOTAGE_TYPES, GENERATED_SOURCES, Candidate, RealThing, Shot, ShotList, ShotType
 from . import base, throttle
 from .base import Media, RawResult, SourceAdapter
 from .blocklist import Blocklist
@@ -62,7 +71,7 @@ SEARCH_CACHE_TTL_S = 14 * 86400
 SEARCH_CACHE_TTL_BY_SOURCE = {"pixabay": 23 * 3600}
 # One worker for a host whose token interval is longer than throttle.MAX_WAIT_S (Pexels: one every 22.5 s):
 # its searches queue in the pool and each waits for its own token; a second worker would only be refused.
-ADAPTER_WORKERS = {"youtube": 1, "loc": 1, "local": 2, "pexels": 1}
+ADAPTER_WORKERS = {"youtube": 1, "loc": 1, "chronam": 1, "local": 2, "pexels": 1}  # chronam shares www.loc.gov
 DEFAULT_ADAPTER_WORKERS = 3
 UNCACHED = {"local"}  # in-memory index; its results change with the library
 SOURCE_NOTES = "source_notes.json"  # in ctx.work: search usage per run, read by judge/qa.py
@@ -79,19 +88,27 @@ def _factories() -> dict[str, Callable[[], SourceAdapter]]:
     return {"local": make("local", "LocalAdapter"), "youtube": make("youtube", "YoutubeAdapter"),
             "wikimedia": make("wikimedia", "WikimediaAdapter"), "archive": make("archive", "ArchiveAdapter"),
             "loc": make("loc", "LocAdapter"), "nara": make("nara", "NaraAdapter"), "nasa": make("nasa", "NasaAdapter"),
-            "pexels": make("pexels", "PexelsAdapter"), "pixabay": make("pixabay", "PixabayAdapter")}
+            "pexels": make("pexels", "PexelsAdapter"), "pixabay": make("pixabay", "PixabayAdapter"),
+            "webimage": make("webimage", "WebImageAdapter"), "openverse": make("openverse", "OpenverseAdapter"),
+            "chronam": make("chronam", "ChronamAdapter")}
 
 
 def active_adapters(ctx: "StageContext") -> list[SourceAdapter]:
     """Enabled and available adapters in settings.sources.enabled order."""
     cfg = ctx.settings.sources
     base.configure(ctx.settings)
+    from . import segment
+    segment.configure(getattr(ctx, "seats", None), getattr(ctx, "log", None))
     factories = _factories()
     out: list[SourceAdapter] = []
     for name in cfg.enabled:
         if name not in factories or (name == "youtube" and not cfg.allow_youtube):
             continue
-        adapter = factories[name]()
+        try:
+            adapter = factories[name]()
+        except ImportError as e:  # an adapter that cannot load is skipped, never the stage
+            _note_once(ctx, f"import_{name}", "source adapter could not load, skipped", source=name, error=str(e)[:200])
+            continue
         if adapter.available(ctx.settings):
             out.append(adapter)
     _setup_warnings(out, ctx)
@@ -157,6 +174,123 @@ def shot_queries(shot: Shot, queries: Optional[list[str]] = None) -> list[str]:
     return qs[:QUERIES_PER_SHOT]
 
 
+class QueryPlan(NamedTuple):
+    """A shot's queries: flat (every source) and per source class, plus the real thing it names."""
+
+    flat: list[str]
+    by_class: dict[str, list[str]]
+    real_thing: Optional[RealThing]
+
+
+QueriesIn = Union[None, list[str], dict[str, Any]]
+# classes whose sources hold named real things: a real thing with no query for them gets its own query
+THING_CLASSES = {"archive", "encyclopedic", "newspaper", "web_image"}
+
+
+def _clean(qs: Any) -> list[str]:
+    items = qs if isinstance(qs, (list, tuple)) else [qs]
+    out: list[str] = []
+    for q in items:
+        q = " ".join(str(q or "").split())
+        if q and q not in out:
+            out.append(q)
+    return out
+
+
+def canonical_class(name: str) -> str:
+    n = str(name or "").strip().lower()
+    return base.CLASS_ALIASES.get(n, n)
+
+
+def _by_class(src: Any) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for k, v in (src.items() if isinstance(src, dict) else []):
+        c = canonical_class(k)
+        if c in base.SOURCE_CLASSES:
+            out[c] = out.get(c, []) + [q for q in _clean(v) if q not in out.get(c, [])]
+    return {c: v for c, v in out.items() if v}
+
+
+def _real_thing(v: Any) -> Optional[RealThing]:
+    if isinstance(v, RealThing):
+        return v
+    if isinstance(v, dict) and str(v.get("name") or "").strip():
+        return RealThing(**{k: str(v.get(k) or "") for k in ("name", "kind", "date", "place")})
+    return None
+
+
+def query_plan(shot: Shot, queries: QueriesIn = None) -> QueryPlan:
+    """The shot's query plan. queries overrides the shot's own: a flat list (sent to every source), a
+    {class: [...]} dict, or {real_thing: {name, kind, date, place}, queries: {class: [...]}}; class names
+    are canonical (base.SOURCE_CLASSES) or aliases (web, video)."""
+    rt = shot.real_thing
+    if queries is None:
+        by = _by_class(shot.source_queries)
+        flat = shot_queries(shot) if not by or shot.queries else []
+    elif isinstance(queries, dict):
+        inner: Any = queries
+        if "queries" in queries or "real_thing" in queries:
+            rt = _real_thing(queries.get("real_thing")) or rt
+            inner = queries.get("queries") or {}
+        by = {} if isinstance(inner, list) else _by_class(inner)
+        flat = _clean(inner) if isinstance(inner, list) else []
+    else:
+        by, flat = {}, _clean(queries)
+    if not flat and not by:
+        flat = shot_queries(shot)
+    return QueryPlan(flat, by, rt)
+
+
+def thing_query(rt: RealThing) -> str:
+    """Name plus the year of a real thing, the form archives and encyclopedias index it under."""
+    year = base.YEAR_RE.search(rt.date or "")
+    return f"{rt.name} {year.group(0)}" if year else rt.name
+
+
+def adapter_queries(plan: QueryPlan, adapter: SourceAdapter) -> list[str]:
+    """The queries one adapter sends for a shot: the classes it serves, round robin in class order, or
+    the flat list when the shot has no per-class queries. A real thing named by the shot leads for the
+    sources that hold named things when it has no query of its own there."""
+    classes = getattr(adapter, "classes", base.SOURCE_CLASSES)
+    if plan.by_class:
+        cols = [plan.by_class[c] for c in base.SOURCE_CLASSES if c in plan.by_class and c in classes]
+        qs: list[str] = []
+        for i in range(max((len(c) for c in cols), default=0)):
+            qs += [c[i] for c in cols if i < len(c) and c[i] not in qs]
+        if not qs and plan.real_thing and set(classes) & THING_CLASSES:
+            qs = [thing_query(plan.real_thing)]
+        return qs[:QUERIES_PER_SHOT]
+    qs = list(plan.flat)
+    if plan.real_thing and set(classes) & THING_CLASSES and getattr(adapter, "name", "") != "local":
+        tq = thing_query(plan.real_thing)
+        qs = [tq] + [q for q in qs if q != tq]
+    return qs[:QUERIES_PER_SHOT]
+
+
+def query_class(plan: QueryPlan, adapter: SourceAdapter, query: str) -> str:
+    """The class a query was written for ("thing" for the real thing's own query, "" for a flat query)."""
+    classes = getattr(adapter, "classes", base.SOURCE_CLASSES)
+    for c in base.SOURCE_CLASSES:
+        if c in classes and query in plan.by_class.get(c, []):
+            return c
+    if plan.real_thing and query == thing_query(plan.real_thing):
+        return "thing"
+    return ""
+
+
+def _with_class(results: list[RawResult], cls: str) -> list[RawResult]:
+    if not cls:
+        return results
+    return [r.model_copy(update={"extra": {**r.extra, "query_class": cls}}) for r in results]
+
+
+def _thing_shot(shot: Shot, plan: QueryPlan) -> Shot:
+    """The shot as adapters see it: with the plan's real thing (entity search reads shot.real_thing)."""
+    if plan.real_thing is shot.real_thing:
+        return shot
+    return shot.model_copy(update={"real_thing": plan.real_thing})
+
+
 GENERATED = GENERATED_SOURCES  # never sourced, never replaced by a re-run of sourcing
 
 
@@ -184,11 +318,21 @@ def _variant(hints: dict[str, Any]) -> str:
     return ",".join(f"{k}={v}" for k, v in sorted(hints.items()))
 
 
+def search_variant(adapter: SourceAdapter, ctx: "StageContext", shot: Optional[Shot]) -> str:
+    """Cache variant: the search hints, plus the real thing for an adapter whose search reads it
+    (adapter.uses_real_thing, e.g. entity resolution), so two things with one query never share a search."""
+    v = _variant(search_hints(adapter, ctx))
+    rt = getattr(shot, "real_thing", None) if getattr(adapter, "uses_real_thing", False) else None
+    if rt is not None:
+        v = ",".join(x for x in (v, f"thing={rt.name}|{rt.kind}|{rt.date}|{rt.place}") if x)
+    return v
+
+
 def sent_query(adapter: SourceAdapter, query: str) -> str:
     """The query the adapter actually sends (its keyword form when the engine matches every word). The
     search cache is keyed on it, so long queries that shorten to the same request share one search."""
     words = getattr(adapter, "keyword_words", 0)
-    return base.keyword_query(query, words) if words else query
+    return base.archive_query(query, words) if words else query
 
 
 def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
@@ -198,7 +342,7 @@ def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: 
     The same request is never in flight twice: a second caller waits and reads the first one's cache."""
     if adapter.name in UNCACHED:
         return _search_sent(adapter, query, media, n, shot, ctx, unsent)
-    variant = _variant(search_hints(adapter, ctx))
+    variant = search_variant(adapter, ctx, shot)
     with throttle.exclusive(f"search:{adapter.name}", f"{sent_query(adapter, query)}|{media}|{n}|{variant}"):
         return _search_sent(adapter, query, media, n, shot, ctx, unsent)
 
@@ -207,11 +351,11 @@ def _search_sent(adapter: SourceAdapter, query: str, media: Media, n: int, shot:
                  ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]]) -> list[RawResult]:
     cacheable = adapter.name not in UNCACHED
     hints = search_hints(adapter, ctx)
-    variant, key = _variant(hints), sent_query(adapter, query)
+    variant, key = search_variant(adapter, ctx, shot), sent_query(adapter, query)
     if cacheable:
         hit = cache_get(adapter.name, key, media, n, ctx.settings, variant)
         if hit is not None:
-            return _screen(adapter.name, query, hit, shot, ctx)  # the cache holds raw results: same screen
+            return _screen(adapter, query, hit, shot, ctx)  # the cache holds raw results: same screen
         if not throttle.take_budget(run_id(ctx), adapter.name, shot.id):
             if unsent is not None:
                 unsent.add((shot.id, adapter.name, query))
@@ -245,44 +389,37 @@ def _search_sent(adapter: SourceAdapter, query: str, media: Media, n: int, shot:
         return []
     if cacheable:
         cache_put(adapter.name, key, media, n, results, ctx.settings, variant)
-    return _screen(adapter.name, query, results, shot, ctx)
+    return _screen(adapter, query, results, shot, ctx)
 
 
-def _screen(adapter: str, query: str, results: list[RawResult], shot: Shot, ctx: "StageContext") -> list[RawResult]:
-    """Rank by relevance (off-topic results become fillers) and drop what the shot's era rules out."""
-    return [r for r in relevant(adapter, query, results, ctx) if not era_mismatch(shot, r)]
+def _ranked(query: str, results: list[RawResult]) -> list[RawResult]:
+    """Each result with the query that found it and its rank in the source's own answer (1 = first)."""
+    return [r.model_copy(update={"extra": {**r.extra, "query": query, "rank": i + 1}}) for i, r in enumerate(results)]
 
 
-def shot_era(shot: Shot) -> Optional[int]:
-    """Earliest year or decade named in the shot's intent and queries (1810s -> 1810), or None."""
-    text = " ".join([shot.intent, *shot.queries])
-    years = [int(y) for y in re.findall(r"\b(1[5-9]\d\d|20\d\d)s?\b", text)]
-    return min(years) if years else None
-
-
-def era_mismatch(shot: Shot, raw: RawResult) -> bool:
-    """A historical shot (before 1950) never takes a result whose title is dated 1990 or later."""
-    era = shot_era(shot)
-    if era is None or era >= 1950:
-        return False
-    years = [int(y) for y in re.findall(r"\b(19\d\d|20\d\d)\b", raw.title)]
-    return any(y >= 1990 for y in years)
+def _screen(adapter: Any, query: str, results: list[RawResult], shot: Shot, ctx: "StageContext") -> list[RawResult]:
+    """Record query and rank, then rank by relevance (off-topic results become fillers). There is no era
+    rule: a recent upload of old film is still old film (run 3 dropped such uploads on the title year)."""
+    return relevant(adapter, query, _ranked(query, results), ctx)
 
 
 MIN_RELEVANCE = 1 / 3  # at least one in three of the query's specific words (2 of 6 counts)
 
 
-def relevant(adapter: str, query: str, results: list[RawResult], ctx: "StageContext") -> list[RawResult]:
+def relevant(adapter: Any, query: str, results: list[RawResult], ctx: "StageContext") -> list[RawResult]:
     """Rank web results: one whose title, description and tags share fewer than MIN_RELEVANCE of the
     query's specific words becomes a filler (score 0) after every match. Nothing is removed: a title is
-    weak evidence and the vision judge decides on real frames."""
-    if adapter == "local":
+    weak evidence and the vision judge decides on real frames. adapter is an adapter or its name; an
+    engine that matches descriptions (adapter.matches_description) is trusted with its own answer, since
+    the words it matched are often in text the result does not carry (run 3: 2030 demotions)."""
+    name = getattr(adapter, "name", adapter)
+    if name == "local" or getattr(adapter, "matches_description", False):
         return results
     out = [r if r.score <= 0 or base.relevance(query, r) >= MIN_RELEVANCE - 1e-9
            else r.model_copy(update={"score": 0.0}) for r in results]
     demoted = sum(1 for a, b in zip(results, out) if a is not b)
     if demoted:
-        ctx.log.info("off-topic results demoted to fillers", source=adapter, query=query, demoted=demoted)
+        ctx.log.info("off-topic results demoted to fillers", source=name, query=query, demoted=demoted)
     return sorted(out, key=lambda r: r.score <= 0)
 
 
@@ -367,29 +504,42 @@ class SearchPools:
             pool.shutdown(wait=True)
 
 
-def search_shot(shot: Shot, adapters: list[SourceAdapter], media: Media, queries: list[str],
+def search_shot(shot: Shot, adapters: list[SourceAdapter], media: Media, queries: Union[list[str], QueryPlan],
                 ctx: "StageContext", pools: SearchPools) -> dict[str, list[RawResult]]:
-    """Run every query on every adapter (in its pool); results merged per adapter. The shot rejoins the
-    fair share pools for these searches and leaves them when done (a re-query of one shot)."""
+    """Run the shot's queries on every adapter (in its pool; a QueryPlan routes them per class, a list goes
+    to every adapter); results merged per adapter. The shot rejoins the fair share pools for these
+    searches and leaves them when done (a re-query of one shot)."""
     cap = ctx.settings.sources.max_candidates
-    jobs = [(a, q, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap), shot, ctx))
-            for a in adapters if media in a.media for q in queries]
+    plan = queries if isinstance(queries, QueryPlan) else QueryPlan(list(queries), {}, None)
+    seen_shot = _thing_shot(shot, plan)
+    jobs = [(a, q, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap), seen_shot, ctx))
+            for a in adapters if media in a.media for q in adapter_queries(plan, a)]
     merged: dict[str, list[RawResult]] = defaultdict(list)
-    for a, _q, fut in jobs:
-        merged[a.name].extend(fut.result())
+    for a, q, fut in jobs:
+        merged[a.name].extend(_with_class(fut.result(), query_class(plan, a, q)))
     throttle.release_shot(run_id(ctx), shot.id)
     return {name: _merge(results) for name, results in merged.items()}
 
 
 def _merge(results: list[RawResult]) -> list[RawResult]:
-    """Dedupe by asset, keep best score, matches before fillers, query order otherwise."""
-    best: dict[str, tuple[int, RawResult]] = {}
+    """Dedupe by asset (best score kept, best rank counted); matches before fillers, then by rank in the
+    source's answer, so every query's first result comes before any query's second (the results of one
+    source's queries arrive one query after another, and a vague query must not fill the source's slots:
+    the Alaska proof run lost the Balto unveiling photo, rank 1 of its query, behind a bare-name query's
+    film posters), then query order."""
+    best: dict[str, list[Any]] = {}
     for i, r in enumerate(results):
         k = raw_key(r)
-        if k not in best or r.score > best[k][1].score:
-            best[k] = (best[k][0] if k in best else i, r)
-    ranked = sorted(best.values(), key=lambda p: (p[1].score <= 0, p[0]))
-    return [r for _, r in ranked]
+        rank = int((r.extra or {}).get("rank") or 0)
+        if k not in best:
+            best[k] = [i, rank, r]
+            continue
+        b = best[k]
+        b[1] = min(b[1], rank) if b[1] and rank else (b[1] or rank)
+        if r.score > b[2].score:
+            b[2] = r
+    ranked = sorted(best.values(), key=lambda b: (b[2].score <= 0, b[1], b[0]))
+    return [b[2] for b in ranked]
 
 
 def interleave(per_adapter: dict[str, list[RawResult]], order: list[str]) -> list[RawResult]:
@@ -420,11 +570,15 @@ def plan_shot(raws: list[RawResult], blocklist: Blocklist, recent: set[str], ski
 
 def _fetch_raws(shot: Shot, plan: list[RawResult], adapters: dict[str, SourceAdapter], ctx: "StageContext",
                 cap: int, media: Media) -> list[Candidate]:
+    """Fetch the plan in order until cap distinct assets gave a file, then keep at most cap clips: the
+    first clip of every asset before any asset's second (run 3: a clip cap let a few videos fill the 8
+    slots, a median of 4 distinct assets per shot reached the judge)."""
     out_dir = Path(ctx.project.paths.sources) / shot.id
-    cands: list[Candidate] = []
+    per_asset: list[list[Candidate]] = []
     for raw in plan:
-        if len(cands) >= cap:
+        if len(per_asset) >= cap:
             break
+        t0 = time.monotonic()
         try:
             got = adapters[raw.source].fetch(raw, out_dir, shot, ctx.settings)
             if not got:
@@ -439,8 +593,20 @@ def _fetch_raws(shot: Shot, plan: list[RawResult], adapters: dict[str, SourceAda
             continue
         if media == "image":
             got = [_still_from_video(c, out_dir) if c.media == "video" else c for c in got]
-        cands.extend(got[: cap - len(cands)])
-    return cands
+        ctx.log.info("source asset fetched", source=raw.source, shot=shot.id, clips=len(got),
+                     seconds=round(time.monotonic() - t0, 1))
+        per_asset.append(got)
+    return spread_clips(per_asset, cap)
+
+
+def spread_clips(per_asset: list[list[Candidate]], cap: int) -> list[Candidate]:
+    """At most cap clips, round robin over assets in plan order: every asset's first clip, then seconds."""
+    out: list[Candidate] = []
+    for i in range(max((len(g) for g in per_asset), default=0)):
+        for g in per_asset:
+            if i < len(g) and len(out) < cap:
+                out.append(g[i])
+    return out
 
 
 def _still_from_video(c: Candidate, out_dir: Path) -> Candidate:
@@ -481,7 +647,7 @@ def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Ite
         c.id = f"{shot.id}_{src}_{counters[src]}"
         used.add(c.id)
         try:
-            extract_keyframes(c, kf_dir)
+            extract_keyframes(c, kf_dir, play_s=shot.duration)  # frames from the seconds that will play
         except Exception as e:  # noqa: BLE001 - a broken file is dropped, not fatal
             ctx.log.warn("keyframes failed, candidate dropped", shot=shot.id, candidate=c.id, error=str(e)[:200])
             continue
@@ -491,8 +657,56 @@ def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Ite
             continue
         if (c.media == "video" and min(c.width, c.height) < 720) or (c.media == "image" and c.width < 1280):
             c.flags = sorted(set(c.flags) | {"small_archival" if archival_still(c) else "low_res"})
+        twin = _same_still(c, out)
+        if twin is not None:  # one photograph reached through two sources (Commons and a web search hit)
+            keep = c if _licence_rank(c) < _licence_rank(twin) or (
+                _licence_rank(c) == _licence_rank(twin) and c.width > twin.width) else twin
+            ctx.log.info("same picture from two sources, one kept", shot=shot.id, kept=keep.id,
+                         dropped=(twin if keep is c else c).id)
+            if keep is c:
+                out[out.index(twin)] = c
+            continue
         out.append(c)
     return out
+
+
+DUP_BITS = 6  # difference hash distance (of 64 bits) under which two stills are one picture
+
+
+def _dhash(path: str) -> Optional[int]:
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            g = im.convert("L").resize((9, 8))
+            px = list(g.getdata())
+    except Exception:  # noqa: BLE001 - no hash, no dedupe
+        return None
+    h = sum(1 << i for i in range(64) if px[(i // 8) * 9 + i % 8] > px[(i // 8) * 9 + i % 8 + 1])
+    # a flat or near-flat picture has no structure to compare: never call two of them the same
+    return h if 8 <= bin(h).count("1") <= 56 else None
+
+
+def _same_still(c: Candidate, kept: list[Candidate]) -> Optional[Candidate]:
+    """A kept still showing the same picture as c (near-identical difference hash of the keyframes)."""
+    if c.media != "image" or not c.keyframes:
+        return None
+    h = _dhash(c.keyframes[0])
+    if h is None:
+        return None
+    for k in kept:
+        if k.media == "image" and k.keyframes:
+            hk = _dhash(k.keyframes[0])
+            if hk is not None and bin(h ^ hk).count("1") <= DUP_BITS:
+                return k
+    return None
+
+
+def _licence_rank(c: Candidate) -> int:
+    """0 public domain or CC0, 1 another open licence, 2 unknown or standard: Adam prefers the open copy."""
+    from .licence import is_public_domain, is_standard_youtube, is_unknown
+    if is_public_domain(c.licence):
+        return 0
+    return 2 if is_unknown(c.licence) or is_standard_youtube(c.licence) else 1
 
 
 def _web_filler(r: RawResult) -> bool:
@@ -512,7 +726,7 @@ def _source_with_plan(shot: Shot, plan: list[RawResult], adapters: list[SourceAd
     if media == "image" and not cands:
         video_adapters = [a for a in adapters if "video" in a.media]
         with SearchPools(video_adapters) as pools:
-            per = search_shot(shot, video_adapters, "video", shot_queries(shot), ctx, pools)
+            per = search_shot(shot, video_adapters, "video", query_plan(shot), ctx, pools)
         vplan = plan_shot(interleave(per, [a.name for a in video_adapters]), _blocklist(ctx), set(), skip, cap)
         fillers += [r for r in vplan if _web_filler(r)]
         cands = _fetch_raws(shot, [r for r in vplan if not _web_filler(r)], by_name, ctx, cap, "image")
@@ -587,7 +801,7 @@ def _search_all(targets: list[Shot], adapters: list[SourceAdapter], ctx: "StageC
     cap = ctx.settings.sources.max_candidates
     rid = run_id(ctx)
     merged: dict[str, dict[str, list[RawResult]]] = {s.id: defaultdict(list) for s in targets}
-    queries = {s.id: shot_queries(s) for s in targets}
+    queries = {s.id: query_plan(s) for s in targets}
     unsent: set[tuple[str, str, str]] = set()
     _rounds(targets, adapters, queries, merged, ctx, pools, unsent)
     usage = throttle.usage(rid)
@@ -605,7 +819,7 @@ def _search_all(targets: list[Shot], adapters: list[SourceAdapter], ctx: "StageC
     return found
 
 
-def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str, list[str]],
+def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str, QueryPlan],
             merged: dict[str, dict[str, list[RawResult]]], ctx: "StageContext", pools: SearchPools,
             unsent: set[tuple[str, str, str]], retry: Optional[set[tuple[str, str, str]]] = None,
             allowance: Optional[dict[str, int]] = None) -> None:
@@ -628,8 +842,8 @@ def _rounds(shots: list[Shot], adapters: list[SourceAdapter], queries: dict[str,
     stop = threading.Event()
     t0 = time.monotonic()
     # an adapter with no shot of its media (or no retry entry) has no work and never counts as done
-    busy = [a for a in adapters if any(shot_media(s) in a.media and (retry is None or any(
-        (s.id, a.name, q) in retry for q in queries[s.id])) for s in shots)]
+    busy = [a for a in adapters if any(shot_media(s) in a.media and adapter_queries(queries[s.id], a) and (
+        retry is None or any((s.id, a.name, q) in retry for q in adapter_queries(queries[s.id], a))) for s in shots)]
     with ThreadPoolExecutor(max_workers=max(1, len(busy))) as drivers:
         futs = {drivers.submit(_adapter_rounds, a, shots, queries, merged, ctx, pools, unsent, retry, allowance,
                                lock, stop): a.name for a in busy}
@@ -664,7 +878,7 @@ def straggler_grace(elapsed: float) -> float:
     return max(STRAGGLER_MIN_S, elapsed)
 
 
-def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, list[str]],
+def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, QueryPlan],
                     merged: dict[str, dict[str, list[RawResult]]], ctx: "StageContext", pools: SearchPools,
                     unsent: set[tuple[str, str, str]], retry: Optional[set[tuple[str, str, str]]],
                     allowance: Optional[dict[str, int]], lock: threading.Lock,
@@ -673,18 +887,20 @@ def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, list
     set, searches not yet started are cancelled and no new round begins."""
     cap = ctx.settings.sources.max_candidates
     rid = run_id(ctx)
-    pending = [s for s in shots if shot_media(s) in a.media]  # a shot shares only the budgets that serve its media
+    routed = {s.id: adapter_queries(queries[s.id], a) for s in shots}  # this adapter's classes only
+    # a shot shares only the budgets of sources that serve its media and get one of its queries
+    pending = [s for s in shots if shot_media(s) in a.media and routed[s.id]]
     if retry is None:
         throttle.register_shots(rid, [a.name], [s.id for s in pending])
     asked: set[tuple[str, str]] = set()  # (shot, sent query): a shot never sends one request twice
     for k in range(QUERIES_PER_SHOT):
         if stop is not None and stop.is_set():
             break
-        jobs: list[tuple[str, Future]] = []
+        jobs: list[tuple[str, str, Future]] = []
         for s in pending:
-            if k >= len(queries[s.id]):
+            if k >= len(routed[s.id]):
                 continue
-            q = queries[s.id][k]
+            q = routed[s.id][k]
             if (retry is not None and (s.id, a.name, q) not in retry) or (s.id, sent_query(a, q)) in asked:
                 continue
             asked.add((s.id, sent_query(a, q)))
@@ -692,21 +908,21 @@ def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, list
                 if allowance[a.name] <= 0:
                     continue
                 allowance[a.name] -= 1 + bool(search_hints(a, ctx).get("prefer_cc"))
-            jobs.append((s.id, pools.submit(a, _search_one, a, q, shot_media(s), _per_adapter_n(a, cap),
-                                            s, ctx, unsent)))
-        for i, (sid, fut) in enumerate(jobs):
+            jobs.append((s.id, q, pools.submit(a, _search_one, a, q, shot_media(s), _per_adapter_n(a, cap),
+                                               _thing_shot(s, queries[s.id]), ctx, unsent)))
+        for i, (sid, q, fut) in enumerate(jobs):
             if stop is not None and stop.is_set():
-                for _, later in jobs[i:]:
+                for _, _, later in jobs[i:]:
                     later.cancel()  # all at once: the pool would start the next one before a one by one cancel
             if fut.cancelled():
                 continue
-            res = fut.result()
+            res = _with_class(fut.result(), query_class(queries[sid], a, q))
             with lock:
                 merged[sid][a.name].extend(res)
         still: list[Shot] = []
         for s in pending:
             with lock:
-                short = k + 1 < len(queries[s.id]) and not enough_results(merged[s.id], cap)
+                short = k + 1 < len(routed[s.id]) and not enough_results(merged[s.id], cap)
             if short:
                 still.append(s)
             else:
@@ -731,21 +947,53 @@ def _plan_all(shotlist: ShotList, found: dict[str, dict[str, list[RawResult]]], 
     return plans
 
 
-def source_shot(shot: Shot, ctx: "StageContext", queries: Optional[list[str]] = None,
+def source_shot(shot: Shot, ctx: "StageContext", queries: QueriesIn = None,
                 exclude_ids: Iterable[str] = ()) -> list[Candidate]:
-    """New candidates for one shot; does not modify the shot."""
+    """New candidates for one shot; does not modify the shot. queries: see query_plan (a flat list, or
+    the per-class structure with an optional real_thing)."""
     media = shot_media(shot) or "image"
     adapters = active_adapters(ctx)
     if not adapters:
         return []
     skip = {asset_key(c.url) for c in shot.candidates}  # every asset already on the shot, excluded ones included
-    qs = shot_queries(shot, queries)
+    plan = query_plan(shot, queries)
+    qs = plan.flat or [q for v in plan.by_class.values() for q in v]
     with SearchPools(adapters) as pools:
-        per = search_shot(shot, adapters, media, qs, ctx, pools)
+        per = search_shot(shot, adapters, media, plan, ctx, pools)
     cap = ctx.settings.sources.max_candidates
-    plan = plan_shot(interleave(per, [a.name for a in adapters]), _blocklist(ctx), set(), skip, cap + cap // 2)
+    plan_rows = plan_shot(interleave(per, [a.name for a in adapters]), _blocklist(ctx), set(), skip, cap + cap // 2)
     taken = {c.id for c in shot.candidates} | set(exclude_ids)
-    cands = _source_with_plan(shot, plan, adapters, ctx, media, skip, taken)
+    cands = _source_with_plan(_thing_shot(shot, plan), plan_rows, adapters, ctx, media, skip, taken)
     record_usage(ctx)  # after the fetch: a still shot may search video sources again
     ctx.log.info("re-sourced shot", shot=shot.id, queries=qs, candidates=len(cands))
     return cands
+
+
+def source_pool(shots: list[Shot], ctx: "StageContext") -> dict[str, list[Candidate]]:
+    """Source a stretch of shots (one scene) into one shared pool: every shot searches with its own query
+    plan, then assets are deduped across the stretch and each is fetched once, for the first shot (in
+    timeline order) whose plan holds it, so an edit step can assign any pool picture to any shot.
+    Returns candidates per shot id (the pool is their union); does not modify the shots."""
+    adapters = active_adapters(ctx)
+    targets = [s for s in shots if shot_media(s)]
+    if not targets or not adapters:
+        return {s.id: [] for s in shots}
+    order = [a.name for a in adapters]
+    cap = ctx.settings.sources.max_candidates
+    with SearchPools(adapters) as pools:
+        found = _search_all(targets, adapters, ctx, pools)
+    plans = _plan_all(ShotList(project_id=ctx.project.id, duration=0.0, shots=targets), found, order,
+                      _blocklist(ctx), cap, True)
+    seen: set[str] = set()
+    own: dict[str, list[RawResult]] = {}
+    for s in targets:
+        own[s.id] = [r for r in plans.get(s.id, []) if raw_key(r) not in seen]
+        seen |= {raw_key(r) for r in own[s.id][:cap]}
+    with ThreadPoolExecutor(max_workers=_workers()) as pool:
+        futs = {s.id: pool.submit(_source_with_plan, s, own[s.id], adapters, ctx, shot_media(s), set(),
+                                  [c.id for c in s.candidates]) for s in targets}
+        out = {sid: f.result() for sid, f in futs.items()}
+    record_usage(ctx)
+    ctx.log.info("sourced pool", shots=len(targets), candidates=sum(len(v) for v in out.values()),
+                 assets=len({c.url for v in out.values() for c in v}))
+    return {s.id: out.get(s.id, []) for s in shots}

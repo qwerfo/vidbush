@@ -1,0 +1,1138 @@
+{
+ "search": {
+  "searchinfo": {
+   "search": "Balto"
+  },
+  "search": [
+   {
+    "id": "Q36076593",
+    "title": "Q36076593",
+    "pageid": 37467056,
+    "concepturi": "http://www.wikidata.org/entity/Q36076593",
+    "repository": "wikidata",
+    "url": "//www.wikidata.org/wiki/Q36076593",
+    "display": {
+     "label": {
+      "value": "Balto",
+      "language": "en"
+     },
+     "description": {
+      "value": "former Finnish research vessel",
+      "language": "en"
+     }
+    },
+    "label": "Balto",
+    "description": "former Finnish research vessel",
+    "match": {
+     "type": "label",
+     "language": "en",
+     "text": "Balto"
+    }
+   },
+   {
+    "id": "Q805807",
+    "title": "Q805807",
+    "pageid": 758712,
+    "concepturi": "http://www.wikidata.org/entity/Q805807",
+    "repository": "wikidata",
+    "url": "//www.wikidata.org/wiki/Q805807",
+    "display": {
+     "label": {
+      "value": "Balto",
+      "language": "en"
+     },
+     "description": {
+      "value": "sled dog",
+      "language": "en"
+     }
+    },
+    "label": "Balto",
+    "description": "sled dog",
+    "match": {
+     "type": "label",
+     "language": "en",
+     "text": "Balto"
+    }
+   },
+   {
+    "id": "Q4853006",
+    "title": "Q4853006",
+    "pageid": 4635509,
+    "concepturi": "http://www.wikidata.org/entity/Q4853006",
+    "repository": "wikidata",
+    "url": "//www.wikidata.org/wiki/Q4853006",
+    "display": {
+     "label": {
+      "value": "Baltonsborough",
+      "language": "en"
+     },
+     "description": {
+      "value": "village in Somerset, England, UK",
+      "language": "en"
+     }
+    },
+    "label": "Baltonsborough",
+    "description": "village in Somerset, England, UK",
+    "match": {
+     "type": "label",
+     "language": "en",
+     "text": "Baltonsborough"
+    }
+   },
+   {
+    "id": "Q764116",
+    "title": "Q764116",
+    "pageid": 717901,
+    "concepturi": "http://www.wikidata.org/entity/Q764116",
+    "repository": "wikidata",
+    "url": "//www.wikidata.org/wiki/Q764116",
+    "display": {
+     "label": {
+      "value": "Balto",
+      "language": "mul"
+     },
+     "description": {
+      "value": "1995 animated film directed by Simon Wells",
+      "language": "en"
+     }
+    },
+    "label": "Balto",
+    "description": "1995 animated film directed by Simon Wells",
+    "match": {
+     "type": "label",
+     "language": "mul",
+     "text": "Balto"
+    }
+   },
+   {
+    "id": "Q30088844",
+    "title": "Q30088844",
+    "pageid": 31701644,
+    "concepturi": "http://www.wikidata.org/entity/Q30088844",
+    "repository": "wikidata",
+    "url": "//www.wikidata.org/wiki/Q30088844",
+    "display": {
+     "label": {
+      "value": "Balto",
+      "language": "en"
+     },
+     "description": {
+      "value": "family name",
+      "language": "en"
+     }
+    },
+    "label": "Balto",
+    "description": "family name",
+    "match": {
+     "type": "label",
+     "language": "en",
+     "text": "Balto"
+    }
+   }
+  ],
+  "search-continue": 5,
+  "success": 1
+ },
+ "entities": {
+  "entities": {
+   "Q36076593": {
+    "type": "item",
+    "id": "Q36076593",
+    "labels": {
+     "en": {
+      "language": "en",
+      "value": "Balto"
+     },
+     "mul": {
+      "language": "mul",
+      "value": "Balto"
+     }
+    },
+    "descriptions": {
+     "en": {
+      "language": "en",
+      "value": "former Finnish research vessel"
+     }
+    },
+    "aliases": {
+     "en": [
+      {
+       "language": "en",
+       "value": "Suunta"
+      },
+      {
+       "language": "en",
+       "value": "IMO 7392854"
+      },
+      {
+       "language": "en",
+       "value": "C Star"
+      }
+     ],
+     "mul": [
+      {
+       "language": "mul",
+       "value": "C Star"
+      },
+      {
+       "language": "mul",
+       "value": "Suunta"
+      }
+     ]
+    },
+    "claims": {
+     "P31": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 391022,
+          "id": "Q391022"
+         }
+        }
+       }
+      },
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 11446,
+          "id": "Q11446"
+         }
+        }
+       }
+      }
+     ],
+     "P373": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": "IMO 7392854"
+        }
+       }
+      }
+     ],
+     "P571": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "time": "+1974-00-00T00:00:00Z",
+          "timezone": 0,
+          "before": 0,
+          "after": 0,
+          "precision": 9,
+          "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+         }
+        }
+       }
+      }
+     ]
+    },
+    "sitelinks": {
+     "commonswiki": {
+      "title": "Category:IMO 7392854"
+     },
+     "dewiki": {
+      "title": "Balto (Schiff)"
+     },
+     "eswiki": {
+      "title": "C-Star"
+     }
+    }
+   },
+   "Q805807": {
+    "type": "item",
+    "id": "Q805807",
+    "labels": {
+     "en": {
+      "language": "en",
+      "value": "Balto"
+     }
+    },
+    "descriptions": {
+     "en": {
+      "language": "en",
+      "value": "sled dog"
+     }
+    },
+    "aliases": {},
+    "claims": {
+     "P373": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": "Balto"
+        }
+       }
+      }
+     ],
+     "P569": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "time": "+1919-01-01T00:00:00Z",
+          "timezone": 0,
+          "before": 0,
+          "after": 0,
+          "precision": 9,
+          "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+         }
+        }
+       }
+      }
+     ],
+     "P570": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "time": "+1933-03-14T00:00:00Z",
+          "timezone": 0,
+          "before": 0,
+          "after": 0,
+          "precision": 11,
+          "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+         }
+        }
+       }
+      }
+     ],
+     "P31": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 144,
+          "id": "Q144"
+         }
+        }
+       }
+      },
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 2114846,
+          "id": "Q2114846"
+         }
+        }
+       }
+      }
+     ],
+     "P935": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": "Balto"
+        }
+       }
+      }
+     ],
+     "P18": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": "Gunnar Kaasen with Balto.jpg"
+        }
+       }
+      }
+     ]
+    },
+    "sitelinks": {
+     "azwiki": {
+      "title": "Balto"
+     },
+     "bgwiki": {
+      "title": "Балто"
+     },
+     "cawiki": {
+      "title": "Balto"
+     },
+     "commonswiki": {
+      "title": "Balto"
+     },
+     "cswiki": {
+      "title": "Balto (pes)"
+     },
+     "dawiki": {
+      "title": "Balto"
+     },
+     "dewiki": {
+      "title": "Balto"
+     },
+     "elwiki": {
+      "title": "Μπάλτο"
+     },
+     "enwiki": {
+      "title": "Balto"
+     },
+     "eswiki": {
+      "title": "Balto"
+     },
+     "fiwiki": {
+      "title": "Balto"
+     },
+     "frwiki": {
+      "title": "Balto"
+     },
+     "hewiki": {
+      "title": "בלטו"
+     },
+     "huwiki": {
+      "title": "Balto (kutya)"
+     },
+     "hywiki": {
+      "title": "Բալտո"
+     },
+     "iawiki": {
+      "title": "Balto"
+     },
+     "itwiki": {
+      "title": "Balto"
+     },
+     "jawiki": {
+      "title": "バルト (犬)"
+     },
+     "kkwiki": {
+      "title": "Балто"
+     },
+     "kowiki": {
+      "title": "발토"
+     },
+     "kywiki": {
+      "title": "Балто"
+     },
+     "mswiki": {
+      "title": "Balto"
+     },
+     "nlwiki": {
+      "title": "Balto"
+     },
+     "nowiki": {
+      "title": "Balto (hund)"
+     },
+     "plwiki": {
+      "title": "Balto"
+     },
+     "ptwiki": {
+      "title": "Balto"
+     },
+     "rowiki": {
+      "title": "Balto"
+     },
+     "ruwiki": {
+      "title": "Балто"
+     },
+     "sewiki": {
+      "title": "Balto (beana)"
+     },
+     "simplewiki": {
+      "title": "Balto"
+     },
+     "slwiki": {
+      "title": "Balto"
+     },
+     "sqwiki": {
+      "title": "Balto"
+     },
+     "svwiki": {
+      "title": "Balto"
+     },
+     "ukwiki": {
+      "title": "Балто"
+     },
+     "zhwiki": {
+      "title": "巴爾托"
+     }
+    }
+   },
+   "Q4853006": {
+    "type": "item",
+    "id": "Q4853006",
+    "labels": {
+     "en": {
+      "language": "en",
+      "value": "Baltonsborough"
+     },
+     "mul": {
+      "language": "mul",
+      "value": "Baltonsborough"
+     }
+    },
+    "descriptions": {
+     "en": {
+      "language": "en",
+      "value": "village in Somerset, England, UK"
+     }
+    },
+    "aliases": {
+     "en": [
+      {
+       "language": "en",
+       "value": "Baltonsborough, Somerset"
+      }
+     ]
+    },
+    "claims": {
+     "P373": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": "Baltonsborough"
+        }
+       }
+      }
+     ],
+     "P625": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "latitude": 51.1079,
+          "longitude": -2.6492305555556,
+          "altitude": null,
+          "precision": 0.00027777777777778,
+          "globe": "http://www.wikidata.org/entity/Q2"
+         }
+        }
+       }
+      }
+     ],
+     "P31": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 532,
+          "id": "Q532"
+         }
+        }
+       }
+      },
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 1115575,
+          "id": "Q1115575"
+         }
+        }
+       }
+      }
+     ],
+     "P18": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": "Baltonsborough church.jpg"
+        }
+       }
+      }
+     ]
+    },
+    "sitelinks": {
+     "cebwiki": {
+      "title": "Baltonsborough (lungsod)"
+     },
+     "enwiki": {
+      "title": "Baltonsborough"
+     },
+     "frwiki": {
+      "title": "Baltonsborough"
+     },
+     "itwiki": {
+      "title": "Baltonsborough"
+     },
+     "lldwiki": {
+      "title": "Baltonsborough"
+     },
+     "nlwiki": {
+      "title": "Baltonsborough"
+     },
+     "plwiki": {
+      "title": "Baltonsborough"
+     },
+     "svwiki": {
+      "title": "Baltonsborough"
+     },
+     "trwiki": {
+      "title": "Baltonsborough"
+     },
+     "urwiki": {
+      "title": "بالٹنزبرہ"
+     },
+     "zh_min_nanwiki": {
+      "title": "Baltonsborough"
+     }
+    }
+   },
+   "Q764116": {
+    "type": "item",
+    "id": "Q764116",
+    "labels": {
+     "mul": {
+      "language": "mul",
+      "value": "Balto"
+     }
+    },
+    "descriptions": {
+     "en": {
+      "language": "en",
+      "value": "1995 animated film directed by Simon Wells"
+     }
+    },
+    "aliases": {},
+    "claims": {
+     "P57": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 27419,
+          "id": "Q27419"
+         }
+        }
+       }
+      }
+     ],
+     "P577": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "time": "+1995-12-22T00:00:00Z",
+          "timezone": 0,
+          "before": 0,
+          "after": 0,
+          "precision": 11,
+          "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+         }
+        }
+       }
+      }
+     ],
+     "P31": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 202866,
+          "id": "Q202866"
+         }
+        }
+       }
+      }
+     ]
+    },
+    "sitelinks": {
+     "arwiki": {
+      "title": "بالتو (فلم)"
+     },
+     "bgwiki": {
+      "title": "Балто (филм)"
+     },
+     "ckbwiki": {
+      "title": "باڵتۆ (فیلم)"
+     },
+     "cswiki": {
+      "title": "Balto"
+     },
+     "dewiki": {
+      "title": "Balto – Ein Hund mit dem Herzen eines Helden"
+     },
+     "diqwiki": {
+      "title": "Balto (film)"
+     },
+     "enwiki": {
+      "title": "Balto (film)"
+     },
+     "enwikiquote": {
+      "title": "Balto"
+     },
+     "eswiki": {
+      "title": "Balto (película)"
+     },
+     "fawiki": {
+      "title": "بالتو (فیلم)"
+     },
+     "fiwiki": {
+      "title": "Balto (elokuva)"
+     },
+     "frwiki": {
+      "title": "Balto (film)"
+     },
+     "frwikiquote": {
+      "title": "Balto"
+     },
+     "hawiki": {
+      "title": "Balto (fim)"
+     },
+     "hewiki": {
+      "title": "בלטו (סרט)"
+     },
+     "hiwiki": {
+      "title": "बाल्टो"
+     },
+     "huwiki": {
+      "title": "Balto (film)"
+     },
+     "hywiki": {
+      "title": "Բալտո (մուլտֆիլմ)"
+     },
+     "idwiki": {
+      "title": "Balto (film)"
+     },
+     "itwiki": {
+      "title": "Balto (film)"
+     },
+     "itwikiquote": {
+      "title": "Balto"
+     },
+     "jawiki": {
+      "title": "バルト (映画)"
+     },
+     "kawiki": {
+      "title": "ბალტო (ფილმი)"
+     },
+     "kowiki": {
+      "title": "발토 (영화)"
+     },
+     "mswiki": {
+      "title": "Balto (filem)"
+     },
+     "nlwiki": {
+      "title": "Balto (film)"
+     },
+     "nowiki": {
+      "title": "Balto (1995)"
+     },
+     "plwiki": {
+      "title": "Balto (film)"
+     },
+     "ptwiki": {
+      "title": "Balto (filme)"
+     },
+     "rowiki": {
+      "title": "Balto (film)"
+     },
+     "ruwiki": {
+      "title": "Балто (мультфильм)"
+     },
+     "ruwikiquote": {
+      "title": "Балто (мультфильм)"
+     },
+     "simplewiki": {
+      "title": "Balto (movie)"
+     },
+     "svwiki": {
+      "title": "Balto (film)"
+     },
+     "thwiki": {
+      "title": "บัลโต ยอดสุนัขนักสู้"
+     },
+     "ukwiki": {
+      "title": "Балто (мультфільм)"
+     },
+     "urwiki": {
+      "title": "بالٹو (فلم)"
+     },
+     "viwiki": {
+      "title": "Balto (phim)"
+     },
+     "zhwiki": {
+      "title": "雪地靈犬"
+     }
+    }
+   },
+   "Q30088844": {
+    "type": "item",
+    "id": "Q30088844",
+    "labels": {
+     "en": {
+      "language": "en",
+      "value": "Balto"
+     }
+    },
+    "descriptions": {
+     "en": {
+      "language": "en",
+      "value": "family name"
+     }
+    },
+    "aliases": {},
+    "claims": {
+     "P31": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": {
+          "entity-type": "item",
+          "numeric-id": 101352,
+          "id": "Q101352"
+         }
+        }
+       }
+      }
+     ],
+     "P373": [
+      {
+       "mainsnak": {
+        "datavalue": {
+         "value": "Balto (surname)"
+        }
+       }
+      }
+     ]
+    },
+    "sitelinks": {
+     "commonswiki": {
+      "title": "Category:Balto (surname)"
+     }
+    }
+   }
+  },
+  "success": 1
+ },
+ "p18": {
+  "query": {
+   "pages": {
+    "3607283": {
+     "pageid": 3607283,
+     "ns": 6,
+     "title": "File:Gunnar Kaasen with Balto.jpg",
+     "imagerepository": "local",
+     "imageinfo": [
+      {
+       "size": 119180,
+       "width": 648,
+       "height": 800,
+       "thumburl": "https://upload.wikimedia.org/wikipedia/commons/4/4f/Gunnar_Kaasen_with_Balto.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+       "thumbwidth": 1920,
+       "thumbheight": 2370,
+       "thumbattribs": {
+        "src": "https://upload.wikimedia.org/wikipedia/commons/4/4f/Gunnar_Kaasen_with_Balto.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+        "decoding": "async",
+        "loading": "lazy",
+        "width": 1920,
+        "height": 2370
+       },
+       "url": "https://upload.wikimedia.org/wikipedia/commons/4/4f/Gunnar_Kaasen_with_Balto.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+       "descriptionurl": "https://commons.wikimedia.org/wiki/File:Gunnar_Kaasen_with_Balto.jpg",
+       "descriptionshorturl": "https://commons.wikimedia.org/wiki/Special:Redirect/page/3607283",
+       "extmetadata": {
+        "DateTime": {
+         "value": "2019-02-19 13:54:00",
+         "source": "mediawiki-metadata",
+         "hidden": ""
+        },
+        "ObjectName": {
+         "value": "Gunnar Kaasen with Balto",
+         "source": "mediawiki-metadata"
+        },
+        "ImageDescription": {
+         "value": "Celebrated sled dog Balto with Gunnar Kaasen. Norwegian immigrant Gunnar Kaasen was the musher on the last dog team that successfully delivered diphtheria antitoxin to Nome, Alaska in 1925. Balto was the lead dog for that final leg of 53 miles of the total 674-mile trip.",
+         "source": "commons-desc-page"
+        },
+        "DateTimeOriginal": {
+         "value": "circa 1925<div style=\"display: none;\">date QS:P,+1925-00-00T00:00:00Z/9,P1480,Q5727902</div>",
+         "source": "commons-desc-page"
+        },
+        "Artist": {
+         "value": "Brown Brothers",
+         "source": "commons-desc-page"
+        },
+        "LicenseShortName": {
+         "value": "Public domain",
+         "source": "commons-desc-page",
+         "hidden": ""
+        }
+       },
+       "mime": "image/jpeg"
+      }
+     ]
+    }
+   }
+  }
+ },
+ "category": {
+  "query": {
+   "pages": {
+    "113898299": {
+     "pageid": 113898299,
+     "ns": 6,
+     "title": "File:Alaska-Yukon Pioneers Committee presenting a key to the city to sled dog Balto at Pier 51 (then Pier 2), Seattle, March 22, 1925 (MOHAI 4351).jpg",
+     "imagerepository": "local",
+     "imageinfo": [
+      {
+       "size": 70291,
+       "width": 700,
+       "height": 556,
+       "thumburl": "https://upload.wikimedia.org/wikipedia/commons/2/2b/Alaska-Yukon_Pioneers_Committee_presenting_a_key_to_the_city_to_sled_dog_Balto_at_Pier_51_%28then_Pier_2%29%2C_Seattle%2C_March_22%2C_1925_%28MOHAI_4351%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+       "thumbwidth": 1920,
+       "thumbheight": 1525,
+       "thumbattribs": {
+        "src": "https://upload.wikimedia.org/wikipedia/commons/2/2b/Alaska-Yukon_Pioneers_Committee_presenting_a_key_to_the_city_to_sled_dog_Balto_at_Pier_51_%28then_Pier_2%29%2C_Seattle%2C_March_22%2C_1925_%28MOHAI_4351%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+        "decoding": "async",
+        "loading": "lazy",
+        "width": 1920,
+        "height": 1525
+       },
+       "url": "https://upload.wikimedia.org/wikipedia/commons/2/2b/Alaska-Yukon_Pioneers_Committee_presenting_a_key_to_the_city_to_sled_dog_Balto_at_Pier_51_%28then_Pier_2%29%2C_Seattle%2C_March_22%2C_1925_%28MOHAI_4351%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+       "descriptionurl": "https://commons.wikimedia.org/wiki/File:Alaska-Yukon_Pioneers_Committee_presenting_a_key_to_the_city_to_sled_dog_Balto_at_Pier_51_(then_Pier_2),_Seattle,_March_22,_1925_(MOHAI_4351).jpg",
+       "descriptionshorturl": "https://commons.wikimedia.org/wiki/Special:Redirect/page/113898299",
+       "extmetadata": {
+        "DateTime": {
+         "value": "2022-01-05 16:24:29",
+         "source": "mediawiki-metadata",
+         "hidden": ""
+        },
+        "ObjectName": {
+         "value": "Alaska-Yukon Pioneers Committee presenting a key to the city to sled dog Balto at Pier 51 (then Pier 2), Seattle, March 22, 1925",
+         "source": "commons-desc-page"
+        },
+        "Artist": {
+         "value": "<div class=\"fn value\">\nUnknown author<span style=\"display: none;\">Unknown author</span></div>",
+         "source": "commons-desc-page"
+        },
+        "ImageDescription": {
+         "value": "Alaska-Yukon Pioneers Committee presenting a key to the city to sled dog Balto at Pier 52, Seattle, March 22, 1925",
+         "source": "commons-desc-page"
+        },
+        "DateTimeOriginal": {
+         "value": "Taken on 22 March 1925",
+         "source": "commons-desc-page"
+        },
+        "LicenseShortName": {
+         "value": "Public domain",
+         "source": "commons-desc-page",
+         "hidden": ""
+        }
+       },
+       "mime": "image/jpeg"
+      }
+     ]
+    },
+    "109101799": {
+     "pageid": 109101799,
+     "ns": 6,
+     "title": "File:LL-Q150 (fra)-WikiLucas00-Balto.wav",
+     "imagerepository": "local",
+     "imageinfo": [
+      {
+       "size": 101164,
+       "width": 0,
+       "height": 0,
+       "duration": 1.0533333333333332,
+       "thumburl": "https://commons.wikimedia.org/w/resources/assets/file-type-icons/fileicon-ogg.png",
+       "thumbwidth": 1920,
+       "thumbheight": 1920,
+       "thumbattribs": [],
+       "url": "https://upload.wikimedia.org/wikipedia/commons/6/61/LL-Q150_%28fra%29-WikiLucas00-Balto.wav?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+       "descriptionurl": "https://commons.wikimedia.org/wiki/File:LL-Q150_(fra)-WikiLucas00-Balto.wav",
+       "descriptionshorturl": "https://commons.wikimedia.org/wiki/Special:Redirect/page/109101799",
+       "extmetadata": {
+        "DateTime": {
+         "value": "2021-08-21 15:42:34",
+         "source": "mediawiki-metadata",
+         "hidden": ""
+        },
+        "ObjectName": {
+         "value": "LL-Q150 (fra)-WikiLucas00-Balto",
+         "source": "mediawiki-metadata"
+        },
+        "ImageDescription": {
+         "value": "<span class=\"plainlinks\">Audio pronunciation file from the <b><a rel=\"nofollow\" class=\"external text\" href=\"https://lingualibre.org\">Lingua Libre</a></b> <span typeof=\"mw:File\"><a href=\"https://lingualibre.org\" rel=\"nofollow\"><img alt=\"Lingua Libre\" src=\"https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/Lingualibre-logo-no-text.svg/40px-Lingualibre-logo-no-text.svg.png?utm_source=commons.wikimedia.org&amp;utm_campaign=parser&amp;utm_content=thumbnail\" decoding=\"async\" loading=\"lazy\" width=\"22\" height=\"22\" class=\"mw-file-element\" srcset=\"https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/Lingualibre-logo-no-text.svg/60px-Lingualibre-logo-no-text.svg.png?utm_source=commons.wikimedia.org&amp;utm_campaign=parser&amp;utm_content=thumbnail 2x\" data-file-width=\"185\" data-file-height=\"185\"></a></span> project. </span>",
+         "source": "commons-desc-page"
+        },
+        "DateTimeOriginal": {
+         "value": "2021-08-21",
+         "source": "commons-desc-page"
+        },
+        "Artist": {
+         "value": "<ul><li>Speaker: <a href=\"//lingualibre.org/wiki/Q102123\" class=\"extiw\" title=\"lingualibre:Q102123\">WikiLucas00</a></li>\n<li>Recorder: <a href=\"//commons.wikimedia.org/wiki/User:WikiLucas00\" title=\"User:WikiLucas00\">WikiLucas00</a></li></ul>",
+         "source": "commons-desc-page"
+        },
+        "LicenseShortName": {
+         "value": "CC BY-SA 4.0",
+         "source": "commons-desc-page",
+         "hidden": ""
+        }
+       },
+       "mime": "audio/wav"
+      }
+     ]
+    },
+    "151524525": {
+     "pageid": 151524525,
+     "ns": 6,
+     "title": "File:Balto 1925 (cropped).jpg",
+     "imagerepository": "local",
+     "imageinfo": [
+      {
+       "size": 9626,
+       "width": 225,
+       "height": 350,
+       "thumburl": "https://upload.wikimedia.org/wikipedia/commons/7/79/Balto_1925_%28cropped%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+       "thumbwidth": 1920,
+       "thumbheight": 2987,
+       "thumbattribs": {
+        "src": "https://upload.wikimedia.org/wikipedia/commons/7/79/Balto_1925_%28cropped%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+        "decoding": "async",
+        "loading": "lazy",
+        "width": 1920,
+        "height": 2987
+       },
+       "url": "https://upload.wikimedia.org/wikipedia/commons/7/79/Balto_1925_%28cropped%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+       "descriptionurl": "https://commons.wikimedia.org/wiki/File:Balto_1925_(cropped).jpg",
+       "descriptionshorturl": "https://commons.wikimedia.org/wiki/Special:Redirect/page/151524525",
+       "extmetadata": {
+        "DateTime": {
+         "value": "2024-08-16 14:28:11",
+         "source": "mediawiki-metadata",
+         "hidden": ""
+        },
+        "ObjectName": {
+         "value": "Balto 1925 (cropped)",
+         "source": "mediawiki-metadata"
+        },
+        "ImageDescription": {
+         "value": "Balto posing for a camera, 1925.",
+         "source": "commons-desc-page"
+        },
+        "DateTimeOriginal": {
+         "value": "1925",
+         "source": "commons-desc-page"
+        },
+        "Artist": {
+         "value": "Unknown author<span style=\"display: none;\">Unknown author</span>",
+         "source": "commons-desc-page"
+        },
+        "LicenseShortName": {
+         "value": "Public domain",
+         "source": "commons-desc-page",
+         "hidden": ""
+        }
+       },
+       "mime": "image/jpeg"
+      }
+     ]
+    },
+    "151421837": {
+     "pageid": 151421837,
+     "ns": 6,
+     "title": "File:Balto 1925.jpg",
+     "imagerepository": "local",
+     "imageinfo": [
+      {
+       "size": 17591,
+       "width": 500,
+       "height": 389,
+       "thumburl": "https://upload.wikimedia.org/wikipedia/commons/1/18/Balto_1925.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+       "thumbwidth": 1920,
+       "thumbheight": 1494,
+       "thumbattribs": {
+        "src": "https://upload.wikimedia.org/wikipedia/commons/1/18/Balto_1925.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+        "decoding": "async",
+        "loading": "lazy",
+        "width": 1920,
+        "height": 1494
+       },
+       "url": "https://upload.wikimedia.org/wikipedia/commons/1/18/Balto_1925.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+       "descriptionurl": "https://commons.wikimedia.org/wiki/File:Balto_1925.jpg",
+       "descriptionshorturl": "https://commons.wikimedia.org/wiki/Special:Redirect/page/151421837",
+       "extmetadata": {
+        "DateTime": {
+         "value": "2024-08-12 17:46:19",
+         "source": "mediawiki-metadata",
+         "hidden": ""
+        },
+        "ObjectName": {
+         "value": "Balto 1925",
+         "source": "mediawiki-metadata"
+        },
+        "ImageDescription": {
+         "value": "Balto posing for a camera, 1925.",
+         "source": "commons-desc-page"
+        },
+        "DateTimeOriginal": {
+         "value": "1925",
+         "source": "commons-desc-page"
+        },
+        "Artist": {
+         "value": "Unknown author<span style=\"display: none;\">Unknown author</span>",
+         "source": "commons-desc-page"
+        },
+        "LicenseShortName": {
+         "value": "Public domain",
+         "source": "commons-desc-page",
+         "hidden": ""
+        }
+       },
+       "mime": "image/jpeg"
+      }
+     ]
+    },
+    "158193753": {
+     "pageid": 158193753,
+     "ns": 6,
+     "title": "File:Balto and Gunner Kaasen - February 2, 1925, Nome, Alaska.webm",
+     "imagerepository": "local",
+     "imageinfo": [
+      {
+       "size": 16181892,
+       "width": 1280,
+       "height": 938,
+       "duration": 57.624,
+       "thumburl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/76/Balto_and_Gunner_Kaasen_-_February_2%2C_1925%2C_Nome%2C_Alaska.webm/1280px--Balto_and_Gunner_Kaasen_-_February_2%2C_1925%2C_Nome%2C_Alaska.webm.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo",
+       "thumbwidth": 1280,
+       "thumbheight": 938,
+       "thumbattribs": [],
+       "url": "https://upload.wikimedia.org/wikipedia/commons/7/76/Balto_and_Gunner_Kaasen_-_February_2%2C_1925%2C_Nome%2C_Alaska.webm?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+       "descriptionurl": "https://commons.wikimedia.org/wiki/File:Balto_and_Gunner_Kaasen_-_February_2,_1925,_Nome,_Alaska.webm",
+       "descriptionshorturl": "https://commons.wikimedia.org/wiki/Special:Redirect/page/158193753",
+       "extmetadata": {
+        "DateTime": {
+         "value": "2025-01-19 06:42:06",
+         "source": "mediawiki-metadata",
+         "hidden": ""
+        },
+        "ObjectName": {
+         "value": "Balto and Gunner Kaasen - February 2, 1925, Nome, Alaska",
+         "source": "mediawiki-metadata"
+        },
+        "ImageDescription": {
+         "value": "When Gunner Kaasen and the dog team, led by Balto, arrived in Nome with the diptheria serum, it was 5:30 a.m.-too dark for photographs. Later that day, the serum run into Nome and the delivery to Dr. Welch was recreated for a French newsreel.",
+         "source": "commons-desc-page"
+        },
+        "DateTimeOriginal": {
+         "value": "1925-02-02",
+         "source": "commons-desc-page"
+        },
+        "Artist": {
+         "value": "<a href=\"https://en.wikipedia.org/wiki/Gaumont_(company)\" class=\"extiw\" title=\"en:Gaumont (company)\">Gaumont</a>",
+         "source": "commons-desc-page"
+        },
+        "LicenseShortName": {
+         "value": "Public domain",
+         "source": "commons-desc-page",
+         "hidden": ""
+        }
+       },
+       "mime": "video/webm"
+      }
+     ]
+    }
+   }
+  }
+ }
+}

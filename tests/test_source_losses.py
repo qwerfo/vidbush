@@ -104,15 +104,17 @@ def test_fillers_never_count_as_enough_results() -> None:
     assert registry.enough_results({"pexels": [raw("x", i) for i in range(6)]}, 4)
 
 
-def test_era_mismatch_stays_a_hard_drop_also_for_cached_results(make_ctx) -> None:
+def test_cached_results_keep_recent_uploads_and_record_query_and_rank(make_ctx) -> None:
+    """v2: no era rule; a cached search is screened like a fresh one and every result keeps its query and rank."""
     ctx = make_ctx(mode="script")
     shot = _shot(0).model_copy(update={"intent": "gold rush 1898", "queries": ["gold rush 1898"]})
     adapter = Fake()
     hits = [RawResult(source="pexels", url="https://px/old", title="Gold rush 1898", media="video"),
-            RawResult(source="pexels", url="https://px/new", title="Gold rush reenactment 2015", media="video")]
+            RawResult(source="pexels", url="https://px/new", title="Gold rush footage 1898 (uploaded 2015)", media="video")]
     registry.cache_put("pexels", "gold rush 1898", "video", 5, hits, ctx.settings)
     out = registry._search_one(adapter, "gold rush 1898", "video", 5, shot, ctx)
-    assert [r.url for r in out] == ["https://px/old"] and not adapter.calls  # served from the cache, screened
+    assert [r.url for r in out] == ["https://px/old", "https://px/new"] and not adapter.calls
+    assert [(r.extra["query"], r.extra["rank"]) for r in out] == [("gold rush 1898", 1), ("gold rush 1898", 2)]
 
 
 # B. words match in their singular and plain forms

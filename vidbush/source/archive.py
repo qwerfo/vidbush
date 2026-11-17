@@ -42,7 +42,8 @@ def parse_search(data: dict[str, Any], media: Media) -> list[RawResult]:
         out.append(RawResult(source="archive", url=f"https://archive.org/details/{ident}", title=_first(d.get("title")),
                              author=_first(d.get("creator")), licence=_first(d.get("licenseurl")) or "unknown",
                              media=media, page_url=f"https://archive.org/details/{ident}", score=0.7,
-                             extra={"identifier": ident, "date": _first(d.get("date"))}))
+                             extra={"identifier": ident, "date": _first(d.get("date")),
+                                    "description": _first(d.get("description"))[:600]}))
     return out
 
 
@@ -113,15 +114,24 @@ class ArchiveAdapter(BaseAdapter):
     name = "archive"
     media = {"video", "image"}
     keyword_words = 3  # advancedsearch matches every word
+    classes = frozenset({"archive", "web_video"})
+    matches_description = True  # advancedsearch matches title, description and subject fields
 
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
-        query = base.keyword_query(query, self.keyword_words)
+        """Subject and year first (base.archive_queries), the subject alone only when that finds nothing.
+        Ranked by the engine's relevance: run 3 sorted by downloads, which put popular films first."""
         mt = "movies" if media == "video" else "image"
-        params = {"q": f"({query}) AND mediatype:({mt})", "fl[]": ["identifier", "title", "creator", "licenseurl", "date"],
-                  "rows": max(n, 5), "page": 1, "output": "json", "sort[]": "downloads desc"}
-        data = base.http_get_json(SEARCH, params=params, timeout=self.timeout(settings))
-        return parse_search(data, media)[:n]
+        out: list[RawResult] = []
+        for query in base.archive_queries(query, self.keyword_words):
+            params = {"q": f"({query}) AND mediatype:({mt})",
+                      "fl[]": ["identifier", "title", "creator", "licenseurl", "date", "description"],
+                      "rows": max(n, 5), "page": 1, "output": "json"}
+            data = base.http_get_json(SEARCH, params=params, timeout=self.timeout(settings))
+            out = parse_search(data, media)[:n]
+            if out:
+                break
+        return out
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         meta_doc = base.http_get_json(METADATA + raw.extra["identifier"], timeout=self.timeout(settings))
@@ -133,7 +143,7 @@ class ArchiveAdapter(BaseAdapter):
             src = cached_download(url, ".jpg", settings, max_bytes=base.MAX_IMAGE_BYTES)
             return make_candidates(full, link_into(src, out_dir, f"archive_{base.url_hash(url)}.jpg"), shot, settings)
         src = base.cached_video(url, ".mp4", settings, shot.duration, duration=full.duration,
-                                size=full.extra.get("size", 0.0))
+                                size=full.extra.get("size", 0.0), shot=shot, title=full.title)
         dst = link_into(src, out_dir, f"archive_{base.url_hash(src.name)}.mp4")
-        spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=3)
+        spans = base.cut_clips(base.focused_scenes(dst, shot, settings, url, full.title), shot.duration, max_clips=3)
         return make_candidates(full, dst, shot, settings, spans=spans)

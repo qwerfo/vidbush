@@ -8,7 +8,7 @@ allow_mock_fallback: false  # true = if every real provider for a role fails, us
 
 sources:
   # order is the search order; disabled sources are skipped
-  enabled: [local, youtube, wikimedia, archive, loc, nara, nasa, pexels, pixabay]
+  enabled: [local, youtube, wikimedia, chronam, webimage, openverse, archive, loc, nara, nasa, pexels, pixabay]
   allow_youtube: true
   flag_nc_nd: true      # CC NC / ND assets are allowed but flagged in qa_report
   blocklist: []         # domains never used, e.g. [example.com, badstock.net]

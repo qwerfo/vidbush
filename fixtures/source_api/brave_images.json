@@ -1,0 +1,40 @@
+{
+ "_note": "Built by hand from the documented Brave Image Search response shape, not recorded live (no Brave key).",
+ "type": "images",
+ "query": {
+  "original": "harbour crane"
+ },
+ "results": [
+  {
+   "type": "image_result",
+   "title": "Harbour crane, 1950s photograph",
+   "url": "https://archive.example.net/item/crane",
+   "source": "archive.example.net",
+   "page_fetched": "2025-01-01T00:00:00Z",
+   "thumbnail": {
+    "src": "https://imgs.search.brave.com/t1"
+   },
+   "properties": {
+    "url": "https://archive.example.net/files/crane.jpg",
+    "placeholder": "https://imgs.search.brave.com/p1"
+   },
+   "meta_url": {
+    "scheme": "https",
+    "netloc": "archive.example.net",
+    "hostname": "archive.example.net"
+   }
+  },
+  {
+   "type": "image_result",
+   "title": "Crane data uri",
+   "url": "https://blog.example.com/post",
+   "source": "blog.example.com",
+   "thumbnail": {
+    "src": "https://imgs.search.brave.com/t2"
+   },
+   "properties": {
+    "url": "data:image/png;base64,AAAA"
+   }
+  }
+ ]
+}

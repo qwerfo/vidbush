@@ -78,13 +78,15 @@ def test_wikimedia_images(net, online, shot, tmp_path) -> None:
     from vidbush.source.wikimedia import WikimediaAdapter
     routes, calls = net
     routes["https://commons.wikimedia.org"] = "commons_search_image.json"
+    routes["https://www.wikidata.org"] = "wikidata_search_empty.json"  # no entity: the text search runs
     res = WikimediaAdapter().search("culebra cut", "image", 5, online)
     assert [r.title for r in res] == ["Culebra Cut, Panama Canal, 1913", "Gatun Locks construction"]  # svg skipped
     first, second = res
     assert first.author == "Underwood & Underwood" and first.licence == "Public domain"
     assert first.download_url.endswith("1920px-Culebra_Cut_1913.jpg") and first.width == 1920
     assert first.page_url.startswith("https://commons.wikimedia.org/wiki/File:")
-    assert calls[0][1]["gsrnamespace"] == 6 and "extmetadata" in calls[0][1]["iiprop"]
+    text = next(c for c in calls if c[0].startswith("https://commons.wikimedia.org"))
+    assert text[1]["gsrnamespace"] == 6 and "extmetadata" in text[1]["iiprop"]
     cands = WikimediaAdapter().fetch(second, tmp_path, shot, online)
     assert cands[0].licence == "CC BY-NC-SA 2.0" and "nc_nd" in cands[0].flags
     assert cands[0].attribution == "Gatun Locks construction by Panama Canal Museum (Wikimedia Commons)"
@@ -96,6 +98,7 @@ def test_wikimedia_video(net, online, shot, tmp_path) -> None:
     from vidbush.source.wikimedia import WikimediaAdapter
     routes, _ = net
     routes["https://commons.wikimedia.org"] = "commons_search_video.json"
+    routes["https://www.wikidata.org"] = "wikidata_search_empty.json"
     res = WikimediaAdapter().search("panama canal ship", "video", 5, online)
     assert len(res) == 1 and res[0].media == "video" and res[0].duration == 94.5
     assert res[0].download_url.endswith(".webm")
@@ -211,9 +214,11 @@ def test_youtube_search_scoring(monkeypatch, online) -> None:
     monkeypatch.setattr(youtube, "ydl_extract", lambda target, opts: canned("ytdlp_search.json"))
     res = youtube.YoutubeAdapter().search("panama canal construction archival", "video", 10, online)
     ids = [r.extra["id"] for r in res]
-    assert ids[0] == "aaaaaaaaaa1"  # archival newsreel ranks first
+    assert ids[0] == "aaaaaaaaaa1"
     assert "dddddddddd4" not in ids  # shorts dropped
-    assert "cccccccccc3" not in ids and "eeeeeeeeee5" not in ids  # reaction vlog and top 10 explained dropped
+    # v2: YouTube's own order is kept; no result is dropped or reordered on title words
+    raw_order = [e["id"] for e in canned("ytdlp_search.json")["entries"] if e and e.get("id") in ids]
+    assert ids == raw_order and "cccccccccc3" in ids
     assert res[0].title == "Building the Panama Canal (1913) Archival newsreel footage"
     assert youtube.YoutubeAdapter().search("x", "image", 5, online) == []
 
