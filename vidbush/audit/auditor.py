@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -130,30 +131,62 @@ def seats_vision(seats: Any) -> VisionFn:
     return fn
 
 
+_URL_QUERY = re.compile(r"(https?://[^\s?#'\"]+)[?#][^\s'\"]*")
+_SECRET = re.compile(r"(?i)\b(api[_-]?key|key|token|secret|authorization|bearer)\b(\s*[=:]\s*|\s+)\S+")
+
+
+def scrub(e: BaseException) -> str:
+    """Exception class and a short message with URL query strings and credential values removed."""
+    msg = _SECRET.sub(r"\1=<redacted>", _URL_QUERY.sub(r"\1", str(e)))
+    return f"{type(e).__name__}: {' '.join(msg.split())[:160]}"
+
+
 def audit_tile(vision: VisionFn, tile: dict[str, Any], frame: Path) -> dict[str, Any]:
     user = USER.format(mmss=core.mmss(tile["frame_t"]), words=tile["words"], before=tile["before"],
-                       after=tile["after"])
-    generated = tile.get("source") in core.AI_SOURCES
-    if generated:
-        user += GENERATED_NOTE
+                       after=tile["after"]) + source_line(tile)
     last = ""
     for _ in range(2):  # one retry: a relay sometimes returns prose or a cut reply
         try:
             reply = vision(SYSTEM, user, str(frame))
         except Exception as e:  # noqa: BLE001  a failed tile is recorded, the audit goes on
-            last = f"{type(e).__name__}: {e}"[:300]
+            last = scrub(e)
             continue
         if reply.get("_mock"):
             last = "mock reply (no real auditor seat)"
             break
         got = normalize(reply)
         if got:
-            if generated:  # provenance beats a visual guess; the guess is kept for checking the auditor
+            if source_line(tile) and got["kind"] not in core.AI_KINDS | core.DESIGNED_KINDS:
+                # provenance beats a visual guess of real or other; a designed layout stays designed (it may hold
+                # a generated picture). The guess is kept for checking the auditor.
                 got["kind_seen"] = got["kind"]
-                got["kind"] = got["kind"] if got["kind"] in core.AI_KINDS else "ai_image"
+                got["kind"] = "ai_image"
             return {**tile, **got, "prompt": PROMPT_HASH}
-        last = "unusable reply: " + json.dumps(reply)[:200]
+        last = "unusable reply: " + _URL_QUERY.sub(r"\1", json.dumps(reply))[:160]
     return {**tile, "error": last, "prompt": PROMPT_HASH}
+
+
+def source_line(tile: dict[str, Any]) -> str:
+    return GENERATED_NOTE if tile.get("source") in core.AI_SOURCES else ""
+
+
+def video_identity(video: Path) -> dict[str, Any]:
+    """Name, size and whole-second mtime; a re-render of the same path gets a new identity."""
+    try:
+        st = video.stat()
+        return {"name": video.name, "size": st.st_size, "mtime": int(st.st_mtime)}
+    except OSError:
+        return {"name": video.name, "size": -1, "mtime": 0}
+
+
+def video_hash(identity: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()[:8]
+
+
+def row_key(tile: dict[str, Any], model: str, vhash: str) -> str:
+    """What a verdict depends on: prompt, auditor model, the words shown to it, the source line, the video."""
+    parts = [PROMPT_HASH, model, tile["words"], tile["before"], tile["after"], source_line(tile), vhash]
+    return hashlib.sha256(json.dumps(parts).encode("utf-8")).hexdigest()[:16]
 
 
 def build_tiles(video: Path, words: list[core.Word], shots: list[dict[str, Any]], duration: float,
@@ -172,56 +205,93 @@ def build_tiles(video: Path, words: list[core.Word], shots: list[dict[str, Any]]
     return tiles
 
 
+def _fresh_tiles_dir(tiles_dir: Path, identity: dict[str, Any]) -> None:
+    """Drop cached frames extracted from another version of the video."""
+    tiles_dir.mkdir(parents=True, exist_ok=True)
+    side = tiles_dir / "video.json"
+    try:
+        same = json.loads(side.read_text(encoding="utf-8")) == identity
+    except (OSError, ValueError):
+        same = False
+    if not same:
+        for f in tiles_dir.glob("*.jpg"):
+            f.unlink()
+        side.write_text(json.dumps(identity), encoding="utf-8")
+
+
 def run_audit(video: Path, words: list[core.Word], out: Path, vision: VisionFn, duration: float,
               shots: Optional[list[dict[str, Any]]] = None, every: float = 2.0, limit: int = 0, workers: int = 8,
-              extract: Callable[[Path, float, Path], Path] = extract_frame,
+              extract: Optional[Callable[[Path, float, Path], Path]] = None, model: str = "",
               log: Callable[[str], None] = print) -> list[dict[str, Any]]:
-    """Audit every tile (or `limit` evenly spread ones). Rows already in audit.jsonl from the same prompt and
-    a valid verdict are kept, so a rerun after a crash or a slice pays only for new tiles."""
+    """Audit every tile (or `limit` evenly spread ones) and return this run's rows.
+
+    A stored row is reused only when its key (prompt, model, words, source line, video identity) matches, so a
+    rerun after a crash or a slice pays only for new tiles. Each finished row is appended to audit.jsonl at
+    once, so a crash loses no paid verdict; the file is compacted (latest row per tile) at the end."""
     out.mkdir(parents=True, exist_ok=True)
-    tiles = build_tiles(video, words, shots or [], duration, every, limit)
-    old = {}
+    identity = video_identity(video)
+    vhash = video_hash(identity)
+    tiles_dir = out / "tiles"
+    _fresh_tiles_dir(tiles_dir, identity)
     path = out / "audit.jsonl"
-    if path.exists():
-        old = {r["t"]: r for r in core.read_jsonl([path]) if r.get("prompt") == PROMPT_HASH and not r.get("error")}
+    old = {r["t"]: r for r in core.latest_rows(path) if not r.get("error")}
     done: dict[Any, dict[str, Any]] = {}
     todo = []
-    for tile in tiles:
+    for tile in build_tiles(video, words, shots or [], duration, every, limit):
+        tile["key"] = row_key(tile, model, vhash)
         prev = old.get(tile["t"])
-        if prev and prev.get("words") == tile["words"]:
+        if prev and prev.get("key") == tile["key"]:
             done[tile["t"]] = prev
         else:
             todo.append(tile)
-    log(f"tiles {len(tiles)}: {len(done)} kept from the last audit, {len(todo)} to audit")
+    log(f"tiles {len(done) + len(todo)}: {len(done)} kept from the last audit, {len(todo)} to audit")
 
     def one(tile: dict[str, Any]) -> dict[str, Any]:
-        frame = extract(video, tile["frame_t"], out / "tiles" / f"t{int(tile['t']):05d}.jpg")
-        return audit_tile(vision, tile, frame)
+        try:
+            frame = (extract or extract_frame)(video, tile["frame_t"], tiles_dir / core.frame_name(tile["t"]))
+            return audit_tile(vision, tile, frame)
+        except Exception as e:  # noqa: BLE001  ffmpeg failure or timeout: an error row, the audit goes on
+            return {**tile, "error": scrub(e), "prompt": PROMPT_HASH}
 
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for i, row in enumerate(pool.map(one, todo), 1):
-            done[row["t"]] = row
-            if i % 25 == 0:
-                log(f"  {i}/{len(todo)} audited")
-    # the file keeps tiles outside this slice too, so slices add up to a full audit; the caller gets this run's
-    all_rows = sorted({**old, **done}.values(), key=lambda r: r["t"])
-    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in all_rows), encoding="utf-8")
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool, path.open("a", encoding="utf-8") as fh:
+            for i, fut in enumerate(as_completed([pool.submit(one, t) for t in todo]), 1):
+                row = fut.result()
+                done[row["t"]] = row
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                fh.flush()
+                if i % 25 == 0:
+                    log(f"  {i}/{len(todo)} audited")
+    finally:
+        rows = core.latest_rows(path)
+        path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     return sorted(done.values(), key=lambda r: r["t"])
 
 
+def _cell(v: Optional[float]) -> str:
+    return "n/a" if v is None else f"{v:.1f}%"
+
+
 def write_reports(rows: list[dict[str, Any]], out: Path, video: Path, model: str, cost_usd: float,
-                  every: float = 2.0) -> dict[str, Any]:
+                  every: float = 2.0) -> Optional[dict[str, Any]]:
+    """audit.md and audit_summary.json from every row of the audit; None (and nothing written) when no tile has a
+    valid verdict."""
     s = core.summarize(rows)
+    if not s["tiles"]:
+        return None
     summary = {**{k: s[k] for k in core.SUMMARY_KEYS}, "tiles": s["tiles"], "overlay_tiles": s["overlay_tiles"],
                "video": str(video), "model": model, "cost_usd": round(cost_usd, 4)}
     write_json(out / "audit_summary.json", summary)
     errors = [r for r in rows if r.get("error")]
+    prompts = {r.get("prompt") for r in rows if not r.get("error")}
     lines = [f"# Tile audit: {video.name}", "",
              f"{s['tiles']} tiles every {every:g} s, {s['overlay_tiles']} with an overlay. Model {model}, "
-             f"cost {cost_usd:.4f} USD." + (f" {len(errors)} tiles had no usable verdict and are left out." if errors else ""),
+             f"audit cost so far {cost_usd:.4f} USD."
+             + (f" {len(errors)} tiles had no usable verdict and are left out." if errors else "")
+             + (f" Rows come from {len(prompts)} prompt versions." if len(prompts) > 1 else ""),
              "", "| Measure (share of tiles) | This video | Vidrush benchmark | Target |", "|---|---|---|---|"]
     for k in core.SUMMARY_KEYS:
-        lines.append(f"| {core.LABELS[k]} | {s[k]:.1f}% | {core.BENCHMARK[k]}% | {core.TARGETS.get(k, '')} |")
+        lines.append(f"| {core.LABELS[k]} | {_cell(s[k])} | {core.BENCHMARK[k]}% | {core.TARGETS.get(k, '')} |")
     lines += ["", "## Ten worst stretches (runs of noticeable tiles)", ""]
     worst = core.worst_stretches(rows, every)
     if not worst:
@@ -234,4 +304,4 @@ def write_reports(rows: list[dict[str, Any]], out: Path, video: Path, model: str
 
 def model_used(entries: list[Any], since: float) -> str:
     c = Counter(f"{e.provider}/{e.model}" for e in entries if e.role == ROLE and e.ok and not e.mock and e.ts >= since)
-    return c.most_common(1)[0][0] if c else "mock"
+    return c.most_common(1)[0][0] if c else ""
