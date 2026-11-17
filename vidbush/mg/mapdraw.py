@@ -519,10 +519,14 @@ class MapComp(CompBase):
             if spr is None:
                 self.offsets.append((0.0, 0.0))
                 continue
-            options = [(r, -spr.h / 2), (-r - spr.w, -spr.h / 2), (-spr.w / 2, -r - spr.h), (-spr.w / 2, r)]
+            options = [(r, -spr.h / 2), (-r - spr.w, -spr.h / 2), (-spr.w / 2, -r - spr.h), (-spr.w / 2, r),
+                       # below or above, hanging to one side: room near a frame edge
+                       (r - spr.w, r), (-r, r), (r - spr.w, -r - spr.h), (-r, -r - spr.h)]
             off = self._place(uv, spr, options)
-            if off is None:
-                off = options[0]
+            if off is None:  # crowded: forced, but on a side that keeps the whole chip inside the frame
+                inside = [o for o in options if all(b[0] >= 0 and b[1] >= 0 and b[2] <= self.W and b[3] <= self.H
+                                                    for b in self._boxes(uv, spr, *o))] or options[:1]
+                off = min(inside, key=lambda o: self._overlap_area(self._boxes(uv, spr, *o)))
                 self._take(self._boxes(uv, spr, *off))
             self.offsets.append(off)
         # the place names and the line they explain are the content, so the title and the locator take a corner
@@ -579,6 +583,14 @@ class MapComp(CompBase):
 
     def _boxes(self, uv: np.ndarray, spr: Sprite, dx: float, dy: float) -> list[Box]:
         return [(x + dx, y + dy, x + dx + spr.w, y + dy + spr.h) for x, y in self._at(uv)]
+
+    def _overlap_area(self, boxes: list[Box]) -> float:
+        """Area these boxes (one per tested zoom) share with everything already placed."""
+        tot = 0.0
+        for placed, b in zip(self.taken, boxes):
+            for p in placed:
+                tot += max(0.0, min(b[2], p[2]) - max(b[0], p[0])) * max(0.0, min(b[3], p[3]) - max(b[1], p[1]))
+        return tot
 
     def _take(self, boxes: list[Box]) -> None:
         """Reserve one box per tested zoom."""

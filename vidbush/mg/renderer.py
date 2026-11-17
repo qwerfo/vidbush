@@ -28,7 +28,7 @@ from ..util import ToolError, run, stable_hash, write_json
 
 OVERLAY_SHOT_TYPES = {ShotType.footage_overlay, ShotType.image_overlay, ShotType.ai_image, ShotType.ai_video}
 REMOTION_DIR = "renderer"
-MG_RENDER_VERSION = "mg-6"  # mg-6: label boxes reveal with their text, no centre callouts
+MG_RENDER_VERSION = "mg-7"  # mg-7: label boxes reveal with their text, no centre callouts, chips kept inside the frame
 # Bare full-frame text cards (title card, text card, callout) are not rendered (V2 layouts): run 1's beige text
 # cards restating the caption were the most noticed fault. A shot planned as one shows its best real picture.
 BARE_TEXT_KINDS = {MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout}

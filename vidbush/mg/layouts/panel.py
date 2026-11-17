@@ -162,18 +162,19 @@ class PanelComp:
         s = 0.94 + 0.06 * o_in  # a short settle as it opens
         cx, cy = x + w / 2, y + h / 2
         w2, h2 = max(8, int(w * s)) // 2 * 2, max(8, int(h * s)) // 2 * 2
-        x2, y2 = cx - w2 / 2, cy - h2 / 2
+        x2, y2 = int(round(cx - w2 / 2)), int(round(cy - h2 / 2))
         full = w2 >= self.W - 2 and h2 >= self.H * 0.95
         img = self.content(i, t, w2, h2)
-        m, ring, shadow = self._chrome(w2, h2, full)
-        if not full:  # thin paper rule around the panel, so it reads as a designed object over the picture
-            img = (img.astype(np.float32) * (1 - ring * 0.85) + 238.0 * ring * 0.85).astype(np.uint8)
+        keep3, ring_rgb, alpha, shadow = self._chrome(w2, h2, full)
+        # premultiplied body in uint8: picture times the rounded mask (and the paper ring), alpha = mask
+        body_rgb = cv2.add(cv2.multiply(img, keep3, scale=1 / 255.0), ring_rgb) if ring_rgb is not None else             cv2.multiply(img, keep3, scale=1 / 255.0)
+        body = np.dstack([body_rgb, alpha])
+        if op < 0.997:
+            body = cv2.convertScaleAbs(body, alpha=op)
+        if shadow is not None:
             pad = int(28 * self.k) + 2
-            blit(frame, shadow, x2 - pad, y2 - pad, op)
-        body = np.empty((h2, w2, 4), np.uint8)
-        body[..., :3] = (img.astype(np.float32) * m[..., None]).astype(np.uint8)
-        body[..., 3] = (m * 255).astype(np.uint8)
-        blit(frame, body, x2, y2, op)
+            _paste(frame, shadow if op >= 0.997 else cv2.convertScaleAbs(shadow, alpha=op), x2 - pad, y2 - pad)
+        _over(frame, body, x2, y2)
         if not full:  # amber rule grows along the top edge as the panel opens: the house signature
             rw = w2 * 0.28 * o_in
             if rw > 2:
@@ -181,20 +182,26 @@ class PanelComp:
         return frame
 
     def _chrome(self, w: int, h: int, full: bool) -> tuple:
-        """Mask, border ring and shadow for a panel size, built once per size (sizes repeat at rest)."""
+        """uint8 picture keep mask (3 channels), premultiplied paper ring, alpha and shadow for a panel size,
+        built once per size (sizes repeat while the panel rests)."""
         key = (w, h, full)
         cache = self.__dict__.setdefault("_chrome_cache", {})
         if key not in cache:
             r = 0 if full else max(3, int(6 * self.k))
             m = _round_rect_mask(w, h, r).astype(np.float32) / 255.0 if r else np.ones((h, w), np.float32)
-            ring = shadow = None
+            ring_rgb = shadow = None
+            keep = m
             if not full:
                 edge = cv2.erode(m, np.ones((3, 3), np.uint8), iterations=max(1, int(2 * self.k)))
-                ring = (m - edge)[..., None]
+                ring = (m - edge) * 0.85
+                keep = m * (1 - ring)
+                ring_rgb = cv2.merge([np.clip(ring * 238.0, 0, 255).astype(np.uint8)] * 3)
                 shadow = self._shadow_sprite(w, h, m)
+            keep3 = cv2.merge([np.clip(keep * 255.0, 0, 255).astype(np.uint8)] * 3)
+            alpha = np.clip(m * 255.0, 0, 255).astype(np.uint8)
             if len(cache) > 64:
                 cache.clear()
-            cache[key] = (m, ring, shadow)
+            cache[key] = (keep3, ring_rgb, alpha, shadow)
         return cache[key]
 
     def _shadow_sprite(self, w: int, h: int, m: np.ndarray) -> np.ndarray:
@@ -211,3 +218,30 @@ class PanelComp:
         for c in (self.small, self.large):
             if c is not None:
                 c.close()
+
+
+def _clip_roi(frame: np.ndarray, src: np.ndarray, x: int, y: int):  # noqa: ANN202
+    H, W = frame.shape[:2]
+    h, w = src.shape[:2]
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + w), min(H, y + h)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return frame[y0:y1, x0:x1], src[y0 - y:y1 - y, x0 - x:x1 - x]
+
+
+def _paste(frame: np.ndarray, src: np.ndarray, x: int, y: int) -> None:
+    """Copy src into an empty (zero) region of frame."""
+    got = _clip_roi(frame, src, x, y)
+    if got is not None:
+        got[0][...] = got[1]
+
+
+def _over(frame: np.ndarray, src: np.ndarray, x: int, y: int) -> None:
+    """Premultiplied src over frame, uint8 throughout (cv2), in place."""
+    got = _clip_roi(frame, src, x, y)
+    if got is None:
+        return
+    roi, s = got
+    inv = cv2.merge([255 - s[..., 3]] * 4)
+    cv2.multiply(roi, inv, dst=roi, scale=1 / 255.0)
+    cv2.add(roi, np.ascontiguousarray(s), dst=roi)

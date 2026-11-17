@@ -28,7 +28,7 @@ from .jobs import make_job
 from .panel import DOCK_S, NEVER, PanelPlan, change_time, large_rect
 from .placement import place_panel
 
-LAYOUT_RENDER_VERSION = "layouts-1"
+LAYOUT_RENDER_VERSION = "layouts-5"  # bump when drawing code changes pixels
 PANEL_HOLD_S = 2.5  # a panel stays this long after its last element is spoken, then leaves
 PANEL_MIN_S = 3.0
 FULL_MIN_S, FULL_MAX_S = 3.0, 7.0
@@ -303,6 +303,16 @@ def plan_start(shot: Shot, job: LayoutJob) -> float:
     return float(job.extra.get("_start", 0.0))
 
 
+def _fits(job: LayoutJob, size: tuple[float, float]) -> bool:
+    """The content laid out at this panel size keeps every text whole at the floors (kinds that report it)."""
+    comp = comp_class(job.spec.kind)(job, int(size[0]) // 2 * 2, int(size[1]) // 2 * 2, True)
+    try:
+        check = getattr(comp, "fits", None)
+        return bool(check()) if callable(check) else bool(getattr(comp, "ok", True))
+    finally:
+        comp.close()
+
+
 def _plan_panel(shot: Shot, job: LayoutJob, pres: str, previous: str, ctx: Any) -> tuple[Optional[PanelPlan], str]:
     """Place the panel from the picture beneath; trims the job to the panel's visible window."""
     start, end = _panel_window(job, pres, shot.duration)
@@ -333,6 +343,8 @@ def _plan_panel(shot: Shot, job: LayoutJob, pres: str, previous: str, ctx: Any) 
         if pl.position is not None:
             break
         small = (size[0] * k, size[1] * k)
+        if not _fits(job, small):
+            break  # smaller would cut or shrink text under the floors
         pl = choose(samples, small, visible, W, H, previous)
         if pl.position is not None:
             pl.reason += f"; panel at {k:.0%} of its preferred size to clear the subject"

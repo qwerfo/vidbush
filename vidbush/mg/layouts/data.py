@@ -227,6 +227,16 @@ class DataComp(LayoutComp):
             self.ok = False
         tr = tracking_em * f.size
         col = self.house.rgb(color)
+        if len(ln) == 2 and ELLIPSIS not in "".join(ln):  # balance the two lines: no orphan word on the second
+            from ..textdraw import wrap
+            lo, hi = max(text_width(w, f, tr) for w in t.split()), float(max_w or self.bw)
+            for _ in range(14):
+                mid = (lo + hi) / 2
+                if len(wrap(t, f, mid, tr)) <= 2:
+                    hi = mid
+                else:
+                    lo = mid
+            ln = wrap(t, f, hi + 0.5, tr)
         return text_sprite(ln[0], f, col, tr) if len(ln) == 1 else text_block(ln, f, col, align, 1.12, tr)
 
     def title_at(self) -> float:
