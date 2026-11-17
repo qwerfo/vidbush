@@ -29,7 +29,8 @@ Project status values are `done`, `needs_review` and `failed`. A project ends
 - a writer section or director chunk fell back to heuristics while a real
   provider was configured (listed by scene id under "Heuristic fallbacks" in
   `qa_report.md`);
-- a batch cost cap stopped the run (section 4b).
+- a cost cap stopped the run (`run --cost-cap`, `resume --cost-cap` or a
+  batch cap; sections 4b and 12).
 
 ### What is mock in the demo (and why)
 
@@ -194,6 +195,11 @@ and run:
 python -m vidbush run briefs\my_first.md --brand default
 ```
 
+`run` refuses to start when a project with the same id already exists. Use
+another `--id`, continue it with `resume <id>`, or pass `--fresh` to delete
+it and start again (`demo` always starts fresh). `--cost-cap <usd>` stops the
+run once the project spent that much (section 12).
+
 Or do the same from the UI (Projects, New project, Brief tab). A pasted
 script works the same way (`python -m vidbush run my_script.md`), and so
 does a finished voiceover (`python -m vidbush run narration.mp3`; put
@@ -257,6 +263,8 @@ The whisper model (about 150 MB) downloads on first use.
 - **Blocked domains and YouTube:** `sources.blocklist` and
   `sources.allow_youtube` in `config/vidbush.yaml`, or `YOUTUBE_ENABLED` in `.env`.
 - **Outputs:** `output/<project_id>/`. Logs: `data/logs/<project_id>.jsonl`.
+  Tile audit of a project: `output/<project_id>/audit/`. Stored model replies:
+  `reply_cache/` beside the source cache (section 12).
 
 ## 4a. Visual mix, card spacing and director context
 
@@ -381,13 +389,15 @@ on the host, which is `/app/data/briefs` inside.)
   `run`), `--cost-cap <usd>`, `--id-prefix <text>`, `--batch-id <id>`,
   `--plan` (queue and print the plan, do not run), `--quiet`. Project ids
   come from the file names like `run` (a second file with the same name gets
-  `_2`). An existing project with the same id is replaced, like `run`.
+  `_2`). An existing project with the same id is replaced (a batch always
+  replaces its own projects; `run` refuses unless `--fresh` is given).
 - **Cost cap:** each project run stops once its cost (from
-  `cost_report.json`) passes the cap, default `batch.cost_cap_usd: 5.0` in
+  `cost_report.json`) reaches the cap, default `batch.cost_cap_usd: 5.0` in
   `config/vidbush.yaml` (`--cost-cap 0` or `null` in the config means no cap).
-  The check happens between stages, so a run stops at the next stage
-  boundary and can spend a little more than the cap inside the stage that
-  crossed it. The project ends as `needs_review` with the reason in
+  The cap is checked before every live paid call, so it holds inside a stage.
+  With several calls in flight a run can pass the cap by at most the calls
+  already sent. A stage stopped inside stays pending, and the resume reruns
+  it with the replies already paid for served free from the reply cache. The project ends as `needs_review` with the reason in
   `project.json` (`status_note`), `work/cost_cap.json` and the log, and the
   batch shows it as `capped`. Finish it later with
   `python -m vidbush resume <id>` (no cap) or `resume <id> --cost-cap 10`.
@@ -402,7 +412,8 @@ on the host, which is `/app/data/briefs` inside.)
 - **Report:** `data/batches/<batch_id>/batch_report.md` (and
   `batch_report.json`), one row per project: id, input, mode, status
   (queued, running, done, needs_review, capped, failed, skipped), duration,
-  total cost, cost per minute, QA percent above the judge threshold, note.
+  total cost, cost per minute, pre-render judge percent (bookkeeping, not a
+  quality measure), audit noticeable percent (when the tile audit ran), note.
   The path is printed at the end.
 - **UI:** the Queue page (http://localhost:8080/#/queue) shows the same
   table, refreshes itself, and has New batch (a folder or list file path on
@@ -459,6 +470,7 @@ pick whatever is best and cheapest this month.
 | video | optional image-to-video | fal-style model | off by default |
 | tts | narration | ElevenLabs, then Elevate, then Algrow (section 10a) | Elevate and Algrow audio is aligned to the script by faster-whisper; ElevenLabs returns word timestamps |
 | search | research web search | Tavily, Serper or Brave | any one is enough |
+| auditor | tile audit of a finished video (section 12) | Sonnet 5.5 (CloseRouter, then openlux, then Anthropic direct) | agreed best with the reference tiles; Gemini 3.8 Flash under-flagged, Opus cost 2.7 times more |
 
 Providers marked down after transport failures are retried every 10 minutes.
 An error about the seat itself (HTTP 401, 402 or 403, model_not_in_channel,
@@ -588,6 +600,8 @@ entry's `options`): `max_tokens` is an optional output cap, unset by default
 (no cap sent); `timeout_s` replaces the role timeout (writer 600 s, other LLM
 roles 180 s). A reply cut off by the length limit is continued once and
 joined; if it is cut off again the request moves to the next provider.
+The reply cache key ignores `max_tokens`: after changing an output cap, clear
+the reply cache folder or run with `--no-reply-cache` (section 12).
 
 ## 9. Reviewing a render
 
@@ -609,8 +623,12 @@ the verdict (press again to clear), c jumps to the comment, Space plays or
 pauses, Esc leaves a text box. The project page shows "Reviewed: n of m".
 
 **Apply fixes** previews the edits first, like chat revisions: wrong picture
-re-sources the shot with your comment added to its must_avoid and search
-queries (an AI image is regenerated with your comment as an avoid note);
+re-sources the shot and rejects the reviewed pick. Your comment is split in
+two. The wish ("I want steam shovels" gives "steam shovels") becomes the
+shot's `operator_wish`, which the judge reads, and a search query. The
+complaint sentences ("this shows a modern ship") go to must_avoid. The whole
+comment is never written into must_avoid. An AI image is regenerated with the
+wish as the prompt ("Show: ...") and the complaint as the negative prompt;
 quality problem with a hard reject ticked re-sources with that reject added
 to must_avoid; wrong timing gets an "Open duration editor" link. Everything
 else stays a comment. Only changed segments re-render.
@@ -842,7 +860,13 @@ See also: `docs/ARCHITECTURE.md` (stage graph, contracts, cache rule),
 
 ### 11a. Reading qa_report.md
 
-The report now opens with five lines:
+The report now opens with the tile audit table: the audit's six numbers
+against the Vidrush benchmark and the targets, with a Met column (read from
+`audit/audit_summary.json`). Without an audit it opens with one line saying
+how to run it (`python -m vidbush audit <id>`, section 12). The pre-render
+judge score (`pct_above_threshold`) is no longer a headline: it stays in the
+details and in qa_report.json as bookkeeping, because it never tracked the
+frames. Then come five lines:
 
 1. Screen time: real (footage plus stills) against generated (AI stills and video), with each class in percent
    and seconds. It follows the picture each shot really uses, so a footage shot that fell back to an AI still
@@ -851,7 +875,7 @@ The report now opens with five lines:
 3. The worst five moments, as final.mp4 timestamps with shot id and reason. Look at these first.
 4. On-screen text problems over every text item (overlays, lower thirds, boxes, arrows, number overlays, map
    and chart titles and labels, full screen cards): repeats of the narration, early, late, too short to read.
-5. The pipeline judge's pass rate next to the rendered frames' pass rate, so the gap is visible.
+5. The share of rendered shots that pass their frame check ("not measured" when no frames were checked).
 
 How a shot is checked: frames from its own middle (plus its quarters on shots of 4 s or more, plus one where
 its overlay text shows) go to the vision seat with the narration spoken during the shot, the lines just
@@ -899,3 +923,212 @@ To redo chosen AI shots of a finished project into a scratch copy (the project i
 .venv\Scripts\python.exe scripts\regen_ai_shots.py --project "E:\coding projects\Vidbush\output\alaska_run2" `
   --out "E:\coding projects\Vidbush\scratch\run3_regen" --shots shot_068,shot_087 --settings-root C:\projects\vidbush_tmp
 ```
+
+## 12. V2 measurement and replay (2026-11-17)
+
+The tile audit is now the quality measure. It judges the finished frame
+against the words heard, never the pipeline's own scores. Stage snapshots,
+the reply cache and the cost cap inside stages make reruns cheap and
+comparable. Decisions are in `docs/DECISIONS.md` under "V2: measurement".
+
+Run every command from the repo in PowerShell:
+
+```powershell
+cd C:\projects\vidbush_tmp
+```
+
+RESULTS: (filled in by the main session)
+
+### 12a. Tile audit
+
+One frame every 2 s of final.mp4 (tile t, frame at t+1). The `auditor` seat
+(Sonnet 5.5) sees the frame, the words spoken in [t-1, t+2] and 10 s of
+narration before and after. For a project, a tile whose shot uses a
+generated picture is told so, and an AI kind replaces a real or other guess
+(the guess stays as `kind_seen`). Rows are appended as they finish, so a
+crash loses nothing, and a rerun pays only for tiles whose prompt, model,
+words or video changed.
+
+Audit a project (reads `final.mp4`, `work/narration.json` and
+`work/shotlist.json`):
+
+```powershell
+.venv\Scripts\python.exe -m vidbush audit alaska_run3
+```
+
+Try it on a slice first (40 tiles spread over the video):
+
+```powershell
+.venv\Scripts\python.exe -m vidbush audit alaska_run3 --limit 40
+```
+
+Audit a bare video against a transcript (`startMs`/`endMs` words) or a
+`narration.json`:
+
+```powershell
+.venv\Scripts\python.exe -m vidbush audit C:\projects\CaseFile\inbox\alaska\vidrush-alaska.mp4 `
+  --script C:\projects\CaseFile\docs\evidence\vidrush-grammar\transcript.json
+```
+
+Other flags: `--out DIR`, `--every 2`, `--workers 8`. A run with no valid
+tile writes no summary and exits 1. Cost so far is in
+`audit_cost_report.json`, never in the project's cost report.
+
+Compare an audit with reference tile rows (joined on t):
+
+```powershell
+.venv\Scripts\python.exe -m vidbush audit-compare "E:\coding projects\Vidbush\output\alaska_run3\audit\audit.jsonl" `
+  "E:\coding projects\Vidbush\fable_review\rows\run3_01_06.jsonl" `
+  "E:\coding projects\Vidbush\fable_review\rows\run3_07_12.jsonl" `
+  "E:\coding projects\Vidbush\fable_review\rows\run3_13_17.jsonl"
+```
+
+It prints the six numbers of both sets, the difference, and per-tile
+agreement (match, on_words, noticeable, kind group). `--json` prints the
+raw result.
+
+### 12b. Calibrating the audit against your own eyes
+
+Build the 40 tile page (20 flagged, 20 not, spread over the video). The page
+never shows the audit's verdict; the verdict goes to a separate key file:
+
+```powershell
+.venv\Scripts\python.exe -m vidbush audit-sheet "E:\coding projects\Vidbush\output\alaska_run3\audit\audit.jsonl" --name run3
+```
+
+Open `E:\coding projects\Vidbush\audit\calibration_run3.html`, mark every
+tile, press Export. It downloads `calibration_marks.json`. Then:
+
+```powershell
+.venv\Scripts\python.exe -m vidbush audit-calibrate $HOME\Downloads\calibration_marks.json
+```
+
+It finds the key for the same video by itself (or pass `--key`). Tile ids
+carry a video hash, so marks for another render are refused. TRUSTED needs
+34 of 40 agreements with every tile marked; the exit code is 1 otherwise.
+Each disagreement is listed with its time, your mark, the audit's defect and
+your comment.
+
+### 12c. Plan replay (no render)
+
+Measure a stored shot plan against its narration, without rendering or any
+model call:
+
+```powershell
+.venv\Scripts\python.exe -m vidbush plan-replay alaska_run3
+```
+
+It reads `work/shotlist.shotlist.json` (the director's plan) when it exists,
+else `work/shotlist.json`; `--shotlist PATH` picks another one and
+`--json OUT` writes the report. It prints: picture shots whose anchor words
+fall inside their own window (and how many are early, late or have no
+anchor), cuts per minute, median shot length, screen time by kind (real
+footage, real still, AI, designed or motion graphic), and the beats (or
+clauses, when `work/clauses.json` exists) with no picture shot. Nothing is
+written into the project folder.
+
+### 12d. Runs, cost cap and replays
+
+Start a new project with a cost cap of 5 USD:
+
+```powershell
+.venv\Scripts\python.exe -m vidbush run "E:\coding projects\Vidbush\output\alaska_run3\inputs\05-alaska-size-narration.md" --id alaska_v2 --cost-cap 5
+```
+
+`run` refuses an id that already exists. To delete it and start again:
+
+```powershell
+.venv\Scripts\python.exe -m vidbush run "E:\coding projects\Vidbush\output\alaska_run3\inputs\05-alaska-size-narration.md" --id alaska_v2 --fresh --cost-cap 5
+```
+
+The cap is checked before every live paid call, so it holds inside a stage.
+A stage stopped inside stays pending. The project ends `needs_review` with
+the reason in `status_note` and `work/cost_cap.json`. Finish it with a
+higher cap (stored replies cost nothing):
+
+```powershell
+.venv\Scripts\python.exe -m vidbush resume alaska_v2 --cost-cap 10
+```
+
+Re-score a finished project from its sourcing snapshot. Unchanged judge
+prompts are served free from the reply cache, so only changed prompts are
+paid for; every stage after judge reruns too:
+
+```powershell
+.venv\Scripts\python.exe -m vidbush resume alaska_v2 --force judge
+```
+
+`--force sourcing` re-sources from the director's plan the same way. Each
+shot list stage writes `work/<stage>.shotlist.json`, and a forced stage
+starts from the snapshot of the stage before it. If you edited the shot list
+since the last stage (review fixes, an edit op), an unforced stage keeps your
+edit. A forced stage keeps a copy as `work/operator_edit_<ts>.shotlist.json`
+before it starts from its snapshot.
+
+Ask every model live (stored replies are neither read nor written). The
+flag goes before the subcommand:
+
+```powershell
+.venv\Scripts\python.exe -m vidbush --no-reply-cache resume alaska_v2 --force judge
+```
+
+`$env:VIDBUSH_REPLY_CACHE = "0"` or `reply_cache: false` in
+`config/vidbush.yaml` does the same. The cache key ignores `max_tokens`:
+clear the reply cache folder after changing an output cap.
+
+Every run is recorded in `project.json` under `runs` (commit, branch, dirty
+flag, argv, forced stages, cost cap, seat models, config hashes). Every
+stage keeps a `history` of its attempts with times, status and commit.
+
+### 12e. Where outputs go
+
+- Project audit: `<project>\audit\` (for example
+  `E:\coding projects\Vidbush\output\alaska_run3\audit\`): `audit.jsonl`,
+  `audit.md`, `audit_summary.json`, `audit_cost_report.json`, `tiles\`.
+- Bare video audit: `<parent of the output folder>\audit\<video stem>\`
+  (here `E:\coding projects\Vidbush\audit\vidrush-alaska\`).
+- Calibration page and key: `E:\coding projects\Vidbush\audit\calibration_<name>.html`
+  and `calibration_<name>_key.json`.
+- Shot list snapshots: `<project>\work\<stage>.shotlist.json` and
+  `work\snapshots.json`.
+- Reply cache: `reply_cache\` beside the source cache folder (the parent of
+  `SOURCE_CACHE_FOLDER`), one file per request hash under
+  `<role>\<key[:2]>\`.
+
+### 12f. Reading audit.md
+
+The first line gives the tile count, how many tiles carry an overlay, the
+model and the audit cost. Tiles with no usable verdict are left out and
+counted. Then a table of six numbers, each a share of tiles:
+
+| Measure | What it counts | Vidrush benchmark | Target |
+|---|---|---|---|
+| Real share | real footage, real stills, documents | 55% | none |
+| AI share | AI images and AI-looking video | 2% | 5% or less |
+| Designed share | maps, charts, text cards, designed cards | 42% | none |
+| Picture on_words | the picture shows what the words are about | 64% | 64% or more |
+| Noticeable | a viewer would notice a problem at normal speed | 19% | 19% or less |
+| Overlay tiles noticeable | noticeable, among tiles with editor text or graphics | 21% | under 15% |
+
+The benchmark is the Vidrush render of the Alaska script (FABLE_REVIEW
+section 3). An empty share reads n/a, never 0. Below the table are the ten
+worst stretches: runs of consecutive noticeable tiles, longest first, with
+their final.mp4 time range and the defects named. Look at those first.
+
+The same numbers head `qa_report.md` (section 11a) once the audit exists.
+Acceptance (`python -m vidbush check <id>`) fails a project whose audit
+shows more than 40 percent noticeable; a missing audit is reported, not
+failed.
+
+### 12g. Other changes tonight
+
+- An unusable judge reply is asked again twice with a fresh reply, then
+  left unjudged (score None), never scored 50. An unjudged candidate ships
+  only when nothing on the shot is judged, flagged `unjudged`.
+- A requery model error falls back to the heuristic queries; an outage
+  ("all providers failed") is raised and writes no queries.
+- Image credits are recorded from per-job charge keys only. A provider that
+  charges over 5 times another per unit for one model in the same run is a
+  warning in the cost report.
+- Source replay reads the search cache under the exact query the run sent
+  and ignores the cache TTL.

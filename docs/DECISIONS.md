@@ -462,3 +462,33 @@ One line each: the decision and why.
 - Recommend AI stills never stand in for a named real person, a real event or a document; a designed layout or a map is the fallback.
 - Next work is split into lanes A to F in docs/FABLE_REVIEW.md section 11; lane A (audit command, stage snapshots, reply cache) goes first because it proves the others.
 - Left to Adam: letterbox and always-on captions, Standard YouTube Licence footage, AI for real people.
+
+## V2: measurement (2026-11-17, branch v2/audit)
+
+- The tile audit is the quality measure: it judges the finished frame against the words heard, never pipeline scores.
+- One frame every 2 s (tile t, frame at t+1), words overlapping [t-1, t+2], plus 10 s of narration before and after so a picture of another sentence can be recognised.
+- The auditor is a new additive seat `auditor`, Sonnet 5.5 first: Gemini 3.8 Flash under-flagged (0 noticeable on a slice), Opus cost 2.7 times more, wellflow_cheap takes no images.
+- For a project, the shot list's AI marking replaces only a real or other kind; designed kinds are kept; the model's own guess stays as `kind_seen`.
+- Each audit row is keyed on prompt, model, all words in the prompt, source line and video identity; rows are appended as they finish, so a crash loses nothing and a rerun pays only for new tiles.
+- An empty share is n/a, never 0; a run with no valid tile writes no summary and exits non-zero.
+- The audit writes `audit_cost_report.json`, never the project's cost report.
+- The calibration page hides the verdict; its tile ids carry a video hash, and a marks file for another video is refused; trusted at 34 of 40 with every tile marked.
+- The audit prompt is general: no examples from any one script or benchmark.
+- QA headline is the audit's six numbers; `pct_above_threshold` stays in the file as bookkeeping, labelled pre-render judge in batch reports.
+- Acceptance fails a project whose audit shows more than 40 percent noticeable; a missing audit is reported, not failed.
+- Each shot list stage writes `work/<stage>.shotlist.json` and reads the snapshot of the stage before it, so `--force sourcing` re-sources and `--force judge` re-scores.
+- An operator edit to the working copy wins over an older snapshot; a forced stage that starts from its snapshot first keeps the edited copy as `operator_edit_<ts>.shotlist.json`.
+- Every LLM and vision reply is stored under a hash of role, model, prompt and images, beside the source cache (`<parent of source cache>/reply_cache`); the n-th identical request gets the n-th stored reply, by occurrence index.
+- The reply cache is on by default; `--no-reply-cache`, `VIDBUSH_REPLY_CACHE=0` or `reply_cache: false` turns it off; only real, non-empty replies are stored.
+- The reply cache key ignores provider options such as max_tokens (kept compatible with replies stored tonight); clear the cache after changing an output cap.
+- A cost cap is checked before every live paid call (CostCapReached, a BaseException so fallbacks cannot swallow it); with N calls in flight the overshoot is at most N - 1 calls.
+- A run stopped by the cap or a failure persists its cascade: forced later stages go back to pending.
+- `run` takes `--cost-cap`, and refuses to delete an existing project unless `--fresh` is given; `demo` always starts fresh; batch keeps replacing its own projects.
+- Every run records its git commit, branch, dirty flag, argv, cost cap and settings (seat models, config file hashes); every stage attempt keeps its own times and commit.
+- An unusable judge reply is retried twice with a fresh reply, then left unjudged (score None), never 50.
+- An unjudged candidate ships only when nothing on the shot is judged, flagged `unjudged`; `add_ai` returns only judged takes.
+- A requery model error falls back to the heuristic queries; an outage ("all providers failed") is raised and writes no queries.
+- Image credits are recorded from per-job charge keys only; a provider charging over 5 times another per unit for one model in the current run is a cost report warning.
+- An operator review comment splits into a wish (Shot.operator_wish, shown to the judge) and a complaint (a negative); it is never written whole into must_avoid.
+- Source replay copies `keyword_words` and ignores the TTL, because the cache is the record of what a run saw.
+- Plan replay measures a stored plan without rendering: anchor inside window, cuts per minute, mix, beats without a picture.

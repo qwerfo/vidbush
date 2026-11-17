@@ -22,18 +22,46 @@ is skipped on resume when its record is `done` and all its outputs exist, so
 `VIDBUSH_FAIL_AT=<stage>` raises at the start of that stage (test hook).
 A stage that runs forces every stage that reads its output (`STAGE_INPUTS`
 in `vidbush/jobs/pipeline.py`), so a re-run never leaves stale downstream
-outputs. Edit ops persist their force set in `work/edit_plan.json` so a
+outputs. A run stopped by a failure or the cost cap sets the forced later
+stages back to pending, so the next resume reruns them. Edit ops persist their force set in `work/edit_plan.json` so a
 failed edit render is completed by the next resume. `output/<id>/.lock`
 (pid based, stale detection) keeps the CLI and the API worker from running
 the same project at once. Absolute paths stored in project and work files
 are rebased onto the current project root on load, so projects move freely
 between machines and between host and Docker.
 
+**Shot list snapshots.** Six stages write the shot list: shotlist, sourcing,
+judge, visuals, motion and assembly (`SHOTLIST_STAGES` in
+`vidbush/jobs/context.py`). Each one writes its own snapshot
+`work/<stage>.shotlist.json`, records its hash in `work/snapshots.json`, and
+then copies the same bytes to the working copy `work/shotlist.json`. A stage
+in that chain reads the snapshot of the stage before it
+(`StageContext.shotlist_source`). So `resume <id> --force sourcing`
+re-sources from the director's plan, and `--force judge` re-scores from the
+sourcing output, never from what later stages made of it. When the working
+copy no longer matches the last recorded hash, an edit op or the operator
+changed it, and the edit wins: a stage that was not forced reads the working
+copy. A forced stage still starts from its input snapshot, but first keeps the
+edited copy as `work/operator_edit_<ts>.shotlist.json` (one warning in the
+log). Projects made before snapshots, and stages outside the chain (mix,
+packaging), read the working copy. A forced judge on such an old project
+clears the old verdicts and generated candidates first.
+
+**Run provenance.** Every `run_project` call appends a `RunRecord` to
+`project.runs` (`vidbush/jobs/provenance.py`): git commit, branch, dirty
+flag, argv, forced stages, cost cap and settings (seat models per role,
+hashes of `vidbush.yaml`, `seats.yaml`, the style profile and the brand,
+seed, offline, allow_mock_fallback, reply_cache, judge threshold). Never key
+values. Every stage attempt is kept in `StageRecord.history` (`StageAttempt`:
+times, seconds, status done, failed or capped, error, commit), so a project
+resumed on newer code shows which attempt ran on which commit.
+
 ## Files on disk (per project)
 
 ```
 output/<id>/
-  project.json              Project
+  project.json              Project, with runs (one RunRecord per run) and per stage history
+                            (one StageAttempt per attempt)
   final.mp4                 1920x1080, 30 fps, H.264 high, AAC 192k, -14 LUFS, -1 dBTP
   captions.srt, captions.ass
   chapters.txt, description.md
@@ -46,11 +74,21 @@ output/<id>/
   review.md                 review export for the next tuning session (review-export)
   sources/<shot_id>/...     downloaded assets, each with <file>.json sidecar
   inputs/                   copies of the operator's input files
+  audit/                    tile audit of final.mp4 (python -m vidbush audit <id>)
+    audit.jsonl             one row per 2 s tile, appended as each finishes, compacted to the latest row per tile
+    audit.md                the six numbers against the benchmark and targets, then the ten worst stretches
+    audit_summary.json      the six numbers, tile counts, video, model, cost (read by QA, acceptance, batch report)
+    audit_cost_report.json  the audit's own cost report (never the project's cost_report.json)
+    tiles/                  frames t<ms>.jpg, plus video.json (identity of the video the frames came from)
   work/
     research.json outline.json script.json narration.json director_plan.json
     script_summary.json     director's one paragraph summary of the script (keyed by script hash)
     fallbacks.json          heuristic fallbacks per stage while a real provider was configured
     shotlist.json captions.json mix.wav mix.json
+    <stage>.shotlist.json   snapshot written by each shot list stage (shotlist, sourcing, judge, visuals,
+                            motion, assembly); the next stage reads it
+    snapshots.json          {"last": stage, "sha": hash of the working copy it wrote, "stages": {...}}
+    operator_edit_<ts>.shotlist.json   an edited working copy kept when a forced stage started from its snapshot
     narration/              per-scene tts audio + narration.wav
     mg/                     rendered motion graphics (<hash>.mp4, overlays <hash>.mov)
     ai/                     generated images
@@ -64,7 +102,8 @@ output/<id>/
 ```
 data/batches/<batch_id>/
   state.json                BatchState: source, brand, cost_cap_usd, paused, status, items
-                            (input, mode, project_id, status, note, duration, cost, QA percent)
+                            (input, mode, project_id, status, note, duration, cost, pre-render judge
+                            percent, audit noticeable percent)
   batch_report.md           one row per project (rewritten whenever an item changes)
   batch_report.json         the same, machine readable, with a summary
   .lock                     held by the runner (same lock module as projects)
@@ -76,11 +115,20 @@ list file), runs items one at a time through `api/jobs_handler.run_pipeline`
 (the worker's own path: `create_project` then `run_project`), records a
 failed item and moves on, and checks the paused flag between projects.
 `vidbush/jobs/batch_report.py` writes the report. `vidbush/jobs/costcap.py`
-is the per-run cap: `run_project(..., cost_cap=usd)` (default None, no cap)
-checks `ctx.tracker.total_usd` after each stage and stops at that stage
-boundary with the project `needs_review` and `project.status_note` set; a
-plain `resume` finishes it. CLI: `batch`, `batch-status`, `batch-pause`,
-`batch-resume` (`vidbush/batch_cli.py`).
+is the per-run cap: `run_project(..., cost_cap=usd)` (default None, no cap).
+The cap is checked before every live paid call (LLM, vision, image, TTS,
+search, video): `Seats.check_cap` raises `CostCapReached`, a BaseException so
+no fallback can swallow it. A reply cache hit is free and is not checked. Cost
+is recorded when a call returns, so with N calls in flight the overshoot is at
+most N - 1 calls. A cap reached inside a stage leaves that stage pending
+(`costcap.stopped_inside`); the check after each stage stops at the boundary.
+Either way the project ends `needs_review` with `project.status_note` set and
+`work/cost_cap.json` written, and forced later stages go back to pending. A
+plain `resume` finishes it, and the replies already paid for come back from
+the reply cache. `run` and `resume` take `--cost-cap` too. The batch report
+shows the pre-render judge percent (bookkeeping only) and the audit
+noticeable percent from `audit/audit_summary.json`. CLI: `batch`,
+`batch-status`, `batch-pause`, `batch-resume` (`vidbush/batch_cli.py`).
 
 ## Contracts
 
@@ -115,13 +163,15 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | audio/music.py | `build_mix(narration, script, shotlist, brand, profile, settings, work_dir, log, rng) -> Path` | writes work/mix.wav at -14 LUFS, ducked bed |
 | render/assemble.py | `assemble(shotlist, ctx) -> (Path, ShotList)` | per-shot segments with cache, concat, intro/outro, mux |
 | render/package.py | `package(shotlist, ctx) -> list[Path]` | chapters, description, thumbnails |
-| judge/qa.py | `build_qa(shotlist, ctx) -> list[Path]`, `judge_rendered(shotlist, frames, ctx, words)`, `local_checks(...)`, `overlay_text_stats(shotlist, words)`, `screen_time(shotlist)` | post-render frame check: frames from each shot's own window (`shot_times`), judged against the narration spoken during the shot with named checks plus code checks (text timing, repeats, filler, same picture); screen time by what is on screen (selected candidate, not planned type); every on-screen text item measured; qa_report.json and .md opening with a five-line summary |
+| judge/qa.py | `build_qa(shotlist, ctx) -> list[Path]`, `judge_rendered(shotlist, frames, ctx, words)`, `local_checks(...)`, `overlay_text_stats(shotlist, words)`, `screen_time(shotlist)` | post-render frame check: frames from each shot's own window (`shot_times`), judged against the narration spoken during the shot with named checks plus code checks (text timing, repeats, filler, same picture); screen time by what is on screen (selected candidate, not planned type); every on-screen text item measured; qa_report.md opens with the tile audit's six numbers (`load_audit`, `audit_lines`, from audit/audit_summary.json, or a line saying how to run it), then a five-line summary; `pct_above_threshold` is the pre-render judge, kept as bookkeeping |
+| audit/auditor.py, audit/core.py | `run_audit(video, words, out, vision, duration, shots=...)`, `write_reports(rows, out, ...)`, `core.summarize(rows)`, `core.compare(audit, ref)` | tile audit: one frame every 2 s judged by the `auditor` seat against the words heard; rows keyed on prompt, model, words, source line and video identity |
+| audit/calibrate.py, audit/plan_replay.py | `build_sheet(...)`, `agreement(marks, key)`; `plan_report(work, shotlist=None)` | 40 tile calibration page and agreement (trusted at 34 of 40); plan replay measures a stored shot plan without rendering |
 | scripts/qa_calibration.py | `review_labels(review)`, `compare(...)` | runs the frame check over a finished render read only and compares it with a frame review (recall, false alarms); scripts/regen_ai_shots.py regenerates chosen AI shots into a scratch copy |
 | editor/ops.py | `apply_ops(settings, project_id, ops) -> EditResult`, `apply_and_render(settings, project_id, ops, echo=True) -> EditResult` | fixed EditOp vocabulary |
 | editor/revise.py | `map_message(settings, project_id, message) -> list[EditOp]` | editor seat with rule-based fallback |
 | review/store.py | `load(settings, id) -> Review`, `update_shot(settings, id, shot, verdict=, comment=, rejects=)`, `set_project_comment`, `mark_fixed`, `progress` | review.json, reconciled with the shot list on every load |
 | review/export.py | `summary(review)`, `markdown(review, title, threshold)`, `write_export(settings, id) -> Path` | review.md |
-| review/fixes.py | `plan(settings, id) -> {ops, timing, comments, skipped}` | verdicts to EditOps (change_type re-source with add_must_avoid, add_queries, reject_selected; regenerate_ai for AI shots) |
+| review/fixes.py | `plan(settings, id) -> {ops, timing, comments, skipped}` | verdicts to EditOps (change_type re-source with add_must_avoid, add_queries, reject_selected, operator_wish; regenerate_ai for AI shots); a comment is split by `comment_parts` into a wish (Shot.operator_wish, shown to the judge, and a query) and a complaint (must_avoid), never written whole into must_avoid |
 | review/calibrate.py | `calibrate(review, threshold) -> dict`, `calibration_text(c)` | judge scores against the review verdicts, suggested threshold, missed rejects |
 | learn/style_learner.py | `learn_style(source, name, settings) -> Path` | writes config/style_profiles/<name>.yaml |
 
@@ -228,10 +278,43 @@ to one shot changes only that shot's hash, so only that segment re-renders.
 `work/render_stats.json` records how many segments were rendered and how
 many came from cache on the last assembly.
 
+### Reply cache
+
+Every LLM and vision reply (`Seats.llm_json`, `llm_text`, `vision_json`) is
+stored by `vidbush/providers/reply_cache.py`, so a replay with unchanged
+prompts costs nothing and returns the same decisions.
+
+- Location: `reply_cache_folder` (env `VIDBUSH_REPLY_CACHE_FOLDER`), by
+  default beside the source cache: `<parent of source cache>/reply_cache`
+  (`data/reply_cache` with the default `data/source_cache`). One file per key:
+  `<folder>/<role>/<key[:2]>/<key>.json`.
+- Key: sha256 of role, model, system prompt, user prompt (text, or the image
+  parts with their base64 data) and the options that change the reply (json
+  mode, temperature).
+- N-th occurrence rule: the n-th identical request in one process gets the
+  reply stored as occurrence n. A caller that retries the same prompt gets
+  the second stored reply, or a live call when none was stored, so a retry
+  never loops on one cached answer. A failed occurrence leaves a gap, and a
+  replay asks live for it. `fresh=True` (the judge retry after an unusable
+  reply) asks live and overwrites that occurrence.
+- Only real, non-empty replies are stored, never mock output. A hit is free
+  and skips the cost cap check.
+- Switch: on by default. Off with the global flag `--no-reply-cache` (before
+  the subcommand), `VIDBUSH_REPLY_CACHE=0`, or `reply_cache: false` in
+  `config/vidbush.yaml`. Offline mode never uses it.
+- Caveat: the key ignores provider options such as `max_tokens`. Clear the
+  cache folder, or run with `--no-reply-cache`, after changing an output cap.
+- Images, TTS, search and video are not in this cache (the source cache and
+  the narration chunk cache cover those).
+
 ## Providers
 
 Code asks for a seat by role (`researcher`, `writer`, `director`, `judge`,
-`editor`, `cheap_classifier`, `image`, `video`, `tts`, `vision`, `search`).
+`editor`, `cheap_classifier`, `image`, `video`, `tts`, `vision`, `search`,
+`auditor`). The `auditor` role is the tile audit's vision seat (Sonnet 5.5
+first); it never runs inside the pipeline. LLM and vision replies go through
+the reply cache (Cache rule above), and every live call checks the cost cap
+first (Batch queue above).
 `config/seats.yaml` maps each role to an ordered provider list. One client
 (`vidbush/providers/base.py`) wraps every call: 3 attempts with backoff on
 transport errors, one attempt then fallback on refusal or 4xx, providers
