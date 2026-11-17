@@ -349,3 +349,55 @@ def test_one_sources_queries_interleave_by_rank() -> None:
         return RawResult(source="webimage", url=f"https://w/{q}/{i}", title=q, extra={"query": q, "rank": i})
     merged = registry._merge([hit("vague", 1), hit("vague", 2), hit("vague", 3), hit("exact", 1), hit("exact", 2)])
     assert [r.url for r in merged[:3]] == ["https://w/vague/1", "https://w/exact/1", "https://w/vague/2"]
+
+
+# ---------------------------------------------------------------- review fixes
+
+def test_flat_queries_beyond_the_routed_ones_go_to_every_source() -> None:
+    shot = _shot(queries=["balto statue"], source_queries={"video": ["Balto statue Central Park"]})
+    plan = registry.query_plan(shot)
+    assert registry.adapter_queries(plan, _Ad("pexels", {"stock"})) == ["balto statue"]
+    yt = registry.adapter_queries(plan, _Ad("youtube", {"web_video"}))
+    assert yt == ["Balto statue Central Park", "balto statue"]
+
+
+def test_planner_flat_copy_of_class_queries_does_not_undo_routing() -> None:
+    shot = _shot(queries=["plain harbour", "Port of Nome"],
+                 source_queries={"stock": ["plain harbour"], "encyclopedic": ["Port of Nome"]})
+    assert registry.adapter_queries(registry.query_plan(shot), _Ad("pexels", {"stock"})) == ["plain harbour"]
+
+
+def test_requery_list_is_sent_as_given_and_thing_alone_keeps_the_shot_queries() -> None:
+    shot = _shot(queries=["a"], real_thing=RealThing(name="Balto", date="1925"),
+                 source_queries={"encyclopedic": ["Balto"]})
+    plan = registry.query_plan(shot, ["q1", "q2", "q3"])
+    assert registry.adapter_queries(plan, _Ad("wikimedia", {"encyclopedic"})) == ["q1", "q2", "q3"]
+    plan = registry.query_plan(shot, {"real_thing": {"name": "Togo", "date": "1925"}})
+    assert plan.real_thing.name == "Togo" and plan.by_class == {"encyclopedic": ["Balto"]}
+
+
+def test_two_web_images_from_one_page_stay_two_assets() -> None:
+    hits = [RawResult(source="webimage", url=f"https://img/{i}.jpg", page_url="https://news/article",
+                      extra={"asset_key": f"https://img/{i}.jpg", "rank": i + 1}) for i in range(2)]
+    assert len(registry._merge(hits)) == 2
+
+
+def test_entity_adapters_key_their_cache_on_the_whole_query() -> None:
+    ent = _Ad("wikimedia", {"encyclopedic"})
+    ent.keyword_words, ent.uses_real_thing = 3, True
+    a, b = "Balto statue Central Park 1925", "Balto Central Park statue unveiling 1925"
+    assert registry.sent_query(ent, a) != registry.sent_query(ent, b)
+
+
+def test_unreadable_video_is_remembered(settings, seats) -> None:
+    calls = []
+    shot = _shot(typ=ShotType.footage, intent="ships")
+    assert segment.choose_time("dead", lambda: calls.append(1) or [], shot, settings) is None
+    assert segment.choose_time("dead", lambda: calls.append(1) or [], shot, settings) is None
+    assert calls == [1] and seats.calls == 0
+
+
+def test_entity_lookup_only_for_names_without_a_real_thing() -> None:
+    from vidbush.source import wikimedia
+    assert wikimedia.entity_names("Balto statue Central Park 1925", None) == []
+    assert wikimedia.entity_names("Coldfoot, Alaska", None) == ["Coldfoot, Alaska"]

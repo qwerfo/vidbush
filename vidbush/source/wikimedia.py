@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import re
+import threading
 import unicodedata
 from pathlib import Path
 from typing import Any, Optional
@@ -36,7 +37,10 @@ MAX_REQUESTS = 5  # per entity lookup; the text search fallback always gets its 
 CATEGORY_FILES = 20
 FEW_FILES = 5  # a category with fewer files of the wanted media than this also lends its first subcategory
 # P31 values that are never the thing itself: disambiguation, family and given names, categories, lists.
-NOT_A_THING = {"Q4167410", "Q101352", "Q202444", "Q4167836", "Q13406463", "Q11266439"}
+NOT_A_THING = {"Q4167410", "Q101352", "Q202444", "Q4167836", "Q13406463", "Q11266439",
+               # a people or a language: what a demonym inside a phrase resolves to ("abandoned British
+               # equipment" gave the Britons and Welsh murals), never the picture's subject
+               "Q41710", "Q2472587", "Q34770", "Q33742", "Q1288568"}
 TIME_PROPS = ("P569", "P570", "P571", "P576", "P580", "P582", "P585", "P1619", "P729", "P730")
 OPEN_LICENCES = ("public domain", "pd", "cc0", "cc by", "cc-by", "no restrictions")
 
@@ -124,15 +128,26 @@ def proper_name_run(text: str) -> str:
     return " ".join(best)
 
 
+def looks_like_name(text: str) -> bool:
+    """Every specific word capitalised ("Port of Nome", "Coldfoot, Alaska"): the query is itself a name."""
+    words = [w for w in re.findall(r"[A-Za-z][\w'\-]*", text or "") if len(w) >= 3 and w.lower() not in base.SKIP_WORDS]
+    return bool(words) and all(w[0].isupper() for w in words)
+
+
 def entity_names(query: str, shot: Optional[Shot]) -> list[str]:
-    """Names to resolve, best first: the real thing's name, else the query; then its proper-name run."""
+    """Names to resolve, best first: the real thing's name, the query (an encyclopedic query is the exact
+    name, and a real thing's name can be a description such as "abandoned British equipment on Dunkirk
+    beach"), then their proper-name runs. Without a real thing only a query that is itself a name is
+    resolved: a capitalised fragment of a description ("Central Park" in "Balto statue Central Park")
+    would return that place's category instead of a text search for the description."""
     thing = shot.real_thing if shot is not None else None
-    name = (thing.name if thing and thing.name else query).strip()
-    names = [name] if name else []
-    if len(name.split()) > 1:
-        run = proper_name_run(name)
-        if run and _norm(run) != _norm(name):
-            names.append(run)
+    if not (thing and thing.name):
+        return [query.strip()] if looks_like_name(query) else []
+    whole = [n.strip() for n in (thing.name, query) if n and n.strip()]
+    names: list[str] = []
+    for n in whole + [proper_name_run(n) for n in whole if len(n.split()) > 1]:
+        if n and _norm(n) not in {_norm(x) for x in names}:
+            names.append(n)
     return names
 
 
@@ -170,8 +185,9 @@ def _label_match(name: str, ent: dict[str, Any]) -> float:
             return 3.0
         if t == head:
             best = max(best, 2.5)
-        elif set(t.split()) <= set(want.split()) or set(want.split()) <= set(t.split()):
-            best = max(best, 1.0)
+        elif set(t.split()) <= set(want.split()):
+            best = max(best, 1.0)  # the item is named inside the thing's name ("Balto" in "Balto statue"),
+            # never the reverse: "British" is not "British Indian Empire"
     return best
 
 
@@ -232,8 +248,24 @@ class _Budget:
         return base.http_get_json(url, params={"format": "json", **params}, timeout=self.timeout)
 
 
+_resolved: dict[tuple, Optional[dict[str, Any]]] = {}  # shortcut: process lifetime, unbounded; fine per run
+_resolved_lock = threading.Lock()
+
+
 def resolve_entity(names: list[str], thing: Optional[RealThing], budget: _Budget) -> Optional[dict[str, Any]]:
-    """The best Wikidata item for the first name that finds one, with its claims; None when none fits."""
+    """The best Wikidata item for the first name that finds one, with its claims; None when none fits.
+    Remembered for the process: a shot's several queries name the same real thing."""
+    key = (tuple(names), thing.model_dump_json() if thing is not None else "")
+    with _resolved_lock:
+        if key in _resolved:
+            return _resolved[key]
+    ent = _resolve(names, thing, budget)
+    with _resolved_lock:
+        _resolved[key] = ent
+    return ent
+
+
+def _resolve(names: list[str], thing: Optional[RealThing], budget: _Budget) -> Optional[dict[str, Any]]:
     for name in names:
         found = budget.get(WIKIDATA_API, {"action": "wbsearchentities", "search": name, "language": "en",
                                           "uselang": "en", "type": "item", "limit": 5})
@@ -246,7 +278,9 @@ def resolve_entity(names: list[str], thing: Optional[RealThing], budget: _Budget
         scored = [(entity_score(name, ents[i], thing), -n, ents[i]) for n, i in enumerate(ids) if i in ents]
         scored = [s for s in scored if s[0] > 0]
         if scored:
-            return max(scored, key=lambda s: (s[0], s[1]))[2]
+            best = dict(max(scored, key=lambda s: (s[0], s[1]))[2])
+            best["_via"] = name  # the name that found it: a fragment is weaker evidence than a whole name
+            return best
     return None
 
 
@@ -339,22 +373,28 @@ class WikimediaAdapter(BaseAdapter):
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
         budget = _Budget(self.timeout(settings))
+        thing = shot.real_thing if shot else None
         try:
-            ent = resolve_entity(entity_names(query, shot), shot.real_thing if shot else None, budget)
+            ent = resolve_entity(entity_names(query, shot), thing, budget)
             found = entity_media(ent, media, budget) if ent else []
         except ProviderError:  # Wikidata down or one lookup failed: the text search still runs
-            found = []
-        if found:
+            ent, found = None, []
+        whole = {_norm(x) for x in (query, thing.name if thing else "") if x}
+        if found and _norm(str(ent.get("_via", ""))) in whole:
             return found[:n]
-        budget.left = 2  # the text search fallback: the first archive query, the second only when it is empty
+        # no entity, or one found only through a fragment of the name ("Dunkirk" for "East Mole Dunkirk"):
+        # the text search for the whole query leads and the fragment's media follow
+        budget.left = 2  # the text search: the first archive query, the second only when it is empty
+        text: list[RawResult] = []
         for q in base.archive_queries(query, self.keyword_words):
             search = f"{q} filetype:video" if media == "video" else f"{q} filetype:bitmap"
             data = budget.get(API, {"action": "query", "generator": "search", "gsrsearch": search,
                                     "gsrnamespace": 6, "gsrlimit": max(n, 5), **IMAGEINFO})
-            found = parse_commons(data or {}, media)
-            if found:
+            text = parse_commons(data or {}, media)
+            if text:
                 break
-        return found[:n]
+        urls = {r.url for r in text}
+        return (text + [r for r in found if r.url not in urls])[:n]
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         url = raw.download_url or raw.url

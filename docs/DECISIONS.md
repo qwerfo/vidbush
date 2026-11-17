@@ -472,3 +472,11 @@ One line each: the decision and why.
 - loc.gov's bot-check pause drops from 3900 s to 600 s and its requests during a pause are refused at once, so a challenged Library of Congress never stalls a stage; from this connection it answers every search with a Cloudflare challenge and is reported unusable here.
 - An adapter whose module cannot load is skipped with a one-time warning, never the stage.
 - An adapter whose search reads shot.real_thing (uses_real_thing: Wikimedia, Chronicling America) has the real thing in its search cache key, so two things with one query never share an answer.
+- One source's results interleave by rank across its queries (every query's first result before any query's second): concatenated, a vague query filled the source's slots (the Alaska proof lost the Balto unveiling photo, rank 1 of its query, behind film posters).
+- Web image search does not take encyclopedic queries: those are bare names for entity lookup, and on the open web a bare name returns its namesakes first.
+- One picture reached through two sources (Commons and a web search hit of the same file) is kept once, the openly licensed copy first (difference hash of the keyframes; flat images never count as the same).
+- Wikimedia entity lookup tries the real thing's name, then the query (an encyclopedic query is the exact name), then their proper-name runs; without a real thing only a query that is itself a name is looked up, and a people or a language is never the thing (a demonym inside a description resolved to the Britons).
+- An entity adapter's search cache and in-flight key use the whole query, because entity lookup reads it; the keyword form would let two different queries share one answer.
+- Flat queries a shot holds beyond its per-class ones go to every source; a requery list is sent as given (no real-thing query pushes one out); an override that names only a real thing keeps the shot's own queries.
+- An asset is keyed on the image for web image search (extra asset_key), not on the article page, so two images of one page stay two assets.
+- A video whose frames cannot be read is remembered as such in the segment cache, seeks stop after two failures with none read, and one video and subject is chosen once at a time.

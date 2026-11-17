@@ -94,10 +94,15 @@ def test_kind_prefers_the_dog_over_the_film() -> None:
 
 def test_resolve_picks_the_dog_and_long_names_try_their_proper_name(wiki, online) -> None:
     calls, _ = wiki
-    res = WikimediaAdapter().search("Balto statue", "image", 3, online, shot=_shot("Balto statue", kind="object"))
+    res = WikimediaAdapter().search("Balto statue", "image", 20, online, shot=_shot("Balto statue", kind="object"))
     searched = [c["search"] for c in calls if c.get("action") == "wbsearchentities"]
-    assert searched == ["Balto statue", "Balto"] and res[0].extra["entity"] == "Q805807"
-    assert wikimedia.entity_names("Balto sled dog in Nome", None) == ["Balto sled dog in Nome", "Balto"]
+    assert searched == ["Balto statue", "Balto"]
+    # found through the fragment "Balto": the text search for the whole name leads, the dog's media follow
+    assert any(r.extra.get("entity") == "Q805807" for r in res)
+    assert not res[0].extra.get("entity") or len({r.extra.get("entity") for r in res}) == 1
+    named = _shot("Balto sled dog in Nome", kind="object")
+    assert wikimedia.entity_names("Balto sled dog in Nome", named) == ["Balto sled dog in Nome", "Balto"]
+    assert wikimedia.entity_names("Balto sled dog in Nome", None) == []  # a description, no real thing
     assert wikimedia.proper_name_run("the Port of Nome Alaska and Balto") == "Nome Alaska"  # longest run
     assert wikimedia.proper_name_run("photo of Leonhard Seppala with dogs") == "Leonhard Seppala"
 
@@ -166,3 +171,23 @@ def test_thin_category_lends_its_first_subcategory(wiki, online) -> None:
     members = [c for c in calls if c.get("generator") == "categorymembers"]
     assert [c["gcmtitle"] for c in members] == ["Category:Balto", "Category:Statue of Balto"]
     assert members[1]["gcmtype"] == "file" and len(calls) <= wikimedia.MAX_REQUESTS
+
+
+def test_entity_names_try_the_query_before_name_fragments() -> None:
+    from vidbush.models import RealThing, Shot, ShotType
+    shot = Shot(id="s", beat_id="b", start=0, end=4, duration=4, type=ShotType.image, intent="x",
+                real_thing=RealThing(name="abandoned British equipment on Dunkirk beach", kind="object"))
+    assert wikimedia.entity_names("Dunkirk evacuation", shot)[:2] == [
+        "abandoned British equipment on Dunkirk beach", "Dunkirk evacuation"]
+
+
+def test_a_people_or_language_is_never_the_thing() -> None:
+    ent = {"labels": {"en": {"value": "British"}}, "claims": {"P31": [
+        {"mainsnak": {"datavalue": {"value": {"id": "Q41710"}}}}]}}
+    assert wikimedia.entity_score("British", ent, None) == 0.0
+
+
+def test_a_single_word_never_matches_a_longer_label() -> None:
+    ent = {"labels": {"en": {"value": "British Indian Empire"}}, "claims": {}}
+    assert wikimedia._label_match("British", ent) == 0.0
+    assert wikimedia._label_match("Balto statue", {"labels": {"en": {"value": "Balto"}}, "claims": {}}) == 1.0

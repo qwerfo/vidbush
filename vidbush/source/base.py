@@ -539,7 +539,8 @@ def make_candidates(raw: RawResult, path: Path, shot: Shot, settings: Settings,
     write_sidecar(path, raw, attribution, flags)
     media = media or raw.media
     spans = spans or [(0.0, raw.duration if media == "video" else 0.0)]
-    return [Candidate(id=f"{shot.id}_{raw.source}_{i}", source=SourceKind(raw.source), url=raw.page_url or raw.url,
+    url = str(raw.extra.get("asset_key") or "") or raw.page_url or raw.url  # the asset, as registry.raw_key
+    return [Candidate(id=f"{shot.id}_{raw.source}_{i}", source=SourceKind(raw.source), url=url,
                       local_path=str(path), media=media, in_point=round(a, 3), out_point=round(b, 3),
                       width=raw.width, height=raw.height, licence=licence, author=raw.author,
                       attribution=attribution, title=raw.title, flags=list(flags), **provenance(raw))

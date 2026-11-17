@@ -229,8 +229,14 @@ class ChronamAdapter(BaseAdapter):
                 if suffix:
                     continue
                 raise
+            try:
+                w, h = _dims(src)
+            except Exception:  # noqa: BLE001 - an error page saved as the image: drop it so a retry fetches again
+                src.unlink(missing_ok=True)
+                if suffix:
+                    continue
+                raise base.Rejected("newspaper page image did not decode")
             dst = link_into(src, out_dir, f"chronam_{base.url_hash(url)}.jpg")
-            w, h = _dims(dst)
             one = raw.model_copy(update={"download_url": url, "note": note, "title": raw.title + suffix,
                                          "width": w, "height": h})
             out += make_candidates(one, dst, shot, settings)

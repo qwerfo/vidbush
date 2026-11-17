@@ -40,6 +40,8 @@ YOUTUBE_FRAMES = 20
 REMOTE_FRAMES = 12
 LOCAL_FRAMES = 16
 EDGE = 0.04  # skip the first and last 4 percent (titles, end cards)
+SEEK_TIMEOUT_S = 20.0
+MAX_FAILED_SEEKS = 2
 SEAT, TASK, STAGE = "cheap_classifier", "segment", "sourcing"
 SYSTEM = ("You help a documentary editor find the right part of a long video. You see numbered frames "
           "sampled in time order. Reply with JSON only.")
@@ -138,6 +140,12 @@ def choose_time(key: str, frames_fn: Callable[[], list[Frame]], shot: Shot, sett
     if not subject or not available():
         return None
     path = _cache_path(settings, key, subject)
+    from . import throttle
+    with throttle.exclusive("segment", path.name):  # two shots with one video and subject pay once
+        return _choose(path, key, frames_fn, subject, title)
+
+
+def _choose(path: Path, key: str, frames_fn: Callable[[], list[Frame]], subject: str, title: str) -> Optional[float]:
     try:
         hit = json.loads(path.read_text(encoding="utf-8"))
         return None if hit.get("t") is None else float(hit["t"])
@@ -149,19 +157,26 @@ def choose_time(key: str, frames_fn: Callable[[], list[Frame]], shot: Shot, sett
         log = _state["log"]
         if log is not None:
             log.info("segment frames unavailable", key=key[:120], error=str(e)[:160])
+        frames = []
+    if not frames:  # unreadable video: remembered, so later shots do not pay the seeks again
+        _save(path, {"key": key, "subject": subject, "t": None, "times": [], "reply": {"error": "no frames"}})
         return None
     raw = ask(frames, subject, title)
     if raw is None:
         return None  # not cached: a later run with a working seat may answer
     idx = pick(raw, len(frames))
     t = frames[idx][0] if idx is not None else None
+    _save(path, {"key": key, "subject": subject, "t": t, "times": [round(f[0], 2) for f in frames],
+                 "reply": {k: v for k, v in raw.items() if not k.startswith("_")}})
+    return t
+
+
+def _save(path: Path, data: dict[str, Any]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"key": key, "subject": subject, "t": t, "times": [round(f[0], 2) for f in frames],
-                                    "reply": {k: v for k, v in raw.items() if not k.startswith("_")}}), encoding="utf-8")
+        path.write_text(json.dumps(data), encoding="utf-8")
     except OSError:
         pass
-    return t
 
 
 def even_times(duration: float, n: int) -> list[float]:
@@ -232,15 +247,18 @@ def sampled_frames(src: str, duration: float, n: int = REMOTE_FRAMES) -> list[Fr
     proxy = ["-http_proxy", base.HTTP_PROXY] if base.HTTP_PROXY and "://" in src else []
     ua = ["-user_agent", base.USER_AGENT] if "://" in src else []
     with tempfile.TemporaryDirectory(prefix="vidbush_frames_") as tmp:
+        failed = 0
         for i, t in enumerate(even_times(duration, n)):
             out = Path(tmp) / f"f{i}.jpg"
             try:
                 run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.2f}", *ua, *proxy, "-i", src,
-                     "-frames:v", "1", "-vf", f"scale={TILE_W}:-2", "-q:v", "5", str(out)], timeout=60)
+                     "-frames:v", "1", "-vf", f"scale={TILE_W}:-2", "-q:v", "5", str(out)], timeout=SEEK_TIMEOUT_S)
                 with Image.open(out) as im:
                     frames.append((t, im.convert("RGB").copy()))
             except Exception:  # noqa: BLE001 - one unreadable position loses one frame
-                continue
+                failed += 1
+                if failed >= MAX_FAILED_SEEKS and not frames:
+                    break  # the file does not answer seeks: stop before n timeouts add up
     return frames
 
 

@@ -164,7 +164,9 @@ def asset_key(url: str) -> str:
 
 
 def raw_key(raw: RawResult) -> str:
-    return asset_key(raw.page_url or raw.url)
+    """The asset a result is: its page, unless the adapter names the asset (extra asset_key: one article
+    page holds many different web images)."""
+    return asset_key(str((raw.extra or {}).get("asset_key") or "") or raw.page_url or raw.url)
 
 
 def shot_queries(shot: Shot, queries: Optional[list[str]] = None) -> list[str]:
@@ -180,6 +182,7 @@ class QueryPlan(NamedTuple):
     flat: list[str]
     by_class: dict[str, list[str]]
     real_thing: Optional[RealThing]
+    override: bool = False  # queries given for this search (a requery): sent as given, nothing prepended
 
 
 QueriesIn = Union[None, list[str], dict[str, Any]]
@@ -224,9 +227,13 @@ def query_plan(shot: Shot, queries: QueriesIn = None) -> QueryPlan:
     {class: [...]} dict, or {real_thing: {name, kind, date, place}, queries: {class: [...]}}; class names
     are canonical (base.SOURCE_CLASSES) or aliases (web, video)."""
     rt = shot.real_thing
+    override = queries is not None
+    if isinstance(queries, dict) and "real_thing" in queries and not queries.get("queries"):
+        rt = _real_thing(queries.get("real_thing")) or rt
+        queries, override = None, False  # a real thing alone: the shot's own queries
     if queries is None:
         by = _by_class(shot.source_queries)
-        flat = shot_queries(shot) if not by or shot.queries else []
+        flat = _clean(shot.queries) if by else shot_queries(shot)
     elif isinstance(queries, dict):
         inner: Any = queries
         if "queries" in queries or "real_thing" in queries:
@@ -238,7 +245,7 @@ def query_plan(shot: Shot, queries: QueriesIn = None) -> QueryPlan:
         by, flat = {}, _clean(queries)
     if not flat and not by:
         flat = shot_queries(shot)
-    return QueryPlan(flat, by, rt)
+    return QueryPlan(flat, by, rt, override)
 
 
 def thing_query(rt: RealThing) -> str:
@@ -257,11 +264,13 @@ def adapter_queries(plan: QueryPlan, adapter: SourceAdapter) -> list[str]:
         qs: list[str] = []
         for i in range(max((len(c) for c in cols), default=0)):
             qs += [c[i] for c in cols if i < len(c) and c[i] not in qs]
+        routed = {q for v in plan.by_class.values() for q in v}
+        qs += [q for q in plan.flat if q not in routed and q not in qs]  # a flat query is for every source
         if not qs and plan.real_thing and set(classes) & THING_CLASSES:
             qs = [thing_query(plan.real_thing)]
         return qs[:QUERIES_PER_SHOT]
     qs = list(plan.flat)
-    if plan.real_thing and set(classes) & THING_CLASSES and getattr(adapter, "name", "") != "local":
+    if plan.real_thing and not plan.override and set(classes) & THING_CLASSES and getattr(adapter, "name", "") != "local":
         tq = thing_query(plan.real_thing)
         qs = [tq] + [q for q in qs if q != tq]
     return qs[:QUERIES_PER_SHOT]
@@ -331,6 +340,8 @@ def search_variant(adapter: SourceAdapter, ctx: "StageContext", shot: Optional[S
 def sent_query(adapter: SourceAdapter, query: str) -> str:
     """The query the adapter actually sends (its keyword form when the engine matches every word). The
     search cache is keyed on it, so long queries that shorten to the same request share one search."""
+    if getattr(adapter, "uses_real_thing", False):
+        return query  # entity lookup reads the whole query, so two queries never share one answer
     words = getattr(adapter, "keyword_words", 0)
     return base.archive_query(query, words) if words else query
 
@@ -678,7 +689,7 @@ def _dhash(path: str) -> Optional[int]:
         from PIL import Image
         with Image.open(path) as im:
             g = im.convert("L").resize((9, 8))
-            px = list(g.getdata())
+            px = list(g.tobytes())  # "L" mode: one byte per pixel
     except Exception:  # noqa: BLE001 - no hash, no dedupe
         return None
     h = sum(1 << i for i in range(64) if px[(i // 8) * 9 + i % 8] > px[(i // 8) * 9 + i % 8 + 1])
@@ -988,7 +999,7 @@ def source_pool(shots: list[Shot], ctx: "StageContext") -> dict[str, list[Candid
     own: dict[str, list[RawResult]] = {}
     for s in targets:
         own[s.id] = [r for r in plans.get(s.id, []) if raw_key(r) not in seen]
-        seen |= {raw_key(r) for r in own[s.id][:cap]}
+        seen |= {raw_key(r) for r in own[s.id]}  # fetch may walk past cap when downloads fail
     with ThreadPoolExecutor(max_workers=_workers()) as pool:
         futs = {s.id: pool.submit(_source_with_plan, s, own[s.id], adapters, ctx, shot_media(s), set(),
                                   [c.id for c in s.candidates]) for s in targets}

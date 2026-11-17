@@ -274,3 +274,7 @@ Live checks from this laptop. Keys are read by name through settings.key; no val
   numbered 5 x 4 sheet (1280 x 576), detail high. Cached under <source_cache>/segments/.
 - YouTube storyboards: yt-dlp lists them as formats with format_note "storyboard" (mhtml, fragments are JPEG
   sprite sheets of rows x columns tiles). No video is downloaded to read them.
+- Proof run (2026-11-17): 22 segment choices, 12 named a frame, 10 found none (the caller kept its old rule);
+  22 calls cost 0.0064 USD in all on CloseRouter.
+- YouTube: a bot check ("Sign in to confirm you're not a bot") came after four proof passes in about three
+  hours without cookies; the adapter paused YouTube for 30 minutes as designed.

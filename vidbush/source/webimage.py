@@ -67,7 +67,7 @@ def _result(provider: str, image: str, title: str, page: str, width: Any, height
         return None
     site = site_of(page or image)
     title = " ".join((title or "").split()) or site
-    extra = {"provider": provider, "site": site, "position": int(position or 0),
+    extra = {"provider": provider, "site": site, "position": int(position or 0), "asset_key": image,
              "attribution": f"{title} ({site}, via web image search)"}
     if description:
         extra["description"] = description
