@@ -210,8 +210,9 @@ def test_consecutive_banned_passing_segment_loses_to_sub_threshold_alternative()
 
 
 def test_ai_still_generated_when_only_banned_segments_remain(monkeypatch):
-    def add_ai(s: Shot, ctx: Any) -> None:
+    def add_ai(s: Shot, ctx: Any) -> Candidate:  # add_ai returns the judged take it added
         s.candidates.append(still("ai", 72).model_copy(update={"source": SourceKind.ai_image}))
+        return s.candidates[-1]
 
     monkeypatch.setattr(dl, "add_ai", add_ai)
     out, _ = select([shot(0, "s1", [vid("a", 95, 10.0)]), shot(1, "s1", [vid("b", 95, 10.0)])])
