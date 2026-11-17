@@ -167,14 +167,16 @@ EDIT_RULES = [
     "For layout clauses, pick pictures for the layout elements that have a picture_subject (element_picks), "
     "and for over-picture layouts and panels also the picture beneath (pick). For a document_focus, "
     "document_pick is the document itself (never an AI still); pick is the footage beneath it unless its "
-    "presentation is full.",
+    "presentation is full. A document used as evidence or subject is only right when its page shows the "
+    "passages to mark: for each passage say in passages_visible (true or false, in order) whether you can see "
+    "those words on the page you picked. A different page that only looks similar is not the document.",
     "No em dash characters anywhere.",
 ]
 
 EDIT_OUTPUT = {
     "picks": [{"clause": "c001", "pick": 12, "frame": "b", "label": "", "callback": False,
                "reason": "short", "fallback": "", "fallback_pick": None, "overlay_text": "", "map_place": "",
-               "element_picks": [{"element": 0, "pick": 7, "frame": "a"}], "document_pick": None}],
+               "element_picks": [{"element": 0, "pick": 7, "frame": "a"}], "document_pick": None, "passages_visible": []}],
 }
 
 

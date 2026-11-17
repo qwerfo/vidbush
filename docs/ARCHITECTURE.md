@@ -90,7 +90,7 @@ Selected when the style profile sets `planner: clause`; `shots/director.py build
 1. `clauses.py` (code): narration words to clauses from punctuation and timings; one cut per clause at its first
    word minus 0.1 s. Writes `work/clauses.json` (id, beat, scene, text, start, end, words).
 2. `direct.py` (director seat, one call per scene): scene purpose, then per clause subject, treatment (picture,
-   hold, or one of the eleven layout kinds in `vocab.py`), presentation for route_map, chart, table and timeline,
+   hold, or one of the eleven layout kinds in `vocab.py`), presentation for route_map, chart, table, timeline and document_focus (plus a document purpose: evidence, period or subject, and the passages to mark),
    real_thing, medium, anchor, queries per source class, layout elements, grammar labels (sequence, callback,
    hero, quiet). `validate` checks timing, reading time and hold limits only; problems go back to the model.
 3. `edit.py` (vision seat, one call per scene, after sourcing): numbered contact sheets (`sheets.py`) of the

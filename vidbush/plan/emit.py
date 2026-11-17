@@ -33,7 +33,7 @@ def flat_queries(q: dict[str, list[str]]) -> list[str]:
 
 def _shot_type(plan: dict, cand: Optional[Candidate], fallback: str) -> ShotType:
     t = plan["treatment"]
-    if t in V.LAYOUT_KINDS and not needs_pick(plan) and cand is None:
+    if t in V.LAYOUT_KINDS and not needs_pick(plan) and not (t == "document_focus" and cand is not None):
         return ShotType.motion_graphic
     if cand is not None:
         if is_ai(cand):
@@ -157,6 +157,8 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
                 shot.overlay = MotionSpec(kind=MotionKind.text_overlay, duration=dur, background="transparent",
                                           payload={"title": overlay_text, "subtitle": ""},
                                           anchor=str(plan.get("anchor", "")))
+            if plan["treatment"] == "document_focus" and doc is None and ed:
+                shot.flags.append("document_not_found")
             if doc is not None and lay is not None:
                 if doc.id not in {c.id for c in shot.candidates}:
                     shot.candidates.append(_cand_copy(doc, "a", dur))

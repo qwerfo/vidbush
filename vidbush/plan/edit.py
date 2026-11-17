@@ -246,6 +246,14 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], used_before: dict[
             elif seen(asset_key(dc)) and seen(asset_key(dc)) != cid and not p.get("callback"):
                 errors.append(f"{cid}: document_pick {p.get('document_pick')} is already used at {seen(asset_key(dc))}.")
             else:
+                lay = s["plan"].get("layout") or {}
+                need = len(lay.get("elements", [])) if lay.get("purpose") in V.MARKED_PURPOSES else 0
+                vis = p.get("passages_visible") if isinstance(p.get("passages_visible"), list) else []
+                if need and (len(vis) < need or not all(v is True for v in vis[:need])):
+                    errors.append(f"{cid}: document_pick {p.get('document_pick')} is used as "
+                                  f"{lay.get('purpose')}, so every passage to mark must be visible on it "
+                                  f"(passages_visible all true); otherwise leave document_pick null.")
+                    p["_doc_unverified"] = True
                 used.setdefault(asset_key(dc), cid)
                 p["_doc"] = dc
         p["_cand"] = cand
@@ -317,6 +325,9 @@ def resolve(picks: list[dict], shots: list[dict], ai_tail: int,
             keep.append(ep)
         p["element_picks"] = keep
         dc = p.get("_doc")
+        if dc is not None and p.get("_doc_unverified"):
+            p["_doc"] = dc = None
+            p["resolved"] = (p.get("resolved", "") + "; document pick removed: passages not visible on it").strip("; ")
         if dc is not None:
             if is_ai(dc) or (asset_key(dc) in used and used[asset_key(dc)] != p.get("clause") and not p.get("callback")):
                 p["_doc"] = None

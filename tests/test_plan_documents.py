@@ -82,3 +82,24 @@ def test_emit_document_full_is_the_picture_and_panel_sits_over_footage(setup, ca
     assert full.layout.document == "img2"
     assert panel.type == ShotType.footage and panel.selected == "vid" and panel.layout.document == "img2"
     assert panel.layout.presentation == "panel"
+
+
+def test_evidence_document_needs_its_passages_visible(pool):  # noqa: F811
+    sh = shots([3.0])
+    sh[0]["plan"].update(treatment="document_focus", presentation="full",
+                         layout={"purpose": "evidence", "elements": [{"text": "a line"}, {"text": "b line"}]})
+    p, errors = E.check(picks({"pick": None, "document_pick": 1, "passages_visible": [True, False]}),
+                        sh, pool, {}, 0)
+    assert any("passages_visible all true" in e for e in errors)
+    out = E.resolve(p, sh, 0)
+    assert out[0]["_doc"] is None and "passages not visible" in out[0]["resolved"]
+    p, errors = E.check(picks({"pick": None, "document_pick": 1, "passages_visible": [True, True]}),
+                        sh, pool, {}, 0)
+    assert not errors and E.resolve(p, sh, 0)[0]["_doc"].id == "real1"
+
+
+def test_full_route_map_with_a_pick_stays_a_layout(setup, cands):  # noqa: F811
+    script, nar, cl, sp = setup
+    picks_ = [{"_cand": cands["video"]}, {"_cand": cands["image"]}, {}, {}, {}]
+    _, sl = M.emit("p1", script, nar, cl, sp, [{"scene": "s01", "picks": picks_}])
+    assert sl.shots[1].type == ShotType.motion_graphic and sl.shots[1].layout.kind == "route_map"
