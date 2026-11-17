@@ -71,6 +71,19 @@ def is_seat_error(status: int, body: str) -> bool:
     return status in SEAT_STATUSES or any(w in low for w in SEAT_WORDS)
 
 
+class CostCapReached(BaseException):
+    """The run's cost cap is spent: raised before a paid call, inside any stage.
+
+    A BaseException on purpose: stage code that turns a failed call into a fallback (except Exception,
+    except ProviderError) must not swallow it. The runner (jobs/pipeline.py) catches it, leaves the stage
+    pending and ends the run needs_review; the reply cache keeps every reply paid for so far."""
+
+    def __init__(self, total_usd: float, cap_usd: float, role: str = "", stage: str = "") -> None:
+        super().__init__(f"cost cap reached: ${total_usd:.2f} spent, cap ${cap_usd:.2f} "
+                         f"(next call: {role} in {stage})")
+        self.total_usd, self.cap_usd, self.role, self.stage = total_usd, cap_usd, role, stage
+
+
 class NotConfigured(ProviderError):
     """Provider has no key or base URL."""
 

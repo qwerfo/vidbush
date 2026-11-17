@@ -127,6 +127,8 @@ class Settings(BaseModel):
     offline: bool = False  # never touch the network (tests, sandbox)
     allow_mock_fallback: bool = False  # True: a role whose real providers all fail falls back to mock instead of failing the stage
     fail_at_stage: Optional[str] = None  # test hook: raise when this stage starts
+    reply_cache: bool = True  # store every LLM and vision reply by request hash (providers/reply_cache.py)
+    reply_cache_folder: str = ""  # empty: beside the source cache (<parent of source cache>/reply_cache)
 
     def key(self, name: str) -> str:
         return self.env.get(name, "")
@@ -169,6 +171,8 @@ def load_settings(root: Optional[Path] = None, overrides: Optional[dict[str, Any
         offline=_truthy(env.get("VIDBUSH_OFFLINE", app.get("offline", False))),
         allow_mock_fallback=_truthy(env.get("VIDBUSH_ALLOW_MOCK_FALLBACK", app.get("allow_mock_fallback", False))),
         fail_at_stage=env.get("VIDBUSH_FAIL_AT") or None,
+        reply_cache=_truthy(env.get("VIDBUSH_REPLY_CACHE", app.get("reply_cache", True))),
+        reply_cache_folder=env.get("VIDBUSH_REPLY_CACHE_FOLDER") or app.get("reply_cache_folder", "") or "",
     )
     if env.get("YOUTUBE_COOKIES"):
         s.sources.youtube_cookie_file = env["YOUTUBE_COOKIES"]

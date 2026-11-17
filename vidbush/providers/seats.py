@@ -27,7 +27,9 @@ from . import search as search_mod
 from . import tts as tts_mod
 from . import tts_algrow
 from . import tts_elevate
-from .base import HEALTH, CallResult, CostTracker, ProviderClient, ProviderError, ProviderSpec, is_placeholder_model
+from . import reply_cache as reply_cache_mod
+from .base import (HEALTH, CallResult, CostCapReached, CostTracker, ProviderClient, ProviderError, ProviderSpec,
+                   is_placeholder_model)
 
 ROLES = ["researcher", "writer", "director", "judge", "editor", "cheap_classifier", "image", "video",
          "tts", "vision", "search"]
@@ -83,6 +85,10 @@ class Seats:
         self.fallback_roles: set[str] = set()
         self.heuristic_notes: list[dict[str, str]] = []
         self._tts_models: set[tuple[str, str]] = set()  # (provider, model) already logged by tts()
+        folder = settings.reply_cache_folder or reply_cache_mod.default_folder(settings.source_cache_folder)
+        self.reply_cache = reply_cache_mod.ReplyCache(settings.path(folder),
+                                                      enabled=settings.reply_cache and not self.force_mock)
+        self.cost_cap: Optional[float] = None  # USD for the whole project; checked before every live paid call
 
     # ------------------------------------------------------------ resolution
 
@@ -191,12 +197,44 @@ class Seats:
         return {"offline": self.force_mock, "allow_mock_fallback": self.settings.allow_mock_fallback,
                 "rule": "mock only for roles with no configured provider, offline mode, or allow_mock_fallback"}
 
-    def _call(self, role: str, stage: str, fn: Any, mock_fn: Any, note: str = "") -> CallResult:
-        """Run fn on the role's configured real providers; mock only as the module docstring allows."""
+    def check_cap(self, role: str, stage: str) -> None:
+        """Raise CostCapReached when the project's spend reached cost_cap (checked before a live paid call,
+        so the cap holds inside a stage, not only between stages)."""
+        if self.cost_cap is None:
+            return
+        total = self.tracker.total_usd
+        if total >= self.cost_cap:
+            raise CostCapReached(total, self.cost_cap, role, stage)
+
+    def _call(self, role: str, stage: str, fn: Any, mock_fn: Any, note: str = "",
+              cache_req: Optional[tuple[str, Any, dict[str, Any]]] = None, fresh: bool = False) -> CallResult:
+        """Run fn on the role's configured real providers; mock only as the module docstring allows.
+
+        cache_req (system, user, options) makes the call cacheable: a stored reply for the same role, model
+        and request is returned at no cost (reply_cache.py); fresh=True asks for a new reply."""
+        def live(spec: ProviderSpec) -> CallResult:
+            self.check_cap(role, stage)
+            return fn(spec)
+
+        def cached(spec: ProviderSpec) -> CallResult:
+            system, user, options = cache_req
+            key = reply_cache_mod.request_key(role, spec.model, system, user, options)
+            n, hit = self.reply_cache.take(role, key, fresh=fresh)
+            if hit is not None:
+                return CallResult(value=hit, provider=spec, mock=False, unit_kind="reply_cache")
+            try:
+                res = live(spec)
+            except BaseException:
+                self.reply_cache.give_back(key)
+                raise
+            if not res.mock and res.value is not None:
+                self.reply_cache.put(role, spec.model, key, n, res.value)
+            return res
+
         provs = [p for p in self.providers_for(role) if p.configured]
         if provs:
             try:
-                return self.client.call(role, stage, provs, fn, note)
+                return self.client.call(role, stage, provs, cached if cache_req is not None else live, note)
             except ProviderError as e:
                 if not self.settings.allow_mock_fallback:
                     self.log.warn("role failed on every real provider", role=role, stage=stage, error=str(e)[:400])
@@ -267,22 +305,25 @@ class Seats:
         return max(float(timeout or 0), ROLE_TIMEOUT_S.get(role, DEFAULT_LLM_TIMEOUT_S))
 
     def llm_json(self, role: str, task: str, system: str, user: str, stage: str,
-                 temperature: float = 0.6, timeout: Optional[float] = None) -> Optional[Any]:
-        """JSON from an LLM role, or a canned fixture in mock mode, or None (caller uses heuristic)."""
+                 temperature: float = 0.6, timeout: Optional[float] = None, fresh: bool = False) -> Optional[Any]:
+        """JSON from an LLM role, or a canned fixture in mock mode, or None (caller uses heuristic).
+        fresh=True skips a stored reply (a retry after a reply the caller could not use)."""
         res = self._call(role, stage,
                          lambda spec: self._llm_estimate(
                              chat_fn(spec)(spec, system, user, want_json=True, temperature=temperature,
                                            timeout=self.llm_timeout(role, spec, timeout))),
-                         lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task)
+                         lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task,
+                         cache_req=(system, user, {"json": True, "temperature": temperature}), fresh=fresh)
         return res.value
 
     def llm_text(self, role: str, task: str, system: str, user: str, stage: str,
-                 timeout: Optional[float] = None) -> Optional[str]:
+                 timeout: Optional[float] = None, fresh: bool = False) -> Optional[str]:
         """Plain text from an LLM role (same timeout rule as llm_json)."""
         res = self._call(role, stage,
                          lambda spec: self._llm_estimate(chat_fn(spec)(
                              spec, system, user, want_json=False, timeout=self.llm_timeout(role, spec, timeout))),
-                         lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task)
+                         lambda: mock.mock_llm(self.fixtures_dir, self.fixture_key, task), note=task,
+                         cache_req=(system, user, {"json": False}), fresh=fresh)
         v = res.value
         if isinstance(v, dict):
             return v.get("text")
@@ -291,7 +332,7 @@ class Seats:
     # ------------------------------------------------------------ vision
 
     def vision_json(self, role: str, task: str, system: str, prompt: str, images: list[str], stage: str,
-                    intent: str = "", details: Optional[list[str]] = None) -> dict[str, Any]:
+                    intent: str = "", details: Optional[list[str]] = None, fresh: bool = False) -> dict[str, Any]:
         """Score images with a vision role. Mock returns deterministic image statistics.
 
         details gives one image detail per image (high, low or auto); missing entries and the
@@ -305,8 +346,9 @@ class Seats:
         res = self._call(role, stage,
                          lambda spec: self._vision_estimate(
                              chat_fn(spec)(spec, system, parts, want_json=True, temperature=0.1), dets),
-                         lambda: mock.mock_vision_score(images, intent or prompt), note=task)
-        val = res.value if isinstance(res.value, dict) else {}
+                         lambda: mock.mock_vision_score(images, intent or prompt), note=task,
+                         cache_req=(system, parts, {"json": True, "temperature": 0.1}), fresh=fresh)
+        val = dict(res.value) if isinstance(res.value, dict) else {}
         val["_mock"] = res.mock
         return val
 

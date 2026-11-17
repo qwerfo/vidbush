@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, TypeVar
@@ -28,6 +29,31 @@ WORK_FILES = {
     "captions": "captions.json",
     "mix": "mix.json",
 }
+
+# Stages that write the shot list, in order. Each writes its own snapshot work/<stage>.shotlist.json beside
+# the working copy and never another stage's; a stage reads the snapshot of the stage before it, so a rerun
+# (resume, --force) starts from that stage's output, not from what later stages made of it.
+SHOTLIST_STAGES = ("shotlist", "sourcing", "judge", "visuals", "motion", "assembly")
+SNAPSHOT_INDEX = "snapshots.json"  # {"last": stage, "sha": sha of the working copy it wrote, "stages": {...}}
+
+
+def snapshot_path(work: Path, stage: str) -> Path:
+    """work/<stage>.shotlist.json."""
+    return Path(work) / f"{stage}.shotlist.json"
+
+
+def input_stage(stage: str) -> Optional[str]:
+    """The shot list stage whose snapshot `stage` reads (None for the first, or a stage outside the chain)."""
+    if stage not in SHOTLIST_STAGES or stage == SHOTLIST_STAGES[0]:
+        return None
+    return SHOTLIST_STAGES[SHOTLIST_STAGES.index(stage) - 1]
+
+
+def _sha(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
 
 
 @dataclass
@@ -62,15 +88,74 @@ class StageContext:
     # ------------------------------------------------------------ io
 
     def load(self, key: str, model: type[T]) -> T:
-        """Read a work file; absolute paths from an earlier project root are rebased onto this one."""
-        return read_rebased(self.work_path(key), model, self.project.id, self.root, self.old_roots)
+        """Read a work file; absolute paths from an earlier project root are rebased onto this one.
+
+        The shot list inside the shot list chain comes from the snapshot of the stage before this one
+        (shotlist_source), so a rerun never starts from a later stage's output."""
+        path = self.shotlist_source() if key == "shotlist" else self.work_path(key)
+        return read_rebased(path, model, self.project.id, self.root, self.old_roots)
+
+    def shotlist_source(self) -> Path:
+        """Which shot list file this stage reads.
+
+        - The input stage's snapshot, when it exists.
+        - The working copy when the working copy was changed after the last stage wrote it (an edit op or an
+          operator) and this stage was not explicitly forced: the edit wins over the older snapshot.
+        - The working copy for projects made before snapshots existed, and for stages outside the chain."""
+        work_copy = self.work_path("shotlist")
+        prev = input_stage(self.stage)
+        if prev is None:
+            return work_copy
+        snap = snapshot_path(self.work, prev)
+        if not snap.exists():
+            return work_copy
+        if self.stage not in self.extra.get("forced", ()) and self.edited_outside_stages():
+            return work_copy
+        return snap
+
+    def edited_outside_stages(self) -> bool:
+        """True when work/shotlist.json differs from what the last shot list stage wrote."""
+        import json
+        idx = self.work / SNAPSHOT_INDEX
+        work_copy = self.work_path("shotlist")
+        if not idx.exists() or not work_copy.exists():
+            return False
+        try:
+            last = json.loads(idx.read_text(encoding="utf-8")).get("sha", "")
+        except (OSError, ValueError):
+            return False
+        return bool(last) and _sha(work_copy) != last
+
+    def snapshot_used(self) -> bool:
+        """True when this stage's shot list came from a stage snapshot (not the working copy)."""
+        return self.shotlist_source() != self.work_path("shotlist")
 
     def maybe_load(self, key: str, model: type[T]) -> Optional[T]:
         p = self.work_path(key)
         return self.load(key, model) if p.exists() else None
 
     def save(self, key: str, obj: BaseModel) -> Path:
-        return write_json(self.work_path(key), obj)
+        path = write_json(self.work_path(key), obj)
+        if key == "shotlist" and self.stage in SHOTLIST_STAGES:
+            self._snapshot(path)
+        return path
+
+    def _snapshot(self, work_copy: Path) -> None:
+        """Copy the working shot list to this stage's snapshot and record its hash in snapshots.json."""
+        import json
+        import shutil
+        import time
+        snap = snapshot_path(self.work, self.stage)
+        shutil.copy2(work_copy, snap)
+        idx = self.work / SNAPSHOT_INDEX
+        try:
+            data = json.loads(idx.read_text(encoding="utf-8")) if idx.exists() else {}
+        except (OSError, ValueError):
+            data = {}
+        sha = _sha(work_copy)
+        data.setdefault("stages", {})[self.stage] = {"sha": sha, "at": time.time(), "file": snap.name}
+        data["last"], data["sha"] = self.stage, sha
+        idx.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def save_project(self) -> None:
         write_json(self.root / "project.json", self.project)

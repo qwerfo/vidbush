@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from ..config import Settings
-from ..models import (STAGES, Brief, InputMode, Project, ProjectPaths, StageRecord, StageStatus,
+from ..models import (STAGES, Brief, InputMode, Project, ProjectPaths, StageAttempt, StageRecord, StageStatus,
                       VideoFormat)
+from ..providers.base import CostCapReached
 from ..util import read_json, write_json
-from . import costcap, lock
+from . import costcap, lock, provenance
 from .context import StageContext, build_context
 from .paths import read_rebased, stored_root
 
@@ -62,7 +63,8 @@ def create_project(settings: Settings, project_id: str, mode: InputMode, brand_i
                    voiceover_path: Optional[str] = None, fmt: Optional[VideoFormat] = None,
                    target_minutes: Optional[float] = None, style_profile_id: Optional[str] = None,
                    fresh: bool = True, seed: Optional[int] = None) -> Project:
-    """Create output/<id>/ and project.json. fresh=True wipes an existing project of that id."""
+    """Create output/<id>/ and project.json. fresh=True wipes an existing project of that id
+    (the CLI only passes it with --fresh)."""
     root = project_dir(settings, project_id)
     lock.check_free(root, project_id)
     if fresh and root.exists():
@@ -125,8 +127,11 @@ def run_project(settings: Settings, project_id: str, stages: Optional[dict[str, 
     """Run every pending stage in order under the project lock. Done stages with outputs on disk are
     skipped; a stage that runs forces every stage downstream of it (STAGE_INPUTS).
 
-    cost_cap (USD, None = no cap): checked after each stage against the project's cost total; when
-    crossed the run stops at that stage boundary and the project is marked needs_review (costcap.py)."""
+    cost_cap (USD, None = no cap): checked before every live paid call (Seats.check_cap) and after each
+    stage against the project's cost total; when crossed the run stops (inside the stage, which stays
+    pending, or at the boundary) and the project is marked needs_review (costcap.py).
+
+    Explicitly forced stages read the snapshot of the stage before them (context.shotlist_source)."""
     root = project_dir(settings, project_id)
     with lock.project_lock(root, project_id, owner=f"run_project {project_id}"):
         return _run_locked(settings, project_id, stages, set(force), until, echo, on_progress, cost_cap)
@@ -139,8 +144,11 @@ def _run_locked(settings: Settings, project_id: str, stages: Optional[dict[str, 
     funcs = stages or STAGE_FUNCS
     project = load_project(settings, project_id)
     ctx = build_context(settings, project, echo=echo)
+    ctx.extra["forced"] = set(force)
+    ctx.seats.cost_cap = cost_cap
     project.status = "running"
     costcap.reset(ctx)
+    run = provenance.start_run(ctx, sorted(force), cost_cap)
     ctx.save_project()
     capped = False
     for name in STAGES:
@@ -152,7 +160,12 @@ def _run_locked(settings: Settings, project_id: str, stages: Optional[dict[str, 
             ctx.log.info("stage skipped (done)", stage=name)
             continue
         lock.touch(ctx.root)
-        _run_stage(ctx, name, funcs[name], rec, on_progress)
+        try:
+            _run_stage(ctx, name, funcs[name], rec, on_progress)
+        except CostCapReached as e:
+            costcap.stopped_inside(ctx, name, e.total_usd, e.cap_usd)
+            capped = True
+            break
         force |= downstream(name)
         if cost_cap is not None and costcap.reached(ctx, name, cost_cap, force):
             capped = True
@@ -164,6 +177,7 @@ def _run_locked(settings: Settings, project_id: str, stages: Optional[dict[str, 
     elif not until or until == STAGES[-1]:
         project.status = final_status(ctx)
         project.current_stage = None
+    provenance.finish_run(run, project.status)
     ctx.save_project()
     if on_progress:
         on_progress(project)
@@ -203,6 +217,9 @@ def _run_stage(ctx: StageContext, name: str, fn: StageFn, rec: StageRecord,
     project.current_stage = name
     rec.status, rec.started_at, rec.error = StageStatus.running, time.time(), None
     rec.attempts += 1
+    attempt = StageAttempt(attempt=rec.attempts, started_at=rec.started_at,
+                           commit=(project.runs[-1].commit if project.runs else ""))
+    rec.history.append(attempt)
     ctx.stage = name
     ctx.save_project()
     if on_progress:
@@ -212,8 +229,15 @@ def _run_stage(ctx: StageContext, name: str, fn: StageFn, rec: StageRecord,
         if ctx.settings.fail_at_stage == name:
             raise InjectedFailure(f"injected failure at stage {name} (VIDBUSH_FAIL_AT)")
         rec.outputs = [str(p) for p in fn(ctx)]
+    except CostCapReached as e:
+        rec.status, rec.error, rec.finished_at = StageStatus.pending, str(e), time.time()
+        _close_attempt(attempt, rec.finished_at, "capped", str(e))
+        ctx.log.warn("stage stopped by the cost cap", stage=name, error=str(e))
+        ctx.save_project()
+        raise
     except Exception as e:
         rec.status, rec.error, rec.finished_at = StageStatus.failed, f"{type(e).__name__}: {e}", time.time()
+        _close_attempt(attempt, rec.finished_at, "failed", rec.error[:2000])
         project.status = "failed"
         ctx.log.error("stage failed", stage=name, error=str(e)[:2000], trace=traceback.format_exc()[-4000:])
         ctx.save_project()
@@ -221,8 +245,14 @@ def _run_stage(ctx: StageContext, name: str, fn: StageFn, rec: StageRecord,
             on_progress(project)
         raise
     rec.status, rec.finished_at = StageStatus.done, time.time()
+    _close_attempt(attempt, rec.finished_at, "done")
     ctx.log.info("stage done", stage=name, seconds=round(rec.finished_at - (rec.started_at or 0), 2))
     ctx.save_project()
+
+
+def _close_attempt(attempt: StageAttempt, finished: float, status: str, error: Optional[str] = None) -> None:
+    attempt.finished_at, attempt.status, attempt.error = finished, status, error
+    attempt.seconds = round(finished - attempt.started_at, 2)
 
 
 def invalidate_from(settings: Settings, project_id: str, stage: str) -> Project:

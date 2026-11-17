@@ -50,7 +50,7 @@ def detect_input(path: Path, script: Optional[str]) -> tuple[InputMode, dict]:
 
 
 def cmd_run(settings: Settings, args: argparse.Namespace) -> int:
-    from .jobs.pipeline import create_project, run_project
+    from .jobs.pipeline import create_project, project_dir, run_project
     path = Path(args.input)
     if not path.exists():
         print(f"input not found: {path}", file=sys.stderr)
@@ -58,9 +58,14 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> int:
     mode, kw = detect_input(path, args.script)
     pid = args.id or re.sub(r"[^a-zA-Z0-9_\-]", "_", path.stem)
     fmt = VideoFormat(args.format) if args.format else None
+    existing = project_dir(settings, pid)
+    if existing.exists() and not getattr(args, "fresh", False):
+        print(f"project {pid} already exists at {existing}: use another --id, resume it "
+              f"(python -m vidbush resume {pid}), or pass --fresh to delete it and start again", file=sys.stderr)
+        return 2
     create_project(settings, pid, mode, brand_id=args.brand, fmt=fmt, target_minutes=args.minutes,
-                   style_profile_id=args.profile, seed=args.seed, **kw)
-    proj = run_project(settings, pid, echo=not args.quiet)
+                   style_profile_id=args.profile, seed=args.seed, fresh=True, **kw)
+    proj = run_project(settings, pid, echo=not args.quiet, cost_cap=getattr(args, "cost_cap", None))
     return _report(settings, proj)
 
 
@@ -83,8 +88,8 @@ def _report(settings: Settings, proj) -> int:
     print(json.dumps({"project": proj.id, "status": proj.status, "final": str(out / "final.mp4"),
                       "exists": (out / "final.mp4").exists()}, indent=2))
     if proj.status == "needs_review":
-        print("some seats used mock output while real providers are configured: check qa_report.md",
-              file=sys.stderr)
+        print(proj.status_note or "some seats used mock output while real providers are configured: "
+              "check qa_report.md", file=sys.stderr)
     return 0 if proj.status in ("done", "needs_review") else 1
 
 
@@ -229,6 +234,8 @@ def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vidbush", description="Long-form faceless video production")
     p.add_argument("--offline", action="store_true", help="never use the network; mock every seat")
+    p.add_argument("--no-reply-cache", action="store_true",
+                   help="always ask the models live (stored replies are neither read nor written)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def run_opts(sp: argparse.ArgumentParser) -> None:
@@ -239,6 +246,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--profile")
         sp.add_argument("--seed", type=int, default=None)
         sp.add_argument("--quiet", action="store_true")
+        sp.add_argument("--cost-cap", type=float, default=None,
+                        help="stop (needs_review) once the project spent this many USD, checked before every paid call")
+        sp.add_argument("--fresh", action="store_true", help="delete an existing project of the same id first")
 
     d = sub.add_parser("demo", help="run fixtures/demo_brief.md end to end")
     run_opts(d)
@@ -325,6 +335,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     settings = load_settings()
     if args.offline:
         settings.offline = True
+    if args.no_reply_cache:
+        settings.reply_cache = False
     from .jobs.lock import ProjectBusy
     try:
         return COMMANDS[args.cmd](settings, args)

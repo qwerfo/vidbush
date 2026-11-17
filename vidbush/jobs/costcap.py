@@ -54,6 +54,20 @@ def reached(ctx: StageContext, stage: str, cap_usd: float, force: set[str]) -> b
     return True
 
 
+def stopped_inside(ctx: StageContext, stage: str, total: float, cap_usd: float) -> None:
+    """Record a cap reached inside `stage` (Seats.check_cap raised before a paid call): the stage stays
+    pending, so resume reruns it, and the replies already paid for come back from the reply cache."""
+    reason = (f"{CAP_PREFIX} reached: ${total:.2f} spent, cap ${cap_usd:.2f}; stopped inside {stage}, "
+              f"resume reruns {stage} (stored replies cost nothing)")
+    ctx.project.status = "needs_review"
+    ctx.project.status_note = reason
+    write_json(cap_path(ctx.work), {"capped": True, "cap_usd": cap_usd, "total_usd": round(total, 5),
+                                    "stage": stage, "next_stage": stage, "inside_stage": True,
+                                    "reason": reason, "at": time.time()})
+    ctx.log.warn("cost cap reached inside a stage, run stopped", stage=stage, total_usd=round(total, 5),
+                 cap_usd=cap_usd)
+
+
 def read_cap(work: Path) -> Optional[dict[str, Any]]:
     """The cap record of the last run, or None when that run was not capped."""
     path = cap_path(work)

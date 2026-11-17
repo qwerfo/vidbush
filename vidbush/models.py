@@ -134,6 +134,17 @@ class ProjectPaths(Model):
     thumbnails: str  # output/<project_id>/thumbnails
 
 
+class StageAttempt(Model):
+    """One attempt of one stage: kept for every attempt, so a resumed run still shows the first one."""
+    attempt: int
+    started_at: float
+    finished_at: Optional[float] = None
+    seconds: Optional[float] = None
+    status: str = "running"  # running, done, failed, capped
+    error: Optional[str] = None
+    commit: str = ""  # git commit of the code that ran this attempt
+
+
 class StageRecord(Model):
     name: str
     status: StageStatus = StageStatus.pending
@@ -142,6 +153,21 @@ class StageRecord(Model):
     error: Optional[str] = None
     attempts: int = 0
     outputs: list[str] = Field(default_factory=list)
+    history: list[StageAttempt] = Field(default_factory=list)
+
+
+class RunRecord(Model):
+    """One run_project call: the code and settings it ran with (jobs/provenance.py)."""
+    started_at: float
+    finished_at: Optional[float] = None
+    commit: str = ""
+    branch: str = ""
+    dirty: bool = False  # tracked files differed from the commit
+    argv: list[str] = Field(default_factory=list)
+    force: list[str] = Field(default_factory=list)
+    cost_cap: Optional[float] = None
+    settings: dict[str, Any] = Field(default_factory=dict)  # seats per role, config hashes, switches
+    status: str = ""
 
 
 class Brief(Model):
@@ -171,6 +197,7 @@ class Project(Model):
     style_profile_id: Optional[str] = None  # overrides brand default
     seed: int = 0  # bounded randomisation seed, fixed per project
     status_note: str = ""  # why the status is what it is, e.g. the cost cap reason (jobs/costcap.py)
+    runs: list[RunRecord] = Field(default_factory=list)  # every run of this project, oldest first
 
 
 # ---------------------------------------------------------------- research

@@ -126,7 +126,10 @@ def stage_sourcing(ctx: StageContext) -> list[str]:
 
 def stage_judge(ctx: StageContext) -> list[str]:
     from ..judge.director_loop import judge_and_select
-    shotlist = judge_and_select(ctx.load("shotlist", ShotList), ctx)
+    shotlist = ctx.load("shotlist", ShotList)
+    if "judge" in ctx.extra.get("forced", ()) and not ctx.snapshot_used():
+        clear_verdicts(shotlist)  # a project from before snapshots: its working copy holds old verdicts
+    shotlist = judge_and_select(shotlist, ctx)
     return [str(ctx.save("shotlist", shotlist))]
 
 
@@ -173,6 +176,16 @@ def stage_packaging(ctx: StageContext) -> list[str]:
     minutes = ctx.load("narration", Narration).duration / 60.0
     ctx.tracker.finalize(minutes)
     return [str(p) for p in outs] + [str(ctx.out_path("cost_report.json"))]
+
+
+def clear_verdicts(shotlist: ShotList) -> None:
+    """Forget judge verdicts so a forced judge stage scores every real candidate again (unchanged prompts
+    come back from the reply cache at no cost). Generated candidates are dropped: judge makes them anew."""
+    for shot in shotlist.shots:
+        shot.candidates = [c for c in shot.candidates if c.source.value not in ("ai_image", "ai_video", "motion")]
+        for c in shot.candidates:
+            c.score, c.judge_reason, c.reject_reason = None, "", None
+        shot.selected, shot.judge_score, shot.judge_notes, shot.attempts = None, None, "", 0
 
 
 STAGE_FUNCS = {
