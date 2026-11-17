@@ -154,3 +154,27 @@ def test_image_down_primary_is_probed_back(settings, tmp_path, monkeypatch):
     order.clear()
     seats.image("p", tmp_path / "3.png", "visuals")
     assert order == ["image_primary"]
+
+
+def test_cost_report_warns_when_one_provider_charges_over_five_times_another():
+    from vidbush.models import CostEntry
+    from vidbush.providers.base import CostTracker
+
+    class Log:
+        def __init__(self):
+            self.seen = []
+
+        def warn(self, msg, **kw):
+            self.seen.append((msg, kw))
+
+    t = CostTracker("p")
+    t.log = Log()
+    e = dict(role="vision", model="gemini-x", unit_kind="tokens")
+    t.add(CostEntry(provider="cheap", cost_usd=0.01, units=10000, **e))
+    t.add(CostEntry(provider="dear", cost_usd=0.37, units=10000, **e))
+    t.add(CostEntry(provider="sub", cost_usd=0.0, units=10000, **e))  # subscription: no price, no warning
+    t.add(CostEntry(role="image", provider="a", model="img", unit_kind="images", cost_usd=0.01, units=1))
+    t.add(CostEntry(role="image", provider="b", model="img", unit_kind="images", cost_usd=0.04, units=1))
+    rep = t.finalize(1.0)
+    assert len(rep.warnings) == 1 and "dear charged 37.0 times cheap per token for model gemini-x" in rep.warnings[0]
+    assert t.log.seen[0][0] == "provider price gap"

@@ -779,6 +779,7 @@ class CostReport(Model):
     total_usd: float = 0.0
     per_minute_usd: float = 0.0
     mock_calls: int = 0
+    warnings: list[str] = Field(default_factory=list)  # price anomalies found at finalize (CostTracker)
 
 
 class QAShot(Model):

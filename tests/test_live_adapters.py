@@ -198,3 +198,22 @@ def test_ai_prompt_is_rewritten_without_named_people(make_ctx, monkeypatch) -> N
     assert seen["role"] == "editor" and "Cathy Parker" in seen["user"]
     monkeypatch.setattr(ctx.seats, "llm_json", lambda *a, **k: None)
     assert ai_images.safe_prompt("A dog sled at dawn.", ctx) == "A dog sled at dawn."
+
+
+def test_image_job_credits_are_recorded_and_priced(tmp_path: Path, monkeypatch) -> None:
+    """Credits the job API reports land in CallResult.credits; with no USD price, credits times credit_usd."""
+    replies = iter([{"success": True, "data": {"id": 7, "status": "processing"}},
+                    {"success": True, "data": {"id": 7, "status": "completed", "result_url": "https://x/r.png",
+                                               "credits_used": 4}}])
+    monkeypatch.setattr(image_mod, "post_json", lambda *a, **k: next(replies))
+    monkeypatch.setattr(image_mod, "get_json", lambda *a, **k: next(replies))
+    monkeypatch.setattr(image_mod, "get_bytes", lambda url: _png())
+    monkeypatch.setattr(image_mod.time, "sleep", lambda s: None)
+    spec = ProviderSpec("e", "elevate", "m", api_key="k", options={"cost_per_image": 0.0, "credit_usd": 0.01})
+    r = image_mod.generate(spec, "trucks", tmp_path / "a.png", 0.02)
+    assert r.credits == 4.0 and r.cost_usd == pytest.approx(0.04)
+    monkeypatch.setattr(image_mod, "post_json", lambda *a, **k: {"success": True, "job_id": "j1", "credit_cost": "0.35"})
+    monkeypatch.setattr(image_mod, "get_json", lambda *a, **k: {"status": "completed", "image_url": "https://x/i.png"})
+    spec = ProviderSpec("a", "algrow", "m", api_key="k", options={"cost_per_image": 0.01085, "credit_usd": 0.031})
+    r = image_mod.generate(spec, "trucks", tmp_path / "b.png", 0.02)
+    assert r.credits == 0.35 and r.cost_usd == 0.01085  # a known USD price wins
