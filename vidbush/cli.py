@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 import yaml
 
+from .audit.cli import AUDIT_COMMANDS, add_audit_parsers
 from .batch_cli import BATCH_COMMANDS, add_batch_parsers
 from .config import Settings, load_settings
 from .models import Brief, InputMode, VideoFormat
@@ -289,6 +290,7 @@ def build_parser() -> argparse.ArgumentParser:
     ck.add_argument("--min-minutes", type=float, default=3.0)
     add_batch_parsers(sub)
     add_review_parsers(sub)
+    add_audit_parsers(sub)
     return p
 
 
@@ -329,6 +331,7 @@ COMMANDS = {"demo": cmd_demo, "run": cmd_run, "resume": cmd_resume, "serve": cmd
             "remove-overlay": _shot_cmd("remove_overlay", "operator removed the overlay")}
 COMMANDS.update(BATCH_COMMANDS)
 COMMANDS.update(REVIEW_COMMANDS)
+COMMANDS.update(AUDIT_COMMANDS)
 
 
 def main(argv: Optional[list[str]] = None) -> int:

@@ -32,9 +32,9 @@ from .base import (HEALTH, CallResult, CostCapReached, CostTracker, ProviderClie
                    is_placeholder_model)
 
 ROLES = ["researcher", "writer", "director", "judge", "editor", "cheap_classifier", "image", "video",
-         "tts", "vision", "search"]
+         "tts", "vision", "search", "auditor"]
 LLM_ROLES = {"researcher", "writer", "director", "editor"}
-VISION_ROLES = {"judge", "vision", "cheap_classifier"}
+VISION_ROLES = {"judge", "vision", "cheap_classifier", "auditor"}
 IMAGE_DETAILS = {"high", "low", "auto"}  # OpenAI style image_url.detail values
 _BAD_DETAILS_LOGGED: set[str] = set()
 # per role default LLM timeout in seconds; long form writing needs minutes, others keep the old default
