@@ -41,6 +41,8 @@ DROP_MESSAGES = ("off-topic results demoted to fillers", "off-topic results drop
 @contextmanager
 def ignore_ttl() -> Iterator[None]:
     """Serve expired search cache entries while replaying: the cache is the record of what a run saw."""
+    # shortcut: swaps module globals, so a live sourcing run in the same process would see no TTL meanwhile;
+    # pass a ttl argument through cache_get when replay ever runs beside live sourcing
     saved = registry.SEARCH_CACHE_TTL_S, registry.SEARCH_CACHE_TTL_BY_SOURCE
     registry.SEARCH_CACHE_TTL_S, registry.SEARCH_CACHE_TTL_BY_SOURCE = float("inf"), {}
     try:
