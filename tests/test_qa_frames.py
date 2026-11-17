@@ -213,7 +213,9 @@ def test_report_opens_with_five_trustworthy_lines(make_ctx):
     assert "1 of 2 (50%)" in r.summary[1] and "picture does not match the words" in r.summary[1]
     assert r.worst == ["00:00 shot_001 (AI still): men carry the serum"]
     md = qa.render_markdown(r, offset=2.0).splitlines()
-    assert md[2:7] == qa.summary_lines(r, 2.0) and "00:02 shot_001" in md[4]
+    assert md[2].startswith("No tile audit exists yet") and "python -m vidbush audit p" in md[2]
+    assert md[4:9] == qa.summary_lines(r, 2.0) and "00:02 shot_001" in md[6]
+    assert not any("Pipeline judge" in line for line in r.summary)
     q = {s.shot_id: s for s in r.shots}
     assert q["shot_001"].type == "ai_image" and q["shot_001"].on_screen == "generated_still"
     assert q["shot_001"].failed and "rendered_fail" in q["shot_001"].flags and not q["shot_002"].failed
@@ -290,3 +292,30 @@ def test_every_source_kind_is_sourced_or_in_one_generated_set():
     assert not (sets[0] & sets[1] or sets[0] & sets[2] or sets[1] & sets[2])
     for k in M.SourceKind:
         assert (k.value in sourced) != (k in M.GENERATED_SOURCES), k
+
+
+def test_qa_headline_is_the_tile_audit_and_acceptance_gates_noticeable(make_ctx, tmp_path):
+    """qa_report.md opens with the audit's six numbers against benchmark and targets; acceptance fails a
+    project whose audit shows more than 40% noticeable tiles and only reports a missing audit."""
+    import json
+    from vidbush.acceptance import _audit_check
+    root = tmp_path / "proj"
+    (root / "audit").mkdir(parents=True)
+    facts: dict = {}
+    assert _audit_check(root, facts) == {} and "python -m vidbush audit proj" in facts["audit"]
+    six = {"real_share": 70, "ai_share": 4, "designed_share": 10, "on_words": 52, "noticeable": 41,
+           "overlay_noticeable": 12, "tiles": 300, "cost_usd": 0.5}
+    (root / "audit" / "audit_summary.json").write_text(json.dumps(six), encoding="utf-8")
+    assert _audit_check(root, facts) == {"audit_noticeable": False}
+    r = qa.make_report(ShotList(project_id="proj", duration=4, shots=[_shot(1, 0, 4)]), make_ctx(), 70.0, {},
+                       1.0, 1.0, [])
+    r.audit = qa.load_audit(root)
+    assert set(r.audit) == {"real_share", "ai_share", "designed_share", "on_words", "noticeable", "overlay_noticeable"}
+    md = qa.render_markdown(r).splitlines()
+    assert md[2].startswith("## Tile audit")
+    assert "| Picture on the words | 52 | 64 | >= 64 | no |" in md
+    assert "| AI images and AI-looking video | 4 | 2 | <= 5 | yes |" in md
+    assert "| Overlay tiles noticeable | 12 | 21 | < 15 | yes |" in md
+    six["noticeable"] = 19
+    (root / "audit" / "audit_summary.json").write_text(json.dumps(six), encoding="utf-8")
+    assert _audit_check(root, facts) == {"audit_noticeable": True}

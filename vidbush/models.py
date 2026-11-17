@@ -844,6 +844,9 @@ class QAReport(Model):
     pct_fail_rendered: float = 0.0
     worst: list[str] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)
+    # The tile audit's six numbers (percent) from <root>/audit/audit_summary.json, empty when no audit ran.
+    # pct_above_threshold above is the pre-render judge score, kept for old files; it is not the headline.
+    audit: dict[str, float] = Field(default_factory=dict)
 
 
 ALL_MODELS: dict[str, type[BaseModel]] = {

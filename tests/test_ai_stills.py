@@ -264,7 +264,7 @@ def test_judge_and_qa_prompts_carry_the_narration(make_ctx, monkeypatch):
     seen: list[str] = []
     monkeypatch.setattr(ctx.seats, "vision_json", lambda role, task, system, prompt, images, stage, **k: (
         seen.append(prompt) or {"score": 80, "reason": "ok", "rejects": []}))
-    qa.score_post_render(ShotList(project_id="t1", duration=1.0, shots=[s]), {s.id: ["f.jpg"]}, ctx)
+    qa.judge_rendered(ShotList(project_id="t1", duration=1.0, shots=[s]), {s.id: ["f.jpg"]}, ctx)
     assert f"Narration of the whole beat, for context only: {SERUM}" in seen[0]  # no word timings here
 
 

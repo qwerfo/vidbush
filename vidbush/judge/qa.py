@@ -9,7 +9,10 @@ screen (real footage, real still, generated still, generated video, graphic), ch
 narration, every on-screen text item (overlays, cards, lower thirds, map and chart titles and labels)
 against the narration around it, and reports mix, pacing, judge pass rate, flags, attribution, NC/ND and
 Standard YouTube Licence assets, mock seats and the sourcing search usage per run (work/source_notes.json,
-written by source/registry.py). qa_report.md opens with a five-line summary.
+written by source/registry.py). qa_report.md opens with the tile audit's six numbers against the benchmark
+and the targets (<root>/audit/audit_summary.json; a line saying how to run it when there is none), then a
+five-line summary. The pre-render judge score (pct_above_threshold) is bookkeeping, never the headline: it
+did not track the frames in any run.
 """
 from __future__ import annotations
 
@@ -39,6 +42,14 @@ OVERLAY_TIMING_MAX_S = 0.5  # median gap between a text overlay and its anchor w
 MIX_TOLERANCE_PTS = 5.0
 OVERLAY_SIBLING = {"footage": "footage_overlay", "image": "image_overlay"}
 NO_ATTRIBUTION = GENERATED_SOURCES
+AUDIT_SUMMARY = Path("audit") / "audit_summary.json"
+# (key, label, benchmark percent, target as (">=" or "<=" or "<", value) or None); benchmark: the Vidrush render
+AUDIT_ROWS = (("real_share", "Real footage, stills, documents", 55.0, None),
+              ("ai_share", "AI images and AI-looking video", 2.0, ("<=", 5.0)),
+              ("designed_share", "Designed material (cards, maps, charts, text)", 42.0, None),
+              ("on_words", "Picture on the words", 64.0, (">=", 64.0)),
+              ("noticeable", "Noticeable to a viewer", 19.0, ("<=", 19.0)),
+              ("overlay_noticeable", "Overlay tiles noticeable", 21.0, ("<", 15.0)))
 
 
 def build_qa(shotlist: ShotList, ctx: Any) -> list[Path]:
@@ -57,14 +68,44 @@ def build_qa(shotlist: ShotList, ctx: Any) -> list[Path]:
     post = judge_rendered(shotlist, frames, ctx, words)
     coverage, match = caption_check(ctx)
     report = make_report(shotlist, ctx, threshold, post, coverage, match, notes, words)
+    report.audit = load_audit(ctx.root)
     report.summary = summary_lines(report, offset)  # final.mp4 time, as in the markdown
     json_path = write_json(ctx.root / "qa_report.json", report)
     md_path = ctx.root / "qa_report.md"
     md_path.write_text(render_markdown(report, offset), encoding="utf-8")
-    ctx.log.info("qa report written", above=report.pct_above_threshold, no_match=report.pct_no_match_accepted,
+    ctx.log.info("qa report written", audit=report.audit, no_match=report.pct_no_match_accepted,
                  fail_rendered=report.pct_fail_rendered, screen_time=report.screen_time,
                  caption_coverage=report.caption_coverage)
     return [json_path, md_path]
+
+
+def load_audit(root: Path) -> dict[str, float]:
+    """The six tile audit numbers (percent) from <root>/audit/audit_summary.json; {} when absent or unreadable."""
+    try:
+        data = read_json(Path(root) / AUDIT_SUMMARY)
+        return {k: float(data[k]) for k, *_ in AUDIT_ROWS if data.get(k) is not None}
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return {}
+
+
+def _meets(value: float, target: tuple[str, float]) -> bool:
+    op, bar = target
+    return value >= bar if op == ">=" else value <= bar if op == "<=" else value < bar
+
+
+def audit_lines(r: QAReport) -> list[str]:
+    """The headline: the tile audit's six numbers against the benchmark and the targets, or how to run it."""
+    if not r.audit:
+        return [f"No tile audit exists yet for this video: run `python -m vidbush audit {r.project_id}` "
+                "for the measured numbers (real, AI and designed share, picture on the words, noticeable)."]
+    md = ["## Tile audit (one frame per 2 s of final.mp4)", "",
+          "| Measure | This video % | Benchmark % | Target | Met |", "|---|---|---|---|---|"]
+    for key, label, bench, target in AUDIT_ROWS:
+        v = r.audit.get(key)
+        got = "n/a" if v is None else f"{v:g}"
+        met = "" if target is None or v is None else ("yes" if _meets(v, target) else "no")
+        md.append(f"| {label} | {got} | {bench:g} | {f'{target[0]} {target[1]:g}' if target else ''} | {met} |")
+    return md
 
 
 # ---------------------------------------------------------------- frames
@@ -113,11 +154,9 @@ def shot_times(shot: Shot) -> list[float]:
     return out
 
 
-def sample_frames(video: Path, shotlist: ShotList, out_dir: Path, every: float = 0.0,
-                  offset: float = 0.0) -> dict[str, list[str]]:
+def sample_frames(video: Path, shotlist: ShotList, out_dir: Path, offset: float = 0.0) -> dict[str, list[str]]:
     """Frames of each shot from its own window (shot_times), shifted by the intro offset: shot id -> paths,
-    the middle frame first, then one where the overlay text shows. every is kept for callers and ignored: a
-    fixed grid sampled short shots late or in their neighbour."""
+    the middle frame first, then one where the overlay text shows."""
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
@@ -142,13 +181,6 @@ def sample_frames(video: Path, shotlist: ShotList, out_dir: Path, every: float =
             if path:
                 by_shot.setdefault(sid, []).append(path)
     return by_shot
-
-
-def shot_at(shotlist: ShotList, t: float) -> Optional[Shot]:
-    for s in shotlist.shots:
-        if s.start <= t < s.end:
-            return s
-    return None
 
 
 def _grab(video: Path, t: float, out: Path, width: int = FRAME_WIDTH) -> Optional[str]:
@@ -532,11 +564,6 @@ def _topic(ctx: Any) -> str:
     return str(getattr(script, "title", "") or "")
 
 
-def score_post_render(shotlist: ShotList, frames: dict[str, list[str]], ctx: Any) -> dict[str, tuple[float, str]]:
-    """(score, reason) per shot from its rendered frames; judge_rendered returns the full verdicts."""
-    return {sid: (v["score"], v["reason"]) for sid, v in judge_rendered(shotlist, frames, ctx).items()}
-
-
 # ---------------------------------------------------------------- captions
 
 def _tokens(text: str) -> list[str]:
@@ -863,8 +890,9 @@ def worst_moments(r: QAReport, n: int = WORST_N) -> list[str]:
 
 
 def summary_lines(r: QAReport, offset: float = 0.0) -> list[str]:
-    """Five lines an operator can trust: screen time by what is really on screen, rendered shots that fail
-    and why, the worst five moments, on-screen text problems, and the pipeline judge against the frames."""
+    """Five lines: screen time by what is really on screen, rendered shots that fail and why, the worst five
+    moments, on-screen text problems, and the frame check pass rate (the pre-render judge score stays in the
+    details: it never tracked the frames)."""
     st, secs = r.screen_time, r.screen_time_s
     real = round(st.get("real_footage", 0.0) + st.get("real_still", 0.0), 1)
     gen = round(sum(st.get(k, 0.0) for k in PHOTO_AI_SCREEN), 1)
@@ -889,8 +917,8 @@ def summary_lines(r: QAReport, offset: float = 0.0) -> list[str]:
                  f"repeat the narration, {ot.get('early', 0):g} early, {ot.get('late', 0):g} late, "
                  f"{ot.get('short', 0):g} too short to read, {ot.get('all_unanchored', 0):g} far from their words)")
     pass_rendered = round(100.0 - r.pct_fail_rendered, 1)
-    lines.append(f"Pipeline judge: {r.pct_above_threshold:g}% of shots at or above {r.threshold:g}; "
-                 + (f"the rendered frames pass {pass_rendered:g}%" if rendered else "rendered frames not checked"))
+    lines.append(f"Rendered frames pass their frame check: {pass_rendered:g}%" if rendered
+                 else "Rendered frames pass their frame check: not measured")
     return lines
 
 
@@ -985,11 +1013,12 @@ def _cell(text: str) -> str:
 
 
 def render_markdown(r: QAReport, offset: float = 0.0) -> str:
-    """The five-line summary first, then headline numbers, screen time, mix, pacing and flagged shots with
-    final.mp4 timestamps."""
-    md = [f"# QA report: {r.project_id}", ""] + summary_lines(r, offset) + ["", "## Details", "",
-          f"- Shots at or above threshold ({r.threshold:g}): **{r.pct_above_threshold}%** (pipeline judge); "
-          f"rendered shots failing their frame check: **{r.pct_fail_rendered}%**",
+    """The tile audit headline first, then the five-line summary, details, screen time, mix, pacing and flagged
+    shots with final.mp4 timestamps."""
+    md = [f"# QA report: {r.project_id}", ""] + audit_lines(r) + [""] + summary_lines(r, offset) + [
+          "", "## Details", "",
+          f"- Rendered shots failing their frame check: **{r.pct_fail_rendered}%**; pre-render judge at or above "
+          f"{r.threshold:g}: {r.pct_above_threshold}% (bookkeeping, not a quality measure)",
           f"- Accepted without a match: **{r.pct_no_match_accepted}%** (target at most {NO_MATCH_TARGET_PCT:g}%)",
           f"- Caption coverage {r.caption_coverage:.1%}, caption word match {r.caption_word_match:.1%}",
           f"- Attributed assets: {r.attribution_count}; NC or ND assets: {len(r.nc_nd_assets)}; "
