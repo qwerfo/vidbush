@@ -937,7 +937,30 @@ Run every command from the repo in PowerShell:
 cd C:\projects\vidbush_tmp
 ```
 
-RESULTS: (filled in by the main session)
+Results of night 1 (audit with the shipped prompt; review = the hand review in docs/FABLE_REVIEW.md):
+
+| Video | real (audit/review) | AI | designed | on_words | noticeable | overlay noticeable |
+|---|---|---|---|---|---|---|
+| run 2 | 22.7 / 26.9 | 71.0 / 70.1 | 6.0 / 2.7 | 43.8 / 35.0 | 39.3 / 49.2 | 53.1 / 64.6 |
+| run 3 | 67.1 / 71.9 | 26.0 / 25.7 | 6.9 / 0.9 | 58.6 / 52.3 | 22.1 / 23.6 | 43.3 / 54.7 |
+| Vidrush | 56.4 / 54.7 | 2.6 / 2.0 | 40.7 / 42.4 | 71.3 / 64.2 | 18.6 / 18.9 | 24.8 / 21.1 |
+| dunkirk_base | 65.9 / none | 26.8 | 6.8 | 55.0 | 27.3 | 28.1 |
+
+- Proof bar (within 5 points of the review): real share passes on all three. noticeable
+  passes on run 3 and Vidrush and fails on run 2 (-9.9). on_words fails on all three
+  (+6.3 to +8.8: the audit is more generous than the review about a picture on the words).
+  Overlay noticeable runs about 11 points low on the Alaska runs. A stricter wording put
+  on_words 6 to 10 points low; a halfway wording was no better and was reverted.
+- The calibration page (40 run 3 tiles) is the next step: E:\coding projects\Vidbush\audit\calibration_run3.html.
+  Adam marks it, then `python -m vidbush audit-calibrate <marks.json>`; the audit is trusted at 34 of 40.
+- dunkirk_base (seed 1940, cost cap 5): done, 2.04 USD, wall clock about 3 h 10 min (judge
+  stage 7117 s, sourcing 2408 s). Audit 0.22 USD, 245 s. Worst problems it found: wrong
+  period stand-ins (WWI trenches for RAF lines, Napoleonic reenactors for 1940 Lille),
+  narrow portrait photos with blurred side bars, AI faces for named people (Goring), a
+  stock watermark at 0:06-0:14, and an empty label box near 6:20. Both image providers'
+  content filters blocked some war stills; those shots fell back without an AI picture.
+- Spend tonight about 5.6 USD of the 8 USD cap. Full suite after the merge: 1435 passed,
+  17 skipped (baseline 1383 passed, 17 skipped).
 
 ### 12a. Tile audit
 
