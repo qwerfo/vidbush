@@ -6,6 +6,7 @@ review-summary <id>                                                progress, ver
 review-export <id>                                                 write output/<id>/review.md
 review-fixes <id> [--apply]                                        planned EditOps from the verdicts
 review-calibrate <id>                                              judge scores against the verdicts
+plan-replay <id or dir> [--shotlist PATH] [--json OUT]             measure a stored shot plan, no render
 """
 from __future__ import annotations
 
@@ -40,6 +41,10 @@ def add_review_parsers(sub: Any) -> None:
     fx.add_argument("--apply", action="store_true", help="apply the planned ops and re-render")
     fx.add_argument("--json", action="store_true")
     fx.add_argument("--quiet", action="store_true")
+    pr = sub.add_parser("plan-replay", help="measure a stored shot plan against its narration, without rendering")
+    pr.add_argument("project", help="project id or project folder")
+    pr.add_argument("--shotlist", help="shot list to measure (default: work/shotlist.shotlist.json, else shotlist.json)")
+    pr.add_argument("--json", help="write the report as JSON here")
 
 
 def _text(value: str) -> str:
@@ -141,6 +146,19 @@ def cmd_review_fixes(settings: Settings, args: argparse.Namespace) -> int:
     return 1 if result.errors else 0
 
 
-REVIEW_COMMANDS = {"review-set": cmd_review_set, "review-comment": cmd_review_comment,
+def cmd_plan_replay(settings: Settings, args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .audit.plan_replay import run
+    from .jobs.pipeline import project_dir
+    path = Path(args.project)
+    path = path if path.is_dir() else project_dir(settings, args.project)
+    if not path.is_dir():
+        print(f"project not found: {args.project}", file=sys.stderr)
+        return 2
+    return run(path, Path(args.shotlist) if args.shotlist else None, Path(args.json) if args.json else None)
+
+
+REVIEW_COMMANDS = {"plan-replay": cmd_plan_replay, "review-set": cmd_review_set, "review-comment": cmd_review_comment,
                    "review-summary": cmd_review_summary, "review-export": cmd_review_export,
                    "review-calibrate": cmd_review_calibrate, "review-fixes": cmd_review_fixes}
