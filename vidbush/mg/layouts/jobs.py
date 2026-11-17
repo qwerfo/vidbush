@@ -57,6 +57,8 @@ def make_job(spec: LayoutSpec, words: Sequence[Any], clip_start: float, duration
             job.pictures[i] = ref
     for c in cues:
         el = spec.elements[c.index]
-        if el.anchor and not c.found:
+        if c.outside:
+            job.notes.append(f"element {c.index} ({el.role}): its words are spoken outside the shot, not shown")
+        elif el.anchor and not c.found:
             job.notes.append(f"element {c.index} ({el.role}): anchor '{el.anchor}' not spoken near the clip")
     return job

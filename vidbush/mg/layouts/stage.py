@@ -28,7 +28,7 @@ from .jobs import make_job
 from .panel import DOCK_S, NEVER, PanelPlan, change_time, large_rect
 from .placement import place_panel
 
-LAYOUT_RENDER_VERSION = "layouts-5"  # bump when drawing code changes pixels
+LAYOUT_RENDER_VERSION = "layouts-6"  # bump when drawing code changes pixels
 PANEL_HOLD_S = 2.5  # a panel stays this long after its last element is spoken, then leaves
 PANEL_MIN_S = 3.0
 FULL_MIN_S, FULL_MAX_S = 3.0, 7.0
@@ -199,7 +199,10 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
     if not shots:
         return {}
     nar = ctx.maybe_load("narration", Narration)
-    words = nar.words if nar else []
+    if nar is None or not nar.words:  # no word timings: render nothing and change nothing (specs are kept)
+        ctx.log.warn("layouts skipped: no narration word timings")
+        return {}
+    words = nar.words
     frame = frame_profile(ctx.profile)
     house = house_style(getattr(ctx.brand, "house_style", None))
     r = ctx.settings.render
@@ -212,7 +215,7 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
         if shot.layout is None:
             continue
         spec = shot.layout
-        shot.layout_notes = []
+        _reset(shot)
         extra: dict[str, Any] = {}
         if spec.kind == LayoutKind.timeline:
             extra["history"] = _history(shotlist.shots, idx, spec)
@@ -220,19 +223,23 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             art = ctx.work / "art" / "maps"
             if art.is_dir():
                 extra["art_bases"] = [str(art)]
+                # which paintings exist (and when they changed) is part of the cache key
+                extra["art_fp"] = sorted((f.name, int(f.stat().st_mtime)) for f in art.glob("*_base.*"))
         pres = presentation_of(shot)
         job = make_job(spec, words, shot.start, shot.duration, pool, frame, house, r.width, r.height, r.fps, extra)
         plan = None
         if not any(c.found and -1.0 <= c.word <= shot.duration for c in job.cues) and any(e.anchor for e in spec.elements):
             # nothing it shows is spoken during the shot: a graphic at the wrong moment is worse than none
-            shot.layout_notes.append(f"{spec.kind.value} dropped: none of its words are spoken during the shot")
-            shot.layout, shot.overlay_path, shot.layout_at = None, "", 0.0
+            # a render decision only: the spec stays, so a rerun with other timings can show it
+            shot.layout_notes.append(f"{spec.kind.value} not shown: none of its words are spoken during the shot")
             continue
         if pres != "full":
             plan, why = _plan_panel(shot, job, pres, previous, ctx)
             if plan is None:
-                shot.layout_notes.append(f"panel not placed ({why}); shown full frame instead")
-                pres = "full"
+                # full frame instead, still entering on its first words over the shot's own picture
+                full = large_rect(job, True)
+                plan = PanelPlan("panel", full, full, NEVER, "full")
+                shot.layout_notes.append(f"panel not placed ({why}); shown full frame from its first words instead")
             else:
                 previous = plan.position
                 shot.layout_notes.append(f"panel {pres} at {why}")
@@ -251,7 +258,6 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             if NameCard.fallback_needed(job):
                 _name_lower_third(shot, job, out_dir, ctx, seconds)
                 continue
-        shot.layout_notes += job.notes
         key = _key(job, plan)
         out = out_dir / f"layout_{key}.{'mov' if plan else 'mp4'}"
         if not out.exists():
@@ -259,6 +265,10 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             seconds[spec.kind.value] = seconds.get(spec.kind.value, 0.0) + secs
             ctx.log.info("layout rendered", shot=shot.id, kind=spec.kind.value, presentation=pres,
                          seconds=round(secs, 2), clip_s=round(job.duration, 2))
+        else:  # cached clip: build the composition once so its notes (base used, fallbacks) are still recorded
+            comp = comp_class(spec.kind)(job, job.width, job.height, plan is not None)
+            comp.close()
+        shot.layout_notes += list(dict.fromkeys(job.notes))
         if plan:
             shot.overlay_path = str(out)
             shot.layout_at = round(plan_start(shot, job), 3)
@@ -267,9 +277,22 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             cand = Candidate(id=f"{shot.id}_layout_1", source=SourceKind.motion, media="video", local_path=str(out),
                              licence="generated", width=r.width, height=r.height, in_point=0.0,
                              out_point=shot.duration, title=f"layout {spec.kind.value}")
+            cand.judge_reason = f"replaces {shot.selected}" if shot.selected else ""
             shot.candidates = [c for c in shot.candidates if c.id != cand.id] + [cand]
             shot.selected = cand.id
     return seconds
+
+
+def _reset(shot: Shot) -> None:
+    """Undo an earlier render of this shot's layout, so a rerun starts from the shot's own picture."""
+    shot.layout_notes = []
+    shot.overlay_path, shot.layout_at = "", 0.0
+    lay = next((c for c in shot.candidates if c.id == f"{shot.id}_layout_1"), None)
+    if lay is not None:
+        prev = lay.judge_reason[len("replaces "):] if lay.judge_reason.startswith("replaces ") else None
+        shot.candidates = [c for c in shot.candidates if c.id != lay.id]
+        if shot.selected == lay.id:
+            shot.selected = prev if any(c.id == prev for c in shot.candidates) else None
 
 
 def _name_lower_third(shot: Shot, job: LayoutJob, out_dir: Path, ctx: Any, seconds: dict[str, float]) -> None:
@@ -301,6 +324,22 @@ def _name_lower_third(shot: Shot, job: LayoutJob, out_dir: Path, ctx: Any, secon
 
 def plan_start(shot: Shot, job: LayoutJob) -> float:
     return float(job.extra.get("_start", 0.0))
+
+
+def _framed_rect(shot: Shot, ctx: Any, W: int, H: int) -> Optional[tuple[float, float, float, float]]:
+    """0..1 box of a narrow still framed on the house ground (segment.framed_image geometry), else None."""
+    from ...render.segment import MAX_STILL_UPSCALE, visible_height
+    from ...render.stillmotion import is_narrow
+    c = shot.selected_candidate()
+    if c is None or c.media != "image" or not c.width or not c.height:
+        return None
+    vis = visible_height(ctx.profile, W, H)
+    if not is_narrow(c.width, c.height, W, vis):
+        return None
+    s = min(0.8 * vis / c.height, 0.9 * W / c.width, MAX_STILL_UPSCALE)
+    fw, fh = c.width * s / W, c.height * s / H
+    m = 0.03  # the frame, its shadow and the slow push
+    return 0.5 - fw / 2 - m, 0.5 - fh / 2 - m, 0.5 + fw / 2 + m, 0.5 + fh / 2 + m
 
 
 def _fits(job: LayoutJob, size: tuple[float, float]) -> bool:
@@ -338,6 +377,10 @@ def _plan_panel(shot: Shot, job: LayoutJob, pres: str, previous: str, ctx: Any) 
                          change, pos), f"{pos}: no picture to read beneath, default corner"
     from .placement import analyse, choose
     samples = [analyse(f) for f in frames]
+    framed = _framed_rect(shot, ctx, W, H)
+    if framed is not None:  # a framed narrow still: the whole framed picture is the subject
+        for a in samples:
+            a.protect.append(framed)
     pl = choose(samples, size, visible, W, H, previous)
     for k in PANEL_SHRINK:  # a smaller panel (content relaid out at the type floors) before giving up
         if pl.position is not None:

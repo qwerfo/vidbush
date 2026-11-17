@@ -119,3 +119,33 @@ def test_still_motion_short_holds_sequence_and_narrow(tmp_path):
     kb, why = sm.plan(shot, c, 1920, 1080, 0.12)
     assert "detail" in why and (kb["x0"] > 0.6 or kb["x1"] > 0.6)
     assert sm.is_narrow(600, 900, 1920, 804) and not sm.is_narrow(1600, 1000, 1920, 804)
+
+
+def test_rerun_restores_the_shots_own_picture_and_clears_stale_overlay():
+    from vidbush.mg.layouts.stage import _reset
+    from vidbush.models import Candidate, Shot
+    real = Candidate(id="s_pexels_0", source="pexels", local_path="x.jpg")
+    lay = Candidate(id="s_layout_1", source="motion", local_path="l.mp4", judge_reason="replaces s_pexels_0")
+    shot = Shot(id="s", beat_id="b", start=0, end=4, duration=4, type="image", intent="x", candidates=[real, lay],
+                selected="s_layout_1", overlay_path="old.mov", layout_at=1.2, layout_notes=["old"])
+    _reset(shot)
+    assert shot.selected == "s_pexels_0" and [c.id for c in shot.candidates] == ["s_pexels_0"]
+    assert shot.overlay_path == "" and shot.layout_at == 0.0 and shot.layout_notes == []
+
+
+def test_element_spoken_outside_the_clip_is_not_shown_and_noted():
+    late = cue_times([LayoutElement(role="label", text="x", anchor="Alaska again")], WORDS, 0.0, 2.0)
+    assert late[0].outside and late[0].appear > 1e8
+
+
+def test_no_narration_changes_nothing():
+    from types import SimpleNamespace
+
+    from vidbush.mg.layouts.stage import render_shot_layouts
+    from vidbush.models import Shot, ShotList
+    spec = LayoutSpec(kind="chart", elements=[LayoutElement(role="bar", text="a: 1", anchor="a")])
+    shot = Shot(id="s", beat_id="b", start=0, end=4, duration=4, type="image", intent="x", layout=spec)
+    sl = ShotList(project_id="p", duration=4, shots=[shot])
+    warned = []
+    ctx = SimpleNamespace(maybe_load=lambda *a: None, log=SimpleNamespace(warn=lambda m, **k: warned.append(m)))
+    assert render_shot_layouts(sl, ctx) == {} and shot.layout is spec and warned

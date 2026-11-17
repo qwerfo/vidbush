@@ -21,7 +21,7 @@ from . import register
 from .base import Footage, LayoutComp, LayoutJob, darken, framed, ink_ground
 
 NUMBER_RE = re.compile(r"^\s*(?P<pre>[$£€]?)(?P<num>\d[\d,]*(?:\.\d+)?)\s*(?P<suf>%|[a-zA-Z]{0,2}\b)?\s*(?P<unit>.*)$")
-ROLL_S = 0.35  # the digits roll only in the last moments before the spoken number, blurred: never readable
+ROLL_S = 0.25  # within the 0.3 s lead rule  # the digits roll only in the last moments before the spoken number, blurred: never readable
 
 
 def split_number(text: str) -> tuple[str, str]:

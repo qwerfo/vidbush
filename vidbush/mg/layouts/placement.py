@@ -34,6 +34,7 @@ class Analysis:
     faces: list[tuple[float, float, float, float]] = field(default_factory=list)  # 0..1 boxes x0,y0,x1,y1
     text: list[tuple[float, float, float, float]] = field(default_factory=list)
     detail: Optional[np.ndarray] = None  # float map 0..1 at work size
+    protect: list[tuple[float, float, float, float]] = field(default_factory=list)  # boxes never to cover
     saliency: Optional[np.ndarray] = None
 
 
@@ -188,6 +189,9 @@ def choose(samples: Sequence[Analysis], size: tuple[float, float], visible: tupl
                 break
             if any(_overlap(box, tb, 0.01) > 0.15 for tb in a.text):
                 why = "covers text"
+                break
+            if any(_overlap(box, pb) > 0.0 for pb in a.protect):
+                why = "covers the framed picture"
                 break
             sal = a.saliency
             heart = subject_heart(sal)

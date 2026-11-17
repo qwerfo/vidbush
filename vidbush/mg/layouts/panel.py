@@ -163,7 +163,7 @@ class PanelComp:
         cx, cy = x + w / 2, y + h / 2
         w2, h2 = max(8, int(w * s)) // 2 * 2, max(8, int(h * s)) // 2 * 2
         x2, y2 = int(round(cx - w2 / 2)), int(round(cy - h2 / 2))
-        full = w2 >= self.W - 2 and h2 >= self.H * 0.95
+        full = w2 >= self.W - 2  # the whole width: the visible frame, no panel chrome
         img = self.content(i, t, w2, h2)
         keep3, ring_rgb, alpha, shadow = self._chrome(w2, h2, full)
         # premultiplied body in uint8: picture times the rounded mask (and the paper ring), alpha = mask

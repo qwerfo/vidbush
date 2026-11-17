@@ -13,6 +13,8 @@ from typing import Any, Optional, Sequence
 
 from ..house import LEAD_S, MAX_LEAD_S
 
+NEVER = 1e9  # cue time of an element that is not shown
+
 _TOKEN = re.compile(r"[a-z0-9']+")
 
 
@@ -75,6 +77,7 @@ class Cue:
     word_end: float  # its last anchor word ends
     found: bool  # the anchor was found in the narration (else it appears with the layout)
     stage: int = 1
+    outside: bool = False  # its words are spoken, but outside this clip: it is not shown
 
 
 def cue_times(elements: Sequence[Any], words: Sequence[Any], clip_start: float, clip_end: float,
@@ -95,11 +98,15 @@ def cue_times(elements: Sequence[Any], words: Sequence[Any], clip_start: float, 
         if span is None:
             cues.append(Cue(i, 0.0, 0.0, 0.0, False, stage))
             continue
+        if span[0] > clip_end + 0.5 or span[1] < clip_start - 4.0:
+            # spoken outside this clip: never shown here (outside=True lets the caller note it)
+            cues.append(Cue(i, NEVER, NEVER, NEVER, False, stage, outside=True))
+            continue
         cursor = span[0]
         w0, w1 = span[0] - clip_start, span[1] - clip_start
         cues.append(Cue(i, max(0.0, w0 - lead), w0, w1, True, stage))
     first = min((c.appear for c in cues if c.found), default=0.0)
     for c in cues:
-        if not c.found:
+        if not c.found and not c.outside:
             c.appear = c.word = c.word_end = first
     return cues

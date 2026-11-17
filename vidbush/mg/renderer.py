@@ -155,6 +155,7 @@ def _plan(shotlist: ShotList, ctx: Any, mg_dir: Path) -> list[tuple[Any, MotionS
     for shot in shotlist.shots:
         if shot.layout is not None:  # designed layouts and panels render in layouts.stage
             continue
+        shot.layout_notes = [n for n in shot.layout_notes if not n.startswith("bare ")]
         if shot.type == ShotType.motion_graphic and shot.motion is not None and shot.motion.kind in BARE_TEXT_KINDS:
             real = picture_instead(shot)
             if real is not None:

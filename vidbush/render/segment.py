@@ -83,7 +83,7 @@ def _graph(shot: Shot, profile: StyleProfile, settings: Settings, base: str, win
     lut_f = fc.lut(resolve_media(lut, settings)) if (lut and graded and resolve_media(lut, settings).exists()) else ""
     if lut and graded and not lut_f:
         log.warn("colour LUT missing, rendering ungraded", lut=lut)
-    look = shot.grade if graded and not shot.layout else ""  # matched look (render/look.py)
+    look = shot.grade if graded else ""  # matched look (render/look.py)
     nodes = [f"[0:v]{fc.chain(base, lut_f, look, fc.TO_YUV)}[base]"]
     extra: list[str] = []
     top = "[base]"
