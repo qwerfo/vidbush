@@ -1047,6 +1047,14 @@ over five pictures), `check.py <tag>` (a frame every 0.5 s with each element's w
 (`layouts\layout_reel.mp4` and `layouts\layout_sheet.png`). Each runs the real motion stage
 (`layouts.stage.render_shot_layouts`) and the real segment renderer.
 
+### 12d2. Documents
+
+`document_focus` takes `purpose`: evidence (recognise the page, move to the passage, mark it as read, source label),
+period (atmosphere: a panel or slow push, no marks) or subject (full frame, each named part marked in spoken
+order), and the four presentations. "mark" elements name the words on the page to mark and the narration words
+they are marked on. Proofs: `layouts\scripts\specs_docs.py all`, then `check.py docs` and `check.py docs_other`.
+OCR of a large scan takes 20 to 60 s on first use (cached per file after).
+
 ### 12e. What the planner must supply
 
 `LayoutSpec` with elements in spoken order and anchors that are the exact narration words (numbers as spoken:

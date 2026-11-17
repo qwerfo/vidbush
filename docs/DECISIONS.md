@@ -542,3 +542,16 @@ One line each: the decision and why.
 - Matched look (colour.match_look, default off until Adam has seen it): each real source moves 60 percent of the way toward the video's median exposure, white balance and saturation, clamped; black and white sources only change exposure; an optional named brand grade follows.
 - The letterbox and always-on caption switches are the existing letterbox.enabled and captions.enabled (defaults unchanged); every layout reads them through FrameProfile and keeps type out of the bars or the caption band.
 - RENDER_VERSION seg-7 and MG_RENDER_VERSION mg-6, because still framing, motion and label reveals change pixels.
+- Fixes from the independent review: a rerun restores the shot's own picture and clears a stale overlay; a layout whose words are not spoken in its shot is skipped as a render decision, its spec kept; with no narration nothing changes; an element whose words fall outside the clip is not shown and is noted; panels avoid a framed still's frame; painted bases are in the cache key; panel shots get the matched look.
+- A panel with no clear place is shown full frame from its first words over the shot's own picture, not from the cut, because an empty ink frame for seconds before the words was the worst fallback.
+- Before giving up on a panel, sizes of 85 and 72 percent are tried while the content still fits at the type floors.
+- A subject that runs across the frame (a train) may be overlapped at its edge; only its heart (the blob's box shrunk to 60 percent around its centre of mass) is protected, and the strongest centre-weighted blob is the subject.
+- Place chips forced into a crowded map stay inside the frame on the least crowded side, because a chip cut by a panel edge read as broken.
+- Document focus takes a purpose (evidence, period, subject) and the panel presentations, because a whole page filling the screen with nothing happening is what weak editors do (Adam).
+- Evidence: the page is seen whole for about 1.4 s, then the camera moves to each passage, the rest dims, and the passage is marked as it is read; a source label is always shown.
+- Period: no marks and no claim about the page's text, a slow push toward its masthead; usually a panel over footage.
+- Subject: full frame, the camera visits each named part in spoken order and marks it there.
+- Mark form follows the passage: underline up to about four words in running text, highlighter sweep over one or two lines, highlight block for longer, a drawn ring for a figure, a date, a signature or a label standing alone; marks sit on the OCR quads and follow the page's skew; each starts on its own first word and travels at reading pace; earlier marks stay, quieter.
+- A document panel is sized so its key phrase reads at the 34 px floor; a page that cannot be read at a sane panel size is shown for its look only, with no marks.
+- Full documents may hold up to 14 s, because a page read in two or three marked passages needs longer than a card.
+- No Alaska evidence example uses real narration: an OCR survey of all 168 archival stills in the run 3 pool found no page carrying words the narration says, so evidence is proven on invented narration only and no quote is paired with a page that does not carry it.
