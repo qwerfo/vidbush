@@ -71,6 +71,13 @@ roles:
     - {provider: closerouter, model: "google/gemini-3.8-flash"}
     - {provider: openlux, model_match: {family: gemini, version: "3.8-flash", prefix: ""}}
     - {provider: wellflow, model: "gemini-3.8-flash"}
+  # Auditor (python -m vidbush audit): one vision call per 2 s tile of a finished video. Sonnet 5.5 agreed
+  # best with the reference tile rows on probe slices (2026-11-17); Gemini 3.8 Flash and Opus 5.5 were
+  # further off, and wellflow_cheap answers images with server_error. Same order as director.
+  auditor:
+    - {provider: closerouter, model_match: {family: sonnet, version: "5.5"}}
+    - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824}}}
+    - {provider: anthropic_direct, model: "claude-sonnet-5-5"}
   # Images: Elevate then Algrow, unchanged.
   image:
     - {provider: image_primary, model_env: IMAGE_MODEL, model: "your-image-model"}
