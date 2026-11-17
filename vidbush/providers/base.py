@@ -136,6 +136,7 @@ class CostTracker:
         self.project_id = project_id
         self.path = path
         self.log: Optional[JsonLogger] = None  # set by ProviderClient; finalize logs price warnings there
+        self.started = time.time()  # entries from here on are this run's (the report also holds earlier runs)
         self._lock = threading.Lock()
         self.report = CostReport(project_id=project_id)
         if path and path.exists():
@@ -161,8 +162,7 @@ class CostTracker:
     def finalize(self, minutes: float) -> CostReport:
         with self._lock:
             self.report.per_minute_usd = round(self.report.total_usd / max(minutes, 0.01), 5)
-            # shortcut: entries of earlier runs of this project count too; split by run when runs carry an id
-            self.report.warnings = price_warnings(self.report.entries)
+            self.report.warnings = price_warnings([e for e in self.report.entries if e.ts >= self.started])
             for w in self.report.warnings:
                 if self.log is not None:
                     self.log.warn("provider price gap", warning=w)

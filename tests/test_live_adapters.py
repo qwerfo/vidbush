@@ -217,3 +217,4 @@ def test_image_job_credits_are_recorded_and_priced(tmp_path: Path, monkeypatch) 
     spec = ProviderSpec("a", "algrow", "m", api_key="k", options={"cost_per_image": 0.01085, "credit_usd": 0.031})
     r = image_mod.generate(spec, "trucks", tmp_path / "b.png", 0.02)
     assert r.credits == 0.35 and r.cost_usd == 0.01085  # a known USD price wins
+    assert image_mod._credits({"credits": 950.0}) is None  # "credits" is often the account balance

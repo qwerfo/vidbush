@@ -1,7 +1,8 @@
 """Batch report: data/batches/<id>/batch_report.md and batch_report.json, one row per project.
 
 Figures per project come from its outputs: duration from final.mp4 (ffprobe), else shotlist.json;
-total cost from cost_report.json; QA percent is pct_above_threshold from qa_report.json.
+total cost from cost_report.json; "pre-render judge %" is pct_above_threshold from qa_report.json (bookkeeping,
+it never tracked the frames); "audit noticeable %" comes from audit/audit_summary.json when the tile audit ran.
 """
 from __future__ import annotations
 
@@ -14,7 +15,8 @@ from .batch import BatchItem, BatchState, batch_dir
 
 REPORT_MD = "batch_report.md"
 REPORT_JSON = "batch_report.json"
-COLUMNS = ("project", "input", "mode", "status", "duration", "cost", "cost/min", "QA %", "note")
+COLUMNS = ("project", "input", "mode", "status", "duration", "cost", "cost/min", "pre-render judge %",
+           "audit noticeable %", "note")
 
 
 def _json_value(path: Path, key: str) -> Optional[float]:
@@ -38,14 +40,15 @@ def project_duration(root: Path) -> Optional[float]:
 
 
 def project_metrics(settings: Settings, project_id: str) -> dict[str, Optional[float]]:
-    """duration_s, cost_usd, cost_per_min_usd and qa_pct of one project (None where unknown)."""
+    """duration_s, cost_usd, cost_per_min_usd, qa_pct and audit_noticeable of one project (None where unknown)."""
     from .pipeline import project_dir
     root = project_dir(settings, project_id)
     duration = project_duration(root)
     cost = _json_value(root / "cost_report.json", "total_usd")
     per_min = round(cost / (duration / 60.0), 4) if cost is not None and duration else None
     return {"duration_s": duration, "cost_usd": cost, "cost_per_min_usd": per_min,
-            "qa_pct": _json_value(root / "qa_report.json", "pct_above_threshold")}
+            "qa_pct": _json_value(root / "qa_report.json", "pct_above_threshold"),
+            "audit_noticeable": _json_value(root / "audit" / "audit_summary.json", "noticeable")}
 
 
 def summary(state: BatchState) -> dict[str, Any]:
@@ -69,7 +72,7 @@ def report_json(state: BatchState) -> dict[str, Any]:
 def row(item: BatchItem) -> dict[str, Any]:
     return {"project_id": item.project_id, "input": item.input, "mode": item.mode, "status": item.status,
             "duration_s": item.duration_s, "cost_usd": item.cost_usd, "cost_per_min_usd": item.cost_per_min_usd,
-            "qa_pct": item.qa_pct, "note": item.note}
+            "qa_pct": item.qa_pct, "audit_noticeable": item.audit_noticeable, "note": item.note}
 
 
 def _fmt(value: Optional[float], kind: str) -> str:
@@ -96,7 +99,8 @@ def report_markdown(state: BatchState) -> str:
     for i in state.items:
         note = (i.note or "").replace("|", "/").replace("\n", " ")
         cells = [i.project_id, Path(i.input).name, i.mode or "-", i.status, _fmt(i.duration_s, "duration"),
-                 _fmt(i.cost_usd, "usd"), _fmt(i.cost_per_min_usd, "usd"), _fmt(i.qa_pct, "pct"), note or ""]
+                 _fmt(i.cost_usd, "usd"), _fmt(i.cost_per_min_usd, "usd"), _fmt(i.qa_pct, "pct"),
+                 _fmt(i.audit_noticeable, "pct"), note or ""]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 
