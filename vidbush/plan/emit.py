@@ -124,12 +124,15 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
             overlay_text = ""
             if fallback == "text_over_footage" and cand is None:
                 cand = pk.get("_fallback_cand")  # the model's related real footage; never the previous shot's
-                overlay_text = str(pk.get("overlay_text") or (plan.get("real_thing") or {}).get("name", "")
+                passages = [str(e.get("text", "")) for e in (plan.get("layout") or {}).get("elements", [])]
+                overlay_text = str(pk.get("overlay_text")
+                                   or (" / ".join(passages) if plan["treatment"] == "document_focus" else "")
+                                   or (plan.get("real_thing") or {}).get("name", "")
                                    or plan.get("anchor", ""))[:60]
             if fallback == "map" and cand is None:
                 place = str(pk.get("map_place") or (plan.get("real_thing") or {}).get("place", "")
                             or (plan.get("real_thing") or {}).get("name", ""))
-                plan = dict(plan, treatment="route_map", presentation="full",
+                plan = dict(plan, treatment="route_map", presentation="full", planned_treatment=plan["treatment"],
                             layout={"title": place, "elements": [{"role": "place", "text": place,
                                                                   "anchor": plan.get("anchor", ""), "at": gc[0].speech_start}]})
             typ = _shot_type(plan, cand, fallback)

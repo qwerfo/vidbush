@@ -103,3 +103,12 @@ def test_full_route_map_with_a_pick_stays_a_layout(setup, cands):  # noqa: F811
     picks_ = [{"_cand": cands["video"]}, {"_cand": cands["image"]}, {}, {}, {}]
     _, sl = M.emit("p1", script, nar, cl, sp, [{"scene": "s01", "picks": picks_}])
     assert sl.shots[1].type == ShotType.motion_graphic and sl.shots[1].layout.kind == "route_map"
+
+
+def test_a_map_never_stands_in_for_a_document(pool):  # noqa: F811
+    sh = shots([3.0])
+    sh[0]["plan"].update(treatment="document_focus", presentation="full",
+                         layout={"purpose": "evidence", "elements": [{"text": "a line"}]})
+    p, errors = E.check(picks({"pick": None, "fallback": "map", "map_place": "Somewhere"}), sh, pool, {}, 0)
+    assert any("cannot stand in for a document" in e for e in errors)
+    assert E.resolve(p, sh, 0)[0]["fallback"] == "text_over_footage"

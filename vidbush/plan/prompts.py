@@ -169,7 +169,9 @@ EDIT_RULES = [
     "document_pick is the document itself (never an AI still); pick is the footage beneath it unless its "
     "presentation is full. A document used as evidence or subject is only right when its page shows the "
     "passages to mark: for each passage say in passages_visible (true or false, in order) whether you can see "
-    "those words on the page you picked. A different page that only looks similar is not the document.",
+    "those words on the page you picked. A different page that only looks similar is not the document. When the document is not in the pool, "
+    "use fallback text_over_footage: its quoted words typed over related real footage (fallback_pick); a map "
+    "never stands in for a document.",
     "No em dash characters anywhere.",
 ]
 

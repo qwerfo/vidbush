@@ -96,7 +96,7 @@ def report(clauses: list[Clause], plan: dict, sl: ShotList, narration: Narration
                   "reason": r.get("presentation_reason") or r.get("reason", ""),
                   "passages": [e.get("text", "") for e in (r.get("layout") or {}).get("elements", [])],
                   "document_pick": (r.get("edit") or {}).get("document_pick")}
-                 for r in rows if r["treatment"] == "document_focus"]
+                 for r in rows if r.get("planned_treatment", r["treatment"]) == "document_focus"]
     pictures = [r for r in rows if r["treatment"] == "picture"]
     unused = [r for r in pictures if r.get("edit") and r["edit"]["pick"] is None]
     new_shots = _span_shots(sl, lo, hi)

@@ -208,6 +208,9 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], used_before: dict[
                 else:
                     used.setdefault(asset_key(fc), cid)
                 p["_fallback_cand"] = fc if fc is not None and not is_ai(fc) else None
+            if fb == "map" and needs_document(s["plan"]):
+                errors.append(f"{cid}: a map cannot stand in for a document; when the page is not found, use "
+                              f"text_over_footage with the quoted words over related real footage.")
             if fb == "map" and not str(p.get("map_place") or (rt.get("place") or rt.get("name") or "")).strip():
                 errors.append(f"{cid}: a map fallback needs map_place.")
         if ai_here:
@@ -306,6 +309,9 @@ def resolve(picks: list[dict], shots: list[dict], ai_tail: int,
             p["_fallback_cand"] = None
         elif fc is not None:
             used.setdefault(asset_key(fc), p.get("clause", ""))
+        if p.get("fallback") == "map" and needs_document(s["plan"]):
+            p["fallback"] = "text_over_footage"
+            p["resolved"] = (p.get("resolved", "") + "; map refused for a document: quoted words over footage").strip("; ")
         if p.get("fallback") == "ai_still" and (rt.get("kind") in NO_AI_KINDS or dur > V.AI_HOLD_MAX_S + 1e-6
                                                  or run + 1 > V.AI_RUN_MAX):
             p["resolved"] = (p.get("resolved", "") + "; ai_still fallback refused by the AI rulings").strip("; ")
