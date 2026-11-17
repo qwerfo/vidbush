@@ -459,6 +459,7 @@ class Shot(Model):
     queries: list[str] = Field(default_factory=list)
     overlay: Optional[MotionSpec] = None
     motion: Optional[MotionSpec] = None  # full-frame spec for motion_graphic shots
+    operator_wish: str = ""  # an operator review comment: a wish the judge reads, never a must_avoid item
     ai_prompt: str = ""
     candidates: list[Candidate] = Field(default_factory=list)
     selected: Optional[str] = None
@@ -731,7 +732,8 @@ class EditOp(Model):
     set_duration: shot_id, seconds
     split_shot: shot_id, at (seconds into shot)
     merge_shots: a, b
-    change_type: shot_id, type, optional add_must_avoid, add_queries (lists), reject_selected (reason)
+    change_type: shot_id, type, optional add_must_avoid, add_queries (lists), reject_selected (reason),
+                 operator_wish (text)
     set_overlay: shot_id, motion_spec
     remove_overlay: shot_id
     reorder: shot_id, new_index

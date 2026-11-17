@@ -1,9 +1,11 @@
 """Review verdicts to EditOps, only where the mapping is safe.
 
 - wrong picture on footage or a still: change_type to the same type, which is the editor path that
-  re-sources one shot (editor/ops.py _resource). The comment is added to the shot's must_avoid and
-  queries, and the reviewed pick is rejected so the judge cannot pick it again.
-- wrong picture on an AI image or AI video: regenerate_ai with the comment as an avoid note.
+  re-sources one shot (editor/ops.py _resource). The comment becomes the shot's operator_wish (the
+  judge reads it as a wish) and its wanted part a query; the reviewed pick goes to must_avoid and is
+  rejected so the judge cannot pick it again. A plain comment is never a must_avoid item: "I want steam
+  shovels" is a wish, not a prohibition.
+- wrong picture on an AI image or AI video: regenerate_ai with the comment as the operator's wish.
 - quality problem with a hard reject ticked: the same re-source, with each ticked reject added to
   must_avoid instead of the comment.
 - wrong timing: no op. The plan lists it so the UI can open the existing duration editor.
@@ -49,7 +51,7 @@ def comment_query(comment: str) -> str:
 
     Only the wanted part becomes a query: a complaint ("this shows a modern ship") would search for the
     very thing that was rejected, so a comment without a want phrase adds no query (it still goes to
-    must_avoid). At most QUERY_WORDS words, no quote marks, negations cut off.
+    operator_wish). At most QUERY_WORDS words, no quote marks, negations cut off.
     """
     for sentence in re.split(r"(?<=[.!?;])\s+", _flat(comment)):
         m = _WANT_RE.search(sentence)
@@ -91,17 +93,20 @@ def _pending(e: ShotReview, settings: Optional[Settings] = None, project_id: str
     return _fix_failed(settings, project_id, e)
 
 
-def _resource_op(shot: Shot, avoid: list[str], queries: list[str], reason: str, why: str) -> EditOp:
+def _resource_op(shot: Shot, avoid: list[str], queries: list[str], reason: str, why: str, wish: str = "") -> EditOp:
     args: dict[str, Any] = {"shot_id": shot.id, "type": shot.type.value, "add_must_avoid": avoid,
                             "reject_selected": reason}
     if queries:
         args["add_queries"] = queries
+    if wish:
+        args["operator_wish"] = wish
     return EditOp(op=EditOpName.change_type, args=args, reason=why)
 
 
-def _ai_op(shot: Shot, avoid: str, why: str) -> EditOp:
-    note = _flat(avoid)[:AVOID_PROMPT_CHARS].rstrip(" ,.")
-    return EditOp(op=EditOpName.regenerate_ai, args={"shot_id": shot.id, "prompt_delta": f"Avoid: {note}"}, reason=why)
+def _ai_op(shot: Shot, avoid: str, why: str, wish: str = "") -> EditOp:
+    note = _flat(wish or avoid)[:AVOID_PROMPT_CHARS].rstrip(" ,.")
+    delta = f"Operator wish: {note}" if wish else f"Avoid: {note}"
+    return EditOp(op=EditOpName.regenerate_ai, args={"shot_id": shot.id, "prompt_delta": delta}, reason=why)
 
 
 def op_for(shot: Shot, e: ShotReview) -> tuple[Optional[EditOp], str]:
@@ -110,13 +115,13 @@ def op_for(shot: Shot, e: ShotReview) -> tuple[Optional[EditOp], str]:
     comment = _flat(e.comment)
     if e.verdict == "wrong_picture":
         if shot.type in RESOURCE_TYPES:
-            avoid = [comment] if comment else [f"the picture rejected in review ({shot.selected or 'none'})"]
+            avoid = [f"the picture rejected in review ({shot.selected or 'none'})"]
             queries = [q for q in [comment_query(comment)] if q]
             why = f"review: shot {n} wrong picture" + (f": {comment}" if comment else "")
-            return _resource_op(shot, avoid, queries, "operator review: wrong picture", why), why
+            return _resource_op(shot, avoid, queries, "operator review: wrong picture", why, comment), why
         if shot.type in AI_TYPES:
             why = f"review: shot {n} wrong picture, new AI image"
-            return _ai_op(shot, comment or "the previous image, it did not fit the narration", why), why
+            return _ai_op(shot, "the previous image, it did not fit the narration", why, comment), why
         if shot.type == ShotType.ai_video:
             return None, "AI video: regenerating would turn it into a still, edit by hand"
         return None, "motion graphic: a wrong picture needs a hand edit"

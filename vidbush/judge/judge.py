@@ -164,6 +164,8 @@ def judge_prompt(shot: Shot, cand: Candidate, narration: str = "", spoken: str =
     else:
         lines = [f"Narration: {narration}"] if narration else []
         lines += [f"Beat intent: {shot.intent}", f"Must show: {', '.join(shot.must_show) or 'nothing specific'}"]
+    if shot.operator_wish:  # a review comment: what the operator hoped to see, never a prohibition
+        lines.append(f"Operator wish: {shot.operator_wish}")
     lines += [
         f"Must avoid: {', '.join(shot.must_avoid) or 'nothing specific'}",
         f"Shot type: {shot.type.value}, framing {shot.framing}, {shot.duration:.1f} seconds on screen",
