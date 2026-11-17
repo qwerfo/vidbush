@@ -56,6 +56,29 @@ def _cost(spec: ProviderSpec, default: float) -> float:
     return float(spec.options.get("cost_per_image", default))
 
 
+CREDIT_KEYS = ("credits_used", "credit_cost", "credits", "cost_credits")
+
+
+def _credits(*replies: Any) -> float | None:
+    """Credits a job API reported for this image (first reply that names them), or None."""
+    for r in replies:
+        for k in CREDIT_KEYS if isinstance(r, dict) else ():
+            try:
+                v = r.get(k)
+                if v is not None and not isinstance(v, (bool, dict, list)):
+                    return float(v)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _credit_cost(spec: ProviderSpec, default: float, credits: float | None) -> float:
+    """USD for one image: the configured price, else credits times options.credit_usd when both are known."""
+    cost = _cost(spec, default)
+    price = float(spec.options.get("credit_usd") or 0.0)
+    return credits * price if not cost and credits and price else cost
+
+
 def _gpt_family(model: str) -> str:
     """The GPT_IMAGE_COST row for this model, or "" for models the table does not price (they use cost_per_image)."""
     low = model.lower()
@@ -257,7 +280,7 @@ def generate_elevate(spec: ProviderSpec, prompt: str, out_path: Path, default_co
     body: dict[str, Any] = {"type": "image", "prompt": prompt, "model": spec.model,
                             "aspect_ratio": spec.options.get("aspect_ratio", "landscape"), "params": {}}
     body.update(spec.options.get("extra_body", {}))
-    task = _elevate_data(post_json(base + "/v2/media", body, headers, timeout=60), "Elevate submit")
+    task = submitted = _elevate_data(post_json(base + "/v2/media", body, headers, timeout=60), "Elevate submit")
     task_id = task.get("id")
     if not task_id:
         raise TransportError(f"Elevate submit returned no task id: {str(task)[:200]}")
@@ -267,8 +290,9 @@ def generate_elevate(spec: ProviderSpec, prompt: str, out_path: Path, default_co
     if not task.get("result_url"):
         raise TransportError(f"Elevate task {task_id} completed without result_url")
     raw = get_bytes(task["result_url"])
+    credits = _credits(task, submitted)
     return CallResult(value=fit_16x9(raw, out_path, trim=_trim(spec)), provider=spec, mock=False,
-                      cost_usd=_cost(spec, default_cost), units=1, unit_kind="images")
+                      cost_usd=_credit_cost(spec, default_cost, credits), units=1, unit_kind="images", credits=credits)
 
 
 def _algrow_url(job: dict[str, Any]) -> str:
@@ -308,8 +332,9 @@ def generate_algrow(spec: ProviderSpec, prompt: str, out_path: Path, default_cos
     if not url:
         raise TransportError(f"Algrow job {job_id} completed without an image url")
     raw = get_bytes(url)
+    credits = _credits(job, sub)
     return CallResult(value=fit_16x9(raw, out_path, trim=_trim(spec)), provider=spec, mock=False,
-                      cost_usd=_cost(spec, default_cost), units=1, unit_kind="images")
+                      cost_usd=_credit_cost(spec, default_cost, credits), units=1, unit_kind="images", credits=credits)
 
 
 ADAPTERS = {"openai_compat": generate_openai, "fal": generate_fal, "runware": generate_runware,

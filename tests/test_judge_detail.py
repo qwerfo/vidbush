@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 
 from vidbush.judge import judge as judge_mod
-from vidbush.judge.qa import score_post_render
+from vidbush.judge.qa import judge_rendered
 from vidbush.learn.style_learner import classify_shots
 from vidbush.models import Candidate, Shot, ShotList, ShotType, SourceKind
 from vidbush.providers import base, llm, seats as seats_mod
@@ -123,7 +123,7 @@ def test_qa_pass_reads_the_middle_frame_high_and_the_rest_low(settings, monkeypa
     shot = Shot(id="s0", beat_id="b0", start=0, end=4, duration=4, type=ShotType.footage, intent="A harbour")
     ctx = SimpleNamespace(settings=settings, seats=Seats(settings, CostTracker("p")), stage="packaging",
                           log=NullLogger())
-    out = score_post_render(ShotList(project_id="p", duration=4, shots=[shot]), {"s0": _frames(tmp_path, 3)}, ctx)
+    out = judge_rendered(ShotList(project_id="p", duration=4, shots=[shot]), {"s0": _frames(tmp_path, 3)}, ctx)
     assert "s0" in out
     # the middle frame must be read closely (lower thirds, map titles, faces); the others only confirm
     assert sent and all(d == ["high", "low", "low"] for d in sent)

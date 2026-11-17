@@ -6,15 +6,17 @@
 Runs the real registry code (_search_all, interleave, plan_shot through _plan_all) on the project's
 shots as they were before judging: candidates stripped, the first QUERIES_PER_SHOT queries (the judge
 appends its requeries after them). No request leaves the machine: every adapter's search is replaced by
-a stub that records the miss and fails, so only search cache hits give results. The stub keeps no
-keyword form (adapter.keyword_words), so the cache is read under the query form the run sent. A shot the judge turned
-into a generated still gets back the media its queries were cached under. Budgets and fair shares run
-as in a live run, so a miss the budget would not have sent is told apart from a miss that was sent.
+a stub that records the miss and fails, so only search cache hits give results. The stub copies the
+adapter's keyword form (keyword_words), so the cache is read under the exact query the live run sent and
+stored. Replay ignores the search cache TTL: an expired entry is still what that run saw. A shot the judge
+turned into a generated still gets back the media its queries were cached under. Budgets and fair shares
+run as in a live run, so a miss the budget would not have sent is told apart from a miss that was sent.
 
 For every reported shot: cached results found, matches and fillers after the relevance screen, plan
 length (matches and fillers), the searches that missed the cache, and for a still shot without a matched
 still the video plan its frame fallback would fetch. With --drops-from
-(a run log), the "off-topic results dropped" events of that run are replayed through today's screen.
+(a run log), the relevance screen events of that run ("off-topic results demoted to fillers", or
+"off-topic results dropped" in older logs) are replayed through today's screen.
 """
 from __future__ import annotations
 
@@ -22,9 +24,10 @@ import argparse
 import json
 import threading
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from ..config import load_brand, load_settings
 from ..models import ShotList
@@ -32,6 +35,18 @@ from . import registry, throttle
 from .base import RawResult
 
 REPLAY_ADAPTERS = ["youtube", "wikimedia", "archive", "loc", "nara", "nasa", "pexels", "pixabay"]
+DROP_MESSAGES = ("off-topic results demoted to fillers", "off-topic results dropped")  # current, then older logs
+
+
+@contextmanager
+def ignore_ttl() -> Iterator[None]:
+    """Serve expired search cache entries while replaying: the cache is the record of what a run saw."""
+    saved = registry.SEARCH_CACHE_TTL_S, registry.SEARCH_CACHE_TTL_BY_SOURCE
+    registry.SEARCH_CACHE_TTL_S, registry.SEARCH_CACHE_TTL_BY_SOURCE = float("inf"), {}
+    try:
+        yield
+    finally:
+        registry.SEARCH_CACHE_TTL_S, registry.SEARCH_CACHE_TTL_BY_SOURCE = saved
 
 
 class CacheMiss(Exception):
@@ -51,10 +66,12 @@ class Log:
 
 
 class OfflineAdapter:
-    """Wraps a real adapter: same name, media and search hints; search never touches the network."""
+    """Wraps a real adapter: same name, media, search hints and keyword form (the cache key of the
+    every-word engines); search never touches the network."""
 
     def __init__(self, inner: Any) -> None:
         self.inner, self.name, self.media = inner, inner.name, set(inner.media)
+        self.keyword_words = getattr(inner, "keyword_words", 0)
         if hasattr(inner, "search_hints"):
             self.search_hints = inner.search_hints
         self.misses: list[tuple[str, str, str]] = []  # (shot, query, media), sent past the budget
@@ -124,6 +141,12 @@ def restore_types(sl: ShotList, adapters: list[Any], ctx: Any) -> dict[str, str]
 def replay(project_dir: Path, cache: Optional[str] = None, shot_ids: Optional[list[str]] = None,
            adapter_names: Optional[list[str]] = None) -> dict[str, Any]:
     """Search and plan every sourced shot offline; per shot report for shot_ids (all when None)."""
+    with ignore_ttl():
+        return _replay(project_dir, cache, shot_ids, adapter_names)
+
+
+def _replay(project_dir: Path, cache: Optional[str], shot_ids: Optional[list[str]],
+            adapter_names: Optional[list[str]]) -> dict[str, Any]:
     ctx = make_context(project_dir, cache)
     throttle.reset()
     registry.base.configure(ctx.settings)  # budgets and rates as a live run of these settings
@@ -188,7 +211,7 @@ def _frame_fallbacks(sl: ShotList, plans: dict[str, list[RawResult]], adapters: 
 
 
 def replay_drops(log_path: Path, ctx: Any, stage: str = "sourcing") -> dict[str, Any]:
-    """Replay the "off-topic results dropped" events a run logged in stage through today's screen
+    """Replay the relevance screen events (DROP_MESSAGES) a run logged in stage through today's screen
     (cache hits only): every result now survives, as a match or as a filler."""
     index = _cache_index(ctx.settings)
     out = Counter()
@@ -200,7 +223,7 @@ def replay_drops(log_path: Path, ctx: Any, stage: str = "sourcing") -> dict[str,
             continue
         if row.get("msg") == "stage start":
             current = str(row.get("stage") or "")
-        if row.get("msg") != "off-topic results dropped" or current != stage:
+        if row.get("msg") not in DROP_MESSAGES or current != stage:
             continue
         events += 1
         hits = index.get((row.get("source"), " ".join(str(row.get("query", "")).lower().split())))

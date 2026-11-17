@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from ..providers.base import ProviderError
 from ..models import OVERLAY_TYPES, Candidate, Script, Shot, ShotList, ShotType, SourceKind
 from ..visuals.ai_images import needs_readable_text
 from .judge import (AI_PHOTO, DESIGNED, GRAPHIC, JUDGE_MOCK_FLAG, JUDGE_WORKERS, candidate_branding, is_real,
@@ -124,9 +125,9 @@ def _ai_tried(shot: Shot) -> bool:
 
 
 def _ranked(shot: Shot) -> list[Candidate]:
-    """Best first: clean candidates, then those without a hard reject, then by score."""
-    return sorted(shot.candidates, key=lambda c: (_clean(c, shot), c.reject_reason is None, c.score or 0.0),
-                  reverse=True)
+    """Best first: clean candidates, then those without a hard reject, then judged before unjudged, then by score."""
+    return sorted(shot.candidates, key=lambda c: (_clean(c, shot), c.reject_reason is None, c.score is not None,
+                                                  c.score or 0.0), reverse=True)
 
 
 def asset_key(c: Candidate) -> str:
@@ -224,11 +225,16 @@ def _requery(shot: Shot, ctx: Any) -> str:
 
 
 def requery_queries(shot: Shot, ctx: Any, reasons: list[str]) -> list[str]:
-    """Director seat rewrite of the queries; deterministic broadening when the seat gives nothing."""
+    """Director seat rewrite of the queries; deterministic broadening when the seat gives nothing usable
+    or fails (a provider error or a bad reply), so a requery failure never ends the shot's resolve."""
     user = (f"Shot intent: {shot.intent}\nMust show: {', '.join(shot.must_show) or 'nothing specific'}\n"
             f"Must avoid: {', '.join(shot.must_avoid) or 'nothing specific'}\n"
             f"Queries tried: {'; '.join(shot.queries) or 'none'}\nJudge reasons: {'; '.join(reasons) or 'none'}")
-    raw = ctx.seats.llm_json("director", "requery", REQUERY_SYSTEM, user, ctx.stage or "judge")
+    try:
+        raw = ctx.seats.llm_json("director", "requery", REQUERY_SYSTEM, user, ctx.stage or "judge")
+    except ProviderError as e:  # BadJSON and transport failures included
+        ctx.log.warn("requery seat failed, heuristic queries", shot=shot.id, error=str(e)[:300])
+        raw = None
     got = raw.get("queries") if isinstance(raw, dict) else None
     if isinstance(got, list):
         clean = _dedupe([" ".join(str(q).split()) for q in got if isinstance(q, str)], MAX_QUERIES)

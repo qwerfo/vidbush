@@ -486,6 +486,7 @@ class Shot(Model):
     queries: list[str] = Field(default_factory=list)
     overlay: Optional[MotionSpec] = None
     motion: Optional[MotionSpec] = None  # full-frame spec for motion_graphic shots
+    operator_wish: str = ""  # an operator review comment: a wish the judge reads, never a must_avoid item
     ai_prompt: str = ""
     candidates: list[Candidate] = Field(default_factory=list)
     selected: Optional[str] = None
@@ -758,7 +759,8 @@ class EditOp(Model):
     set_duration: shot_id, seconds
     split_shot: shot_id, at (seconds into shot)
     merge_shots: a, b
-    change_type: shot_id, type, optional add_must_avoid, add_queries (lists), reject_selected (reason)
+    change_type: shot_id, type, optional add_must_avoid, add_queries (lists), reject_selected (reason),
+                 operator_wish (text)
     set_overlay: shot_id, motion_spec
     remove_overlay: shot_id
     reorder: shot_id, new_index
@@ -806,6 +808,7 @@ class CostReport(Model):
     total_usd: float = 0.0
     per_minute_usd: float = 0.0
     mock_calls: int = 0
+    warnings: list[str] = Field(default_factory=list)  # price anomalies found at finalize (CostTracker)
 
 
 class QAShot(Model):
@@ -868,6 +871,9 @@ class QAReport(Model):
     pct_fail_rendered: float = 0.0
     worst: list[str] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)
+    # The tile audit's six numbers (percent) from <root>/audit/audit_summary.json, empty when no audit ran.
+    # pct_above_threshold above is the pre-render judge score, kept for old files; it is not the headline.
+    audit: dict[str, float] = Field(default_factory=dict)
 
 
 ALL_MODELS: dict[str, type[BaseModel]] = {

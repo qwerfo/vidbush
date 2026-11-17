@@ -118,12 +118,37 @@ def is_placeholder_model(model: str) -> bool:
     return model.strip().lower().startswith(PLACEHOLDER_PREFIX)
 
 
+PRICE_GAP = 5.0  # one provider charging more than this many times another per unit, same model, is a warning
+PER_UNIT_KINDS = ("tokens", "images")
+
+
+def price_warnings(entries: list[CostEntry]) -> list[str]:
+    """One line per model whose providers differ more than PRICE_GAP times in USD per unit (token or image).
+    Free calls (subscriptions, mocks) are left out: a 0 USD price is a contract, not an anomaly."""
+    per: dict[tuple[str, str], dict[str, list[float]]] = {}
+    for e in entries:
+        if e.ok and not e.mock and e.model and e.unit_kind in PER_UNIT_KINDS and e.units > 0 and e.cost_usd > 0:
+            acc = per.setdefault((e.model, e.unit_kind), {}).setdefault(e.provider, [0.0, 0.0])
+            acc[0] += e.cost_usd
+            acc[1] += e.units
+    out = []
+    for (model, kind), provs in sorted(per.items()):
+        rates = {p: c / u for p, (c, u) in provs.items()}
+        hi, lo = max(rates, key=rates.__getitem__), min(rates, key=rates.__getitem__)
+        if len(rates) > 1 and rates[hi] > PRICE_GAP * rates[lo]:
+            unit = kind.rstrip("s")
+            out.append(f"provider {hi} charged {rates[hi] / rates[lo]:.1f} times {lo} per {unit} for model {model} "
+                       f"({rates[hi]:.3g} against {rates[lo]:.3g} USD per {unit})")
+    return out
+
+
 class CostTracker:
     """Collects CostEntry records for a project and writes cost_report.json."""
 
     def __init__(self, project_id: str, path: Optional[Path] = None) -> None:
         self.project_id = project_id
         self.path = path
+        self.log: Optional[JsonLogger] = None  # set by ProviderClient; finalize logs price warnings there
         self._lock = threading.Lock()
         self.report = CostReport(project_id=project_id)
         if path and path.exists():
@@ -149,6 +174,11 @@ class CostTracker:
     def finalize(self, minutes: float) -> CostReport:
         with self._lock:
             self.report.per_minute_usd = round(self.report.total_usd / max(minutes, 0.01), 5)
+            # shortcut: entries of earlier runs of this project count too; split by run when runs carry an id
+            self.report.warnings = price_warnings(self.report.entries)
+            for w in self.report.warnings:
+                if self.log is not None:
+                    self.log.warn("provider price gap", warning=w)
             if self.path:
                 write_json(self.path, self.report)
             return self.report
@@ -233,6 +263,8 @@ class ProviderClient:
                  retries: int = 3, backoff_s: float = 1.5, sleep: Callable[[float], None] = time.sleep) -> None:
         self.tracker = tracker
         self.log = logger or NullLogger()
+        if getattr(tracker, "log", None) is None and logger is not None:
+            tracker.log = logger
         self.retries = retries
         self.backoff_s = backoff_s
         self.sleep = sleep

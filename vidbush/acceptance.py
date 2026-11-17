@@ -69,7 +69,23 @@ def check_project(settings: Settings, project_id: str, min_minutes: float = 3.0)
     words = read_model(nar_path, Narration).words if nar_path.exists() else []
     checks.update(_animation_checks(sl, facts, words, _top10(root)))
     checks.update(_text_checks(root))
+    checks.update(_audit_check(root, facts))
     return {"ok": all(checks.values()), "checks": checks, "facts": facts}
+
+
+AUDIT_NOTICEABLE_MAX = 40.0  # percent of tiles; above this a viewer sees a fault in two of every five frames
+
+
+def _audit_check(root: Path, facts: dict[str, Any]) -> dict[str, bool]:
+    """The tile audit gates the project when it exists (noticeable at most AUDIT_NOTICEABLE_MAX percent);
+    without one the absence is reported in facts, not failed."""
+    from .judge.qa import load_audit
+    audit = load_audit(root)
+    if "noticeable" not in audit:
+        facts["audit"] = f"no tile audit yet: python -m vidbush audit {root.name}"
+        return {}
+    facts["audit"] = audit
+    return {"audit_noticeable": audit["noticeable"] <= AUDIT_NOTICEABLE_MAX}
 
 
 CARD_SHARE_MAX = 25.0  # percent of shots; above this the video reads as a slideshow of cards

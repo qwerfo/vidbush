@@ -294,18 +294,23 @@ def _str_list(value: Any) -> list[str]:
 def _review_notes(shot: Shot, args: dict[str, Any]) -> None:
     """Optional change_type args from the review sheet (review/fixes.py), applied before a re-source.
 
-    add_must_avoid and add_queries extend the shot's lists (no duplicates). reject_selected marks the
-    current pick rejected with that reason so the judge cannot choose it again; when must_avoid grew,
-    the other judged candidates lose their score so the judge sees the new must_avoid.
+    add_must_avoid and add_queries extend the shot's lists (no duplicates); operator_wish replaces the
+    shot's wish. reject_selected marks the current pick rejected with that reason so the judge cannot
+    choose it again; when must_avoid grew or the wish changed, the other judged candidates lose their
+    score so the judge sees them.
     """
     avoid = [a for a in _str_list(args.get("add_must_avoid")) if a not in shot.must_avoid]
     shot.must_avoid += avoid
+    wish = no_em_dash(" ".join(str(args.get("operator_wish") or "").split()))
+    rewish = bool(wish) and wish != shot.operator_wish
+    if rewish:
+        shot.operator_wish = wish
     shot.queries += [q for q in _str_list(args.get("add_queries")) if q not in shot.queries]
     reason = str(args.get("reject_selected") or "").strip()
     pick = shot.selected_candidate()
     if reason and pick is not None and pick.source != SourceKind.motion:
         pick.reject_reason, pick.score = no_em_dash(reason), 0.0
-    if avoid:
+    if avoid or rewish:
         for c in shot.candidates:
             if c.reject_reason is None:
                 c.score, c.judge_reason = None, ""

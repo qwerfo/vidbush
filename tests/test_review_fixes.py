@@ -50,7 +50,7 @@ def test_op_mapping_table(typ, verdict, rejects, expect):
             assert op.args["type"] == typ  # same type: the editor re-source path
             assert op.args["reject_selected"].startswith("operator review: ")
         else:
-            assert op.args["prompt_delta"].startswith("Avoid: ")
+            assert op.args["prompt_delta"].startswith(("Avoid: ", "Operator wish: "))
 
 
 def test_wrong_picture_resource_args():
@@ -58,7 +58,8 @@ def test_wrong_picture_resource_args():
     e = ShotReview(shot_id=shot.id, verdict="wrong_picture",
                    comment=f"Too modern {EM} the boats have outboard motors. Show 1931 canyon walls.")
     op, _ = fixes.op_for(shot, e)
-    assert op.args["add_must_avoid"] == ["Too modern, the boats have outboard motors. Show 1931 canyon walls."]
+    assert op.args["add_must_avoid"] == ["the picture rejected in review (s_pick)"]  # never the comment
+    assert op.args["operator_wish"] == "Too modern, the boats have outboard motors. Show 1931 canyon walls."
     assert op.args["add_queries"] == ["1931 canyon walls"]  # the wanted part, never the complaint
     assert op.args["reject_selected"] == "operator review: wrong picture"
     assert EM not in op.reason
@@ -75,7 +76,7 @@ def test_wrong_picture_without_comment():
 def test_ai_avoid_note_is_capped():
     op, _ = fixes.op_for(_shot(ShotType.ai_image), ShotReview(shot_id="shot_009", verdict="wrong_picture",
                                                               comment="word " * 400))
-    assert len(op.args["prompt_delta"]) <= len("Avoid: ") + fixes.AVOID_PROMPT_CHARS
+    assert len(op.args["prompt_delta"]) <= len("Operator wish: ") + fixes.AVOID_PROMPT_CHARS
 
 
 def test_quality_problem_rejects_to_avoid():
@@ -244,9 +245,10 @@ def test_apply_planned_change_type_does_not_reselect_old_pick(settings, monkeypa
     assert after.selected == "shot_002_local_9"
     rejected = {c.id: c.reject_reason for c in after.candidates}
     assert rejected[old] == "operator review: wrong picture"
-    assert "Not this dam. Show Hoover Dam concrete pour." in after.must_avoid
+    assert after.operator_wish == "Not this dam. Show Hoover Dam concrete pour."
+    assert "Not this dam. Show Hoover Dam concrete pour." not in after.must_avoid
     assert "Hoover Dam concrete pour" in after.queries
-    assert seen["must_avoid"][-1] == "Not this dam. Show Hoover Dam concrete pour."
+    assert seen["must_avoid"][-1].startswith("the picture rejected in review")
     assert "Hoover Dam concrete pour" in seen["queries"]
 
 
@@ -269,3 +271,19 @@ def test_apply_planned_change_type_with_mock_judge(settings, monkeypatch, tmp_pa
     assert after.selected and after.selected != old
     assert next(c for c in after.candidates if c.id == old).reject_reason == "operator review: watermark or logo"
     assert "watermark or channel logo" in after.must_avoid
+
+
+def test_an_operator_comment_is_a_wish_never_a_must_avoid():
+    """'I want steam shovels' reaches the judge as the operator's wish, not as something to avoid."""
+    from vidbush.judge.judge import judge_prompt
+    shot = _shot(ShotType.footage)
+    op, _ = fixes.op_for(shot, ShotReview(shot_id=shot.id, verdict="wrong_picture", comment="I want steam shovels"))
+    _review_notes(shot, op.args)
+    assert shot.operator_wish == "I want steam shovels"
+    assert all("steam" not in a for a in shot.must_avoid) and shot.queries == ["steam shovels"]
+    prompt = judge_prompt(shot, Candidate(id="c", source=SourceKind.youtube, media="video"), "narration")
+    assert "Operator wish: I want steam shovels" in prompt
+    assert "steam" not in next(line for line in prompt.splitlines() if line.startswith("Must avoid:"))
+    ai, _ = fixes.op_for(_shot(ShotType.ai_image), ShotReview(shot_id="shot_009", verdict="wrong_picture",
+                                                              comment="I want steam shovels"))
+    assert ai.args["prompt_delta"] == "Operator wish: I want steam shovels"
