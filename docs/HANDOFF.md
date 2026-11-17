@@ -1004,3 +1004,52 @@ To redo chosen AI shots of a finished project into a scratch copy (the project i
 .venv\Scripts\python.exe scripts\regen_ai_shots.py --project "E:\coding projects\Vidbush\output\alaska_run2" `
   --out "E:\coding projects\Vidbush\scratch\run3_regen" --shots shot_068,shot_087 --settings-root C:\projects\vidbush_tmp
 ```
+
+## 12. Designed layouts and panels (V2, branch v2/layouts)
+
+### 12a. What it does
+
+A shot can carry a designed layout (`Shot.layout`, written by the planner). Eleven kinds, all drawn by our own
+Python renderer in one house style (`vidbush/mg/house.py`): split comparison, number over footage, name card,
+list slideshow, date title, route map, equals card, chart, table, timeline and document focus. Every element is
+timed to the narration words it belongs to and never appears more than 0.3 s before them. Route maps, charts,
+tables and timelines can also be shown as a panel over the shot's own picture, in four ways: full, panel,
+full_then_dock (opens at 75 percent, shrinks into a corner) and panel_then_expand (grows to full, its stage 2
+elements wait for the growth). The panel's place is read from the picture beneath (faces, text, the subject),
+varies from the previous panel, and its reason is written to the shot's `layout_notes`. Old map and chart
+insets in existing plans are converted to placed, word-timed panels automatically.
+
+Also new: bare full-frame text cards and centre callouts are gone, label boxes never show empty, stills move
+toward their subject (or hold when short), a still narrower than half the frame is framed on the house ground
+instead of blurred bars, and a matched look can bring sources toward one exposure and colour.
+
+### 12b. Switches (style profile)
+
+- `letterbox.enabled`, `captions.enabled`: the format switches (defaults unchanged: letterbox and captions on).
+  Every layout fits both ways.
+- `colour.match_look` (off), `colour.match_strength` (0.6), `colour.brand_grade` ("", or `house_warm`,
+  `house_cool`).
+- `Brand.house_style`: overrides of the house colours and motion, e.g. `{accent: "#E8A33D"}`.
+
+### 12c. Render cost (measured on the laptop, render seconds per clip second)
+
+Full layouts: equals card 0.5, date title 1.0, name card 0.8, number over footage 0.8, split comparison 1.3,
+list slideshow 1.4, timeline 0.4 to 0.8, chart 0.4, table 0.5, route map 1.1 to 2.3, document focus 2.5 to 5
+(OCR on first use, cached after). Panels: 0.6 to 1.5 per clip second plus placement analysis (4 frames, about
+1 s per panel). No model call is made by any layout.
+
+### 12d. Proving it without a pipeline run
+
+Scripts in `E:\coding projects\Vidbush\layouts\scripts`: `prove.py alaska` (hand-written specs over run 3's
+narration and candidates, `specs_alaska.py`), `prove.py other` (invented war, science and business moments,
+`specs_other.py`, pictures from Wikimedia Commons in `layouts\other_pictures`), `placement_proof.py` (one panel
+over five pictures), `check.py <tag>` (a frame every 0.5 s with each element's word time), `make_reel.py`
+(`layouts\layout_reel.mp4` and `layouts\layout_sheet.png`). Each runs the real motion stage
+(`layouts.stage.render_shot_layouts`) and the real segment renderer.
+
+### 12e. What the planner must supply
+
+`LayoutSpec` with elements in spoken order and anchors that are the exact narration words (numbers as spoken:
+"twenty-nine people"). Role names per kind: `models.LAYOUT_ROLES`. Start a full layout near its first anchored
+word and hold it 3 to 7 s (the notes flag anything else). A name card needs a real portrait candidate; a
+document focus needs a real document whose page carries the quote.

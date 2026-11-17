@@ -176,6 +176,39 @@ renderer that turns a MotionSpec into a clip of exactly `duration` seconds
 at `width x height`, `fps`, with alpha when asked, can replace the built-in
 one by setting `render.renderer` in `config/vidbush.yaml`.
 
+### Designed layouts and panels (V2, `vidbush/mg/layouts`)
+
+The planner writes `Shot.layout` (a `LayoutSpec`): one of eleven kinds (`split_comparison`, `number_over_footage`,
+`name_card`, `list_slideshow`, `date_title`, `route_map`, `equals_card`, `chart`, `table`, `timeline`,
+`document_focus`), its elements in spoken order (`role`, `text`, `anchor` = the exact narration words, `picture` =
+a candidate id or path, `stage` 1 or 2), an optional `title`, a `presentation` for the four panel kinds (route_map,
+chart, table, timeline: `full`, `panel`, `full_then_dock`, `panel_then_expand`) and an `id` for a timeline that
+returns. Role names per kind are in `models.LAYOUT_ROLES`. The motion stage calls
+`layouts.stage.render_shot_layouts` before the old motion jobs; a shot with a layout skips the old path.
+
+| Module | Role |
+|---|---|
+| `mg/house.py` | The house style (ink ground, paper type, amber signal, teal second voice, Inter, paper frames, drift), overridable per brand (`Brand.house_style`). Type floors in output pixels with the reason. |
+| `layouts/timing.py` | `anchor_span` (token match, hyphens split, nearest the shot) and `cue_times`: per element `appear` (0.25 s before its first word, never more than 0.3 s), `word`, `word_end`, clip relative. |
+| `layouts/base.py` | `LayoutJob` (spec, cues, pictures, frame profile, house, extra), `LayoutComp` (draws at its own size; `fs()` never returns under the floor; `box` excludes letterbox bars and caption band), `Footage` (a real clip or still at a size), `framed`, `drift`. |
+| `layouts/jobs.py` | `make_job`: cues from the narration, pictures from the candidate pool (generated pictures refused), nearby word timings in `extra`. |
+| `layouts/pictures.py` | split_comparison, number_over_footage, name_card (and `NameLowerThird`, its fallback), list_slideshow, date_title, equals_card. |
+| `layouts/data.py` | chart (bars or line), table, timeline (`extra["history"]` holds a returning timeline's earlier events); content scales to its box; `panel_share` sizes a panel from its content at the floors. |
+| `layouts/routemap.py` | route_map on `MapComp` (house chips, amber line): places on their words, the line drawn between the two words over real geometry (`mg/routes.py`), places geocoded and checked like `verify_map`, a registered painted base (art lane) when one holds the view. |
+| `layouts/document.py` | document_focus: OCR (prefilter RapidOCR, tiled, cached) finds the quote; whole page, move in, dim, underline as read; falls back to a push with the quote beside it. |
+| `layouts/panel.py` | `PanelComp`: the four presentations; content laid out at the large and the panel size, cross-faded during the 0.8 s size change; dock and expand timing; uint8 compositing. |
+| `layouts/placement.py` | Reads the picture beneath (faces, text, detail, the subject's heart) at sampled times and picks the calmest clear position of six; previous position penalised. |
+| `layouts/stage.py` | Per shot: drop a layout whose words are not spoken in it; place panels (smaller sizes tried, else full); full layouts become the selected `motion` candidate; panels become an alpha overlay starting at `Shot.layout_at` and ending 2.5 s after the last element; name card without a real portrait becomes a lower third (never on a generated picture); old map and chart insets become placed panels (`legacy_panel`). Decisions go to `Shot.layout_notes`. Clips are cached by a hash of everything that changes pixels and `LAYOUT_RENDER_VERSION`. |
+
+Removed on the old path (`mg/renderer.py`, `render/mg_python.py`): bare full-frame title, text and callout cards (the shot
+shows its best real picture), centre callouts, label boxes visible before their text.
+
+Stills (`render/stillmotion.py`, `render/cache.still_motion`): a destination move from the picture (hold, reveal from
+a detail, travel toward the subject, drift), a planner labelled `Shot.still_sequence` (whole, closer, detail of one
+photograph, capped at 1.5x native), and stills narrower than half the frame framed on the house ground
+(`segment.framed_image`). Matched look (`render/look.py`): `colour.match_look` sets `Shot.grade`, an ffmpeg filter
+applied to real sources in the segment. `RENDER_VERSION` seg-7.
+
 ### Art layer (run 3, `vidbush/art`)
 
 Designed visuals that are openly illustrations or animations and are counted as animation, never as
