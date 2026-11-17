@@ -24,7 +24,8 @@ WORK_W = 480
 REPEAT_PENALTY = 0.12
 SUBJECT_CORE = 0.6  # saliency share of the peak that counts as the subject's core
 SUBJECT_MAX = 0.2  # a subject core wider than this share of the picture is not one subject
-SUBJECT_OVERLAP = 0.12  # a panel may cover at most this share of the subject core
+SUBJECT_OVERLAP = 0.05  # share of the subject's heart a panel may cover
+HEART = 0.6  # a panel may cover at most this share of the subject core
 MARGIN = 0.035  # gap between the panel and the picture edge, share of frame width
 
 
@@ -157,6 +158,20 @@ def subject_core(sal: Optional[np.ndarray]) -> Optional[np.ndarray]:
     return None
 
 
+def subject_heart(sal: Optional[np.ndarray]) -> Optional[tuple[float, float, float, float]]:
+    """The middle of the main subject (0..1 box): its blob's bounding box shrunk to HEART around the blob's
+    centre of mass. A panel may sit over the edge of a wide subject (a train across the frame) but never over
+    its heart."""
+    core = subject_core(sal)
+    if core is None:
+        return None
+    h, w = core.shape
+    ys, xs = np.nonzero(core)
+    cx, cy = xs.mean() / w, ys.mean() / h
+    bw, bh = (xs.max() + 1 - xs.min()) / w * HEART, (ys.max() + 1 - ys.min()) / h * HEART
+    return cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2
+
+
 def choose(samples: Sequence[Analysis], size: tuple[float, float], visible: tuple[float, float, float, float],
            W: int, H: int, previous: str = "", allowed: Sequence[str] = POSITIONS) -> Placement:
     """The calmest clear position for a panel of size (w, h) px, or position None with the reason."""
@@ -175,10 +190,10 @@ def choose(samples: Sequence[Analysis], size: tuple[float, float], visible: tupl
                 why = "covers text"
                 break
             sal = a.saliency
-            core = subject_core(sal)
+            heart = subject_heart(sal)
             sh, sw = a.detail.shape
             ys, xs = slice(int(box[1] * sh), int(box[3] * sh)), slice(int(box[0] * sw), int(box[2] * sw))
-            if core is not None and core.sum() > 0 and core[ys, xs].sum() / core.sum() > SUBJECT_OVERLAP:
+            if heart is not None and _overlap(box, heart) > SUBJECT_OVERLAP:
                 why = "covers the main subject"
                 break
             cost += float(a.detail[ys, xs].mean()) + 0.5 * float(sal[ys, xs].mean() if sal is not None else 0)

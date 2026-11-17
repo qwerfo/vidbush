@@ -33,6 +33,7 @@ PANEL_HOLD_S = 2.5  # a panel stays this long after its last element is spoken, 
 PANEL_MIN_S = 3.0
 FULL_MIN_S, FULL_MAX_S = 3.0, 7.0
 SAMPLES = 4  # frames of the underlying picture read for placement
+PANEL_SHRINK = (0.85, 0.72)  # smaller sizes tried when no position clears the picture at the preferred size
 
 
 def frame_profile(profile: StyleProfile) -> FrameProfile:
@@ -325,7 +326,16 @@ def _plan_panel(shot: Shot, job: LayoutJob, pres: str, previous: str, ctx: Any) 
         pos = "upper_right" if previous != "upper_right" else "upper_left"
         return PanelPlan(pres, rect_for(pos, size, visible, W), large_rect(job, pres == "panel_then_expand"),
                          change, pos), f"{pos}: no picture to read beneath, default corner"
-    pl = place_panel(frames, size, visible, W, H, previous)
+    from .placement import analyse, choose
+    samples = [analyse(f) for f in frames]
+    pl = choose(samples, size, visible, W, H, previous)
+    for k in PANEL_SHRINK:  # a smaller panel (content relaid out at the type floors) before giving up
+        if pl.position is not None:
+            break
+        small = (size[0] * k, size[1] * k)
+        pl = choose(samples, small, visible, W, H, previous)
+        if pl.position is not None:
+            pl.reason += f"; panel at {k:.0%} of its preferred size to clear the subject"
     if pl.position is None:
         return None, pl.reason
     return PanelPlan(pres, pl.rect, large_rect(job, pres == "panel_then_expand"), change, pl.position), pl.reason
