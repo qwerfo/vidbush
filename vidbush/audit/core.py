@@ -86,6 +86,28 @@ def load_shots(root: Optional[Path]) -> list[dict[str, Any]]:
     return []
 
 
+def shift(items: list[Any], offset: float) -> list[Any]:
+    """Word tuples or shot dicts moved later by offset seconds (an intro before the narration in final.mp4)."""
+    if not offset:
+        return items
+    return [(w[0], w[1] + offset, w[2] + offset) if isinstance(w, tuple) else
+            {**w, "start": w["start"] + offset, "end": w["end"] + offset} for w in items]
+
+
+def intro_offset(root: Optional[Path]) -> float:
+    """Seconds of intro before narration time 0 in final.mp4, from work/assembly.json (0 when absent)."""
+    try:
+        return float(json.loads((root / "work" / "assembly.json").read_text(encoding="utf-8"))
+                     .get("intro_duration", 0.0) or 0.0) if root else 0.0
+    except (OSError, ValueError, AttributeError):
+        return 0.0
+
+
+def frame_name(t: float) -> str:
+    """Frame file of tile t, in milliseconds so tiles under a second apart never collide."""
+    return f"t{round(t * 1000):08d}.jpg"
+
+
 def shot_at(shots: list[dict[str, Any]], t: float) -> Optional[dict[str, Any]]:
     for s in shots:
         if s["start"] <= t < s["end"]:
@@ -104,8 +126,9 @@ def _valid(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [r for r in rows if not r.get("error") and r.get("match") in MATCHES]
 
 
-def _pct(n: int, d: int) -> float:
-    return round(100.0 * n / d, 1) if d else 0.0
+def _pct(n: int, d: int) -> Optional[float]:
+    """Share in percent; None for an empty denominator (0.0 would read as meeting a target)."""
+    return round(100.0 * n / d, 1) if d else None
 
 
 def has_overlay(r: dict[str, Any]) -> bool:
@@ -150,6 +173,20 @@ def worst_stretches(rows: list[dict[str, Any]], every: float = 2.0, top: int = 1
     return out
 
 
+def latest_rows(path: Path) -> list[dict[str, Any]]:
+    """The last row per tile of an append-only audit.jsonl, in time order ([] when absent)."""
+    if not path.exists():
+        return []
+    rows: dict[Any, dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue  # a line torn by a crash mid-write
+        rows[r["t"]] = r
+    return sorted(rows.values(), key=lambda r: r["t"])
+
+
 def read_jsonl(paths: Iterable[Path | str]) -> list[dict[str, Any]]:
     out = []
     for p in paths:
@@ -179,4 +216,5 @@ def compare(audit: list[dict[str, Any]], ref: list[dict[str, Any]]) -> dict[str,
              "noticeable_audit_only": sum(bool(a.get("noticeable")) and not b.get("noticeable") for a, b in pairs),
              "noticeable_ref_only": sum(not a.get("noticeable") and bool(b.get("noticeable")) for a, b in pairs)}
     return {"audit": mine, "reference": theirs,
-            "diff": {k: round(mine[k] - theirs[k], 1) for k in SUMMARY_KEYS}, "agreement": agree}
+            "diff": {k: None if mine[k] is None or theirs[k] is None else round(mine[k] - theirs[k], 1)
+                     for k in SUMMARY_KEYS}, "agreement": agree}

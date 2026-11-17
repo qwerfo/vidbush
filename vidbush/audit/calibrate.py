@@ -23,8 +23,13 @@ def pick(rows: list[dict[str, Any]], per_side: int = 20) -> list[dict[str, Any]]
     return sorted(yes + no, key=lambda r: r["t"])
 
 
-def tile_id(r: dict[str, Any]) -> str:
-    return f"t{int(r['t']):05d}"
+def tile_id(r: dict[str, Any], vhash: str) -> str:
+    """Tile id carrying the video's short hash, so marks of another render can never match a key."""
+    return f"{vhash}-{core.frame_name(r['t'])[:-4]}"
+
+
+class CalibrationError(ValueError):
+    pass
 
 
 PAGE = """<!doctype html>
@@ -87,31 +92,36 @@ TILE = """<section class="tile" id="{id}">
 </section>"""
 
 
-def build_sheet(rows: list[dict[str, Any]], tiles_dir: Path, video: str, html_path: Path, key_path: Path,
-                per_side: int = 20) -> list[dict[str, Any]]:
+def build_sheet(rows: list[dict[str, Any]], tiles_dir: Path, video: str, vhash: str, html_path: Path,
+                key_path: Path, per_side: int = 20) -> list[dict[str, Any]]:
     chosen = pick(rows, per_side)
     parts = []
     for i, r in enumerate(chosen, 1):
-        frame = tiles_dir / f"{tile_id(r)}.jpg"
+        frame = tiles_dir / core.frame_name(r["t"])
         b64 = base64.b64encode(frame.read_bytes()).decode("ascii")
-        parts.append(TILE.format(id=tile_id(r), ts=core.mmss(r["frame_t"]), b64=b64, num=i,
+        parts.append(TILE.format(id=tile_id(r, vhash), ts=core.mmss(r["frame_t"]), b64=b64, num=i,
                                  words=html.escape(r.get("words", "")), before=html.escape(r.get("before", "")),
                                  after=html.escape(r.get("after", ""))))
-    ids = [tile_id(r) for r in chosen]
+    ids = [tile_id(r, vhash) for r in chosen]
     page = PAGE.format(title=html.escape(Path(video).name), n=len(chosen), tiles="\n".join(parts),
                        video_json=json.dumps(video), ids_json=json.dumps(ids),
-                       times_json=json.dumps({tile_id(r): r["t"] for r in chosen}))
+                       times_json=json.dumps({tile_id(r, vhash): r["t"] for r in chosen}))
     html_path.parent.mkdir(parents=True, exist_ok=True)
     html_path.write_text(page, encoding="utf-8")
-    key = {"video": video, "key": {tile_id(r): bool(r["noticeable"]) for r in chosen},
-           "defects": {tile_id(r): r.get("defect", "") for r in chosen}}
+    key = {"video": video, "video_hash": vhash, "key": {tile_id(r, vhash): bool(r["noticeable"]) for r in chosen},
+           "defects": {tile_id(r, vhash): r.get("defect", "") for r in chosen}}
     key_path.write_text(json.dumps(key, indent=2, ensure_ascii=False), encoding="utf-8")
     return chosen
 
 
 def agreement(marks: dict[str, Any], key: dict[str, Any]) -> dict[str, Any]:
-    """Agreement of the person's marks with the audit's noticeable verdicts (unmarked tiles are not counted)."""
+    """Agreement of the person's marks with the audit's noticeable verdicts (unmarked tiles are not counted).
+    Marks made on another video than the key's are refused."""
+    if marks.get("video") != key.get("video"):
+        raise CalibrationError(f"marks are for {marks.get('video')!r}, the key is for {key.get('video')!r}")
     k = key["key"]
+    if not any(m.get("id") in k for m in marks.get("marks", [])):
+        raise CalibrationError("no marked tile id is in the key (another render of the video?)")
     agree, disagree, unmarked = 0, [], []
     for m in marks.get("marks", []):
         if m.get("id") not in k:
