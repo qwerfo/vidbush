@@ -242,8 +242,26 @@ def test_a_requery_seat_error_falls_back_to_heuristic_queries():
     from vidbush.providers.llm import BadJSONError
     s = shot(0)
     log = SimpleNamespace(warn=lambda *a, **k: None, info=lambda *a, **k: None)
-    for err in (ProviderError("all providers failed for director"), BadJSONError("not json")):
+    for err in (ProviderError("director: http 500"), BadJSONError("not json")):
         def boom(*a, _e=err, **k):
             raise _e
         ctx = SimpleNamespace(seats=SimpleNamespace(llm_json=boom), stage="judge", log=log, maybe_load=lambda *a: None)
         assert dl.requery_queries(s, ctx, ["wrong subject"]) == dl.heuristic_queries(s, "")
+
+
+
+def test_a_requery_outage_is_raised_and_writes_no_queries():
+    """All providers failing is an outage, as in judge.score_many: raised, never outage-time heuristic queries."""
+    from types import SimpleNamespace
+    import pytest as _pytest
+    from vidbush.providers.base import ProviderError
+    s = shot(0)
+    before = list(s.queries)
+
+    def down(*a, **k):
+        raise ProviderError("all providers failed for director: closerouter: marked down")
+    log = SimpleNamespace(warn=lambda *a, **k: None, info=lambda *a, **k: None)
+    ctx = SimpleNamespace(seats=SimpleNamespace(llm_json=down), stage="judge", log=log, maybe_load=lambda *a: None)
+    with _pytest.raises(ProviderError):
+        dl._requery(s, ctx)
+    assert s.queries == before

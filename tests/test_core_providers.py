@@ -175,6 +175,9 @@ def test_cost_report_warns_when_one_provider_charges_over_five_times_another():
     t.add(CostEntry(provider="sub", cost_usd=0.0, units=10000, **e))  # subscription: no price, no warning
     t.add(CostEntry(role="image", provider="a", model="img", unit_kind="images", cost_usd=0.01, units=1))
     t.add(CostEntry(role="image", provider="b", model="img", unit_kind="images", cost_usd=0.04, units=1))
+    # an earlier run of the project, stored in the same report: not this run's warning
+    t.add(CostEntry(ts=t.started - 3600, role="image", provider="c", model="img", unit_kind="images",
+                    cost_usd=9.0, units=1))
     rep = t.finalize(1.0)
     assert len(rep.warnings) == 1 and "dear charged 37.0 times cheap per token for model gemini-x" in rep.warnings[0]
     assert t.log.seen[0][0] == "provider price gap"

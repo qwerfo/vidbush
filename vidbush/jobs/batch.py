@@ -50,7 +50,8 @@ class BatchItem(BaseModel):
     duration_s: Optional[float] = None
     cost_usd: Optional[float] = None
     cost_per_min_usd: Optional[float] = None
-    qa_pct: Optional[float] = None  # pct_above_threshold from qa_report.json
+    qa_pct: Optional[float] = None  # pre-render judge pct_above_threshold from qa_report.json (not a quality measure)
+    audit_noticeable: Optional[float] = None  # tile audit noticeable percent from audit/audit_summary.json
 
 
 class BatchState(BaseModel):

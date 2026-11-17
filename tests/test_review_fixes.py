@@ -58,16 +58,22 @@ def test_wrong_picture_resource_args():
     e = ShotReview(shot_id=shot.id, verdict="wrong_picture",
                    comment=f"Too modern {EM} the boats have outboard motors. Show 1931 canyon walls.")
     op, _ = fixes.op_for(shot, e)
-    assert op.args["add_must_avoid"] == ["the picture rejected in review (s_pick)"]  # never the comment
-    assert op.args["operator_wish"] == "Too modern, the boats have outboard motors. Show 1931 canyon walls."
-    assert op.args["add_queries"] == ["1931 canyon walls"]  # the wanted part, never the complaint
+    # the complaint is a negative, the wanted part the wish and the query; the pick has no title: no opaque id
+    assert op.args["add_must_avoid"] == ["Too modern, the boats have outboard motors."]
+    assert op.args["operator_wish"] == "1931 canyon walls"
+    assert op.args["add_queries"] == ["1931 canyon walls"]
     assert op.args["reject_selected"] == "operator review: wrong picture"
     assert EM not in op.reason
 
 
 def test_wrong_picture_without_comment():
     op, _ = fixes.op_for(_shot(ShotType.image), ShotReview(shot_id="shot_009", verdict="wrong_picture"))
-    assert op.args["add_must_avoid"] == ["the picture rejected in review (s_pick)"]
+    assert op.args["add_must_avoid"] == [] and "operator_wish" not in op.args
+    assert op.args["reject_selected"] == "operator review: wrong picture"
+    titled = _shot(ShotType.image)
+    titled.candidates[0].title = "Hoover Dam from the air, 1950"
+    op, _ = fixes.op_for(titled, ShotReview(shot_id="shot_009", verdict="wrong_picture"))
+    assert op.args["add_must_avoid"] == ["the picture rejected in review: Hoover Dam from the air, 1950"]
     assert "add_queries" not in op.args
     op, _ = fixes.op_for(_shot(ShotType.ai_image), ShotReview(shot_id="shot_009", verdict="wrong_picture"))
     assert op.args["prompt_delta"] == "Avoid: the previous image, it did not fit the narration"
@@ -245,10 +251,10 @@ def test_apply_planned_change_type_does_not_reselect_old_pick(settings, monkeypa
     assert after.selected == "shot_002_local_9"
     rejected = {c.id: c.reject_reason for c in after.candidates}
     assert rejected[old] == "operator review: wrong picture"
-    assert after.operator_wish == "Not this dam. Show Hoover Dam concrete pour."
-    assert "Not this dam. Show Hoover Dam concrete pour." not in after.must_avoid
+    assert after.operator_wish == "Hoover Dam concrete pour"
+    assert after.must_avoid[-1] == "Not this dam." and not any("(" in a for a in after.must_avoid)
     assert "Hoover Dam concrete pour" in after.queries
-    assert seen["must_avoid"][-1].startswith("the picture rejected in review")
+    assert seen["must_avoid"][-1] == "Not this dam."
     assert "Hoover Dam concrete pour" in seen["queries"]
 
 
@@ -279,11 +285,28 @@ def test_an_operator_comment_is_a_wish_never_a_must_avoid():
     shot = _shot(ShotType.footage)
     op, _ = fixes.op_for(shot, ShotReview(shot_id=shot.id, verdict="wrong_picture", comment="I want steam shovels"))
     _review_notes(shot, op.args)
-    assert shot.operator_wish == "I want steam shovels"
+    assert shot.operator_wish == "steam shovels"
     assert all("steam" not in a for a in shot.must_avoid) and shot.queries == ["steam shovels"]
     prompt = judge_prompt(shot, Candidate(id="c", source=SourceKind.youtube, media="video"), "narration")
-    assert "Operator wish: I want steam shovels" in prompt
+    assert "Operator wish: steam shovels" in prompt
     assert "steam" not in next(line for line in prompt.splitlines() if line.startswith("Must avoid:"))
     ai, _ = fixes.op_for(_shot(ShotType.ai_image), ShotReview(shot_id="shot_009", verdict="wrong_picture",
                                                               comment="I want steam shovels"))
-    assert ai.args["prompt_delta"] == "Operator wish: I want steam shovels"
+    assert ai.args["prompt_delta"] == "Show: steam shovels" and ai.args["operator_wish"] == "steam shovels"
+
+
+def test_a_complaint_stays_a_negative_and_is_never_a_wish():
+    """'this shows a modern ship' asks for nothing: it goes to must_avoid (the AI negative prompt), not the wish."""
+    from vidbush.visuals.ai_images import negative_prompt
+    assert fixes.comment_parts("This shows a modern ship. I want 1925 dog sleds.") == ("1925 dog sleds",
+                                                                                     "This shows a modern ship.")
+    shot = _shot(ShotType.footage)
+    op, _ = fixes.op_for(shot, ShotReview(shot_id=shot.id, verdict="wrong_picture", comment="this shows a modern ship"))
+    assert op.args["add_must_avoid"] == ["this shows a modern ship"] and "operator_wish" not in op.args
+    ai_shot = _shot(ShotType.ai_image)
+    ai, _ = fixes.op_for(ai_shot, ShotReview(shot_id="shot_009", verdict="wrong_picture",
+                                             comment="this shows a modern ship"))
+    assert ai.args["prompt_delta"].startswith("Avoid: the previous image") and "modern ship" not in ai.args["prompt_delta"]
+    assert ai.args["add_must_avoid"] == ["this shows a modern ship"] and "operator_wish" not in ai.args
+    _review_notes(ai_shot, {"add_must_avoid": ai.args["add_must_avoid"]})
+    assert "modern ship" in negative_prompt(ai_shot) and ai_shot.operator_wish == ""

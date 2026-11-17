@@ -145,7 +145,8 @@ def test_batch_runs_all_records_failure_cap_and_report(settings, tmp_path, stub_
     assert [r["status"] for r in rep["rows"]] == ["done", "failed", "capped", "done"]
     assert rep["rows"][0]["mode"] == "brief" and rep["rows"][3]["mode"] == "voiceover"
     md = (folder / "batch_report.md").read_text()
-    assert "| a_brief | a_brief.md | brief | done | 2:00 | $0.50 | $0.25 | 92.5% |" in md
+    assert "| a_brief | a_brief.md | brief | done | 2:00 | $0.50 | $0.25 | 92.5% | - |" in md
+    assert "pre-render judge %" in md and "audit noticeable %" in md and a.audit_noticeable is None
     assert "cost cap reached" in md and "boom in shotlist" in md
     assert json.loads((folder / "state.json").read_text())["paused"] is False
     proj = load_project(settings, "d_voice")
@@ -252,3 +253,14 @@ def test_cli_batch_defaults_cap_from_config(settings, tmp_path, run_cli):
     assert settings.batch.cost_cap_usd == 5.0
     run_cli("batch", str(_folder(tmp_path)), "--batch-id", "c3", "--plan")
     assert batch.load_batch(settings, "c3").cost_cap_usd == 5.0
+
+
+
+def test_batch_metrics_carry_the_audit_noticeable(settings):
+    from vidbush.jobs.batch_report import project_metrics
+    from vidbush.jobs.pipeline import project_dir
+    root = project_dir(settings, "audited")
+    (root / "audit").mkdir(parents=True)
+    (root / "audit" / "audit_summary.json").write_text(json.dumps({"noticeable": 23.5}), encoding="utf-8")
+    m = project_metrics(settings, "audited")
+    assert m["audit_noticeable"] == 23.5 and m["qa_pct"] is None

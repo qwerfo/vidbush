@@ -56,7 +56,7 @@ def _cost(spec: ProviderSpec, default: float) -> float:
     return float(spec.options.get("cost_per_image", default))
 
 
-CREDIT_KEYS = ("credits_used", "credit_cost", "credits", "cost_credits")
+CREDIT_KEYS = ("credits_used", "credit_cost", "cost_credits")  # per job charges; "credits" is often the balance
 
 
 def _credits(*replies: Any) -> float | None:
