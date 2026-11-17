@@ -109,9 +109,23 @@ class StageContext:
         snap = snapshot_path(self.work, prev)
         if not snap.exists():
             return work_copy
-        if self.stage not in self.extra.get("forced", ()) and self.edited_outside_stages():
-            return work_copy
+        if self.edited_outside_stages():
+            if self.stage not in self.extra.get("forced", ()):
+                return work_copy
+            self._keep_edit(work_copy)
         return snap
+
+    def _keep_edit(self, work_copy: Path) -> None:
+        """A forced stage starts from its input snapshot; keep the edited working copy beside it first."""
+        import shutil
+        import time
+        if self.extra.get("edit_kept"):
+            return
+        keep = self.work / f"operator_edit_{int(time.time())}.shotlist.json"
+        shutil.copy2(work_copy, keep)
+        self.extra["edit_kept"] = str(keep)
+        self.log.warn("forced stage starts from its input snapshot; the edited shot list was kept",
+                      stage=self.stage, kept=keep.name)
 
     def edited_outside_stages(self) -> bool:
         """True when work/shotlist.json differs from what the last shot list stage wrote."""
@@ -123,7 +137,7 @@ class StageContext:
         try:
             last = json.loads(idx.read_text(encoding="utf-8")).get("sha", "")
         except (OSError, ValueError):
-            return False
+            return True  # an unreadable index: do not risk ignoring an edit
         return bool(last) and _sha(work_copy) != last
 
     def snapshot_used(self) -> bool:
@@ -135,27 +149,32 @@ class StageContext:
         return self.load(key, model) if p.exists() else None
 
     def save(self, key: str, obj: BaseModel) -> Path:
-        path = write_json(self.work_path(key), obj)
         if key == "shotlist" and self.stage in SHOTLIST_STAGES:
-            self._snapshot(path)
-        return path
+            # snapshot and index first, working copy last: a crash in between never makes a stage's own
+            # output look like an operator edit
+            snap = write_json(snapshot_path(self.work, self.stage), obj)
+            self._index(snap)
+            import shutil
+            work_copy = self.work_path(key)
+            tmp = work_copy.with_suffix(".json.tmp")
+            shutil.copy2(snap, tmp)
+            tmp.replace(work_copy)
+            return work_copy
+        return write_json(self.work_path(key), obj)
 
-    def _snapshot(self, work_copy: Path) -> None:
-        """Copy the working shot list to this stage's snapshot and record its hash in snapshots.json."""
+    def _index(self, snap: Path) -> None:
+        """Record this stage's snapshot hash in snapshots.json (the working copy gets the same bytes)."""
         import json
-        import shutil
         import time
-        snap = snapshot_path(self.work, self.stage)
-        shutil.copy2(work_copy, snap)
         idx = self.work / SNAPSHOT_INDEX
         try:
             data = json.loads(idx.read_text(encoding="utf-8")) if idx.exists() else {}
         except (OSError, ValueError):
             data = {}
-        sha = _sha(work_copy)
+        sha = _sha(snap)
         data.setdefault("stages", {})[self.stage] = {"sha": sha, "at": time.time(), "file": snap.name}
         data["last"], data["sha"] = self.stage, sha
-        idx.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        write_json(idx, data)
 
     def save_project(self) -> None:
         write_json(self.root / "project.json", self.project)

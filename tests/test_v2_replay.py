@@ -264,3 +264,46 @@ def test_run_refuses_an_existing_project_without_fresh(run_cli, settings, tmp_pa
     code, out = run("run", str(script), "--id", "s1", "--quiet")
     assert code == 2 and "--fresh" in out.err and marker.exists()
     assert run("run", str(script), "--id", "s1", "--fresh", "--quiet")[0] != 2 and not marker.exists()
+
+
+# ---------------------------------------------------------------- review fixes
+
+def test_a_failed_occurrence_leaves_a_gap_not_a_shift(tmp_path):
+    from vidbush.providers.reply_cache import ReplyCache
+    first = ReplyCache(tmp_path)
+    n0, _ = first.take("judge", "k")  # occurrence 0 failed: nothing stored
+    n1, _ = first.take("judge", "k")
+    first.put("judge", "m", "k", n1, {"v": 1})
+    replay = ReplyCache(tmp_path)
+    assert replay.take("judge", "k") == (0, None)  # occurrence 0 asks live again
+    assert replay.take("judge", "k") == (1, {"v": 1})
+
+
+def test_cap_inside_a_cascaded_stage_leaves_later_stages_pending(generic_seats, monkeypatch, tmp_path):
+    settings = generic_seats
+    _live(settings)
+    _fake_chat(monkeypatch, [], cost=1.0)
+    _script_project(settings, tmp_path)
+    run_project(settings, "p1", stages=_stubs([]), echo=False)
+
+    def judge_many(ctx):
+        for i in range(10):
+            ctx.seats.llm_json("director", "requery", "s", f"shot {i}", "judge")
+
+    run_project(settings, "p1", stages=_stubs([], {"judge": judge_many}), force=["sourcing"], echo=False,
+                cost_cap=3.0)
+    disk = load_project(settings, "p1")
+    assert all(disk.stages[s].status == StageStatus.pending for s in ("judge", "visuals", "motion", "assembly"))
+
+
+def test_forced_stage_keeps_an_operator_edit_before_starting_from_its_snapshot(settings, tmp_path):
+    _script_project(settings, tmp_path)
+    seen: dict = {}
+    run_project(settings, "p1", stages=_shot_stages(seen), echo=False)
+    work = Path(load_project(settings, "p1").paths.work)
+    data = read_json(work / "shotlist.json")
+    data["shots"][0]["judge_notes"] = "operator edit"
+    write_json(work / "shotlist.json", data)
+    run_project(settings, "p1", stages=_shot_stages(seen), force=["judge"], echo=False)
+    kept = list(work.glob("operator_edit_*.shotlist.json"))
+    assert len(kept) == 1 and read_json(kept[0])["shots"][0]["judge_notes"] == "operator edit"

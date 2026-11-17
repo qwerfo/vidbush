@@ -199,7 +199,8 @@ class Seats:
 
     def check_cap(self, role: str, stage: str) -> None:
         """Raise CostCapReached when the project's spend reached cost_cap (checked before a live paid call,
-        so the cap holds inside a stage, not only between stages)."""
+        so the cap holds inside a stage, not only between stages). Cost is recorded when a call returns, so
+        with N calls in flight the overshoot is at most N - 1 calls past the cap."""
         if self.cost_cap is None:
             return
         total = self.tracker.total_usd
@@ -218,17 +219,15 @@ class Seats:
 
         def cached(spec: ProviderSpec) -> CallResult:
             system, user, options = cache_req
+            # shortcut: the key ignores provider options such as max_tokens; clear the reply cache (or run
+            # --no-reply-cache) after changing an output cap
             key = reply_cache_mod.request_key(role, spec.model, system, user, options)
             n, hit = self.reply_cache.take(role, key, fresh=fresh)
             if hit is not None:
                 return CallResult(value=hit, provider=spec, mock=False, unit_kind="reply_cache")
-            try:
-                res = live(spec)
-            except BaseException:
-                self.reply_cache.give_back(key)
-                raise
+            res = live(spec)  # a failed occurrence leaves a gap; replay asks live for it again
             if not res.mock and res.value is not None:
-                self.reply_cache.put(role, spec.model, key, n, res.value)
+                self.reply_cache.put(role, spec.model, key, n, res.value, overwrite=fresh)
             return res
 
         provs = [p for p in self.providers_for(role) if p.configured]

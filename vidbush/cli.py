@@ -73,6 +73,7 @@ def cmd_demo(settings: Settings, args: argparse.Namespace) -> int:
     args.input = str(settings.path("fixtures/demo_brief.md"))
     args.id = args.id or "demo"
     args.script = None
+    args.fresh = True  # the demo always starts again
     return cmd_run(settings, args)
 
 

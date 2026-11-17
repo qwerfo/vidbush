@@ -42,16 +42,22 @@ def reached(ctx: StageContext, stage: str, cap_usd: float, force: set[str]) -> b
     rest = STAGES[STAGES.index(stage) + 1:]
     reason = (f"{CAP_PREFIX} reached: ${total:.2f} spent, cap ${cap_usd:.2f}; stopped after {stage}, "
               f"resume continues at {rest[0]}")
-    for name in rest:
-        rec = ctx.project.stages.get(name)
-        if rec and name in force and rec.status == StageStatus.done:
-            rec.status = StageStatus.pending
+    mark_forced_pending(ctx, stage, force)
     ctx.project.status = "needs_review"
     ctx.project.status_note = reason
     write_json(cap_path(ctx.work), {"capped": True, "cap_usd": cap_usd, "total_usd": round(total, 5),
                                     "stage": stage, "next_stage": rest[0], "reason": reason, "at": time.time()})
     ctx.log.warn("cost cap reached, run stopped", stage=stage, total_usd=round(total, 5), cap_usd=cap_usd)
     return True
+
+
+def mark_forced_pending(ctx: StageContext, stage: str, force: set[str]) -> None:
+    """Forced stages after `stage` that have not run yet go back to pending, so a resume after a stop
+    (cap or failure) reruns them instead of keeping outputs made from the old input."""
+    for name in STAGES[STAGES.index(stage) + 1:]:
+        rec = ctx.project.stages.get(name)
+        if rec and name in force and rec.status == StageStatus.done:
+            rec.status = StageStatus.pending
 
 
 def stopped_inside(ctx: StageContext, stage: str, total: float, cap_usd: float) -> None:

@@ -120,7 +120,7 @@ def stage_shotlist(ctx: StageContext) -> list[str]:
 def stage_sourcing(ctx: StageContext) -> list[str]:
     from ..source.registry import source_all
     shotlist = ctx.load("shotlist", ShotList)
-    shotlist = source_all(shotlist, ctx)
+    shotlist = source_all(shotlist, ctx, force="sourcing" in ctx.extra.get("forced", ()))
     return [str(ctx.save("shotlist", shotlist))]
 
 

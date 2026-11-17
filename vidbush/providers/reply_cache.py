@@ -5,9 +5,13 @@ unchanged prompts costs nothing and returns the same decisions.
 
 - Key: sha256 of role, model, system prompt, user prompt (text or the image parts, whose base64 data is
   part of the prompt) and the call options that change the reply (json mode, temperature).
-- The n-th identical request in one process is answered by the n-th stored reply. A caller that retries
-  the same prompt (a bad reply, a validation failure) gets the second stored reply on replay, and a live
-  call when only one was stored, so retries never loop on one cached answer.
+- The n-th identical request in one process is answered by the reply stored for occurrence n (a map
+  keyed by n, never a list, so a failed or empty occurrence leaves a gap instead of shifting the rest). A
+  caller that retries the same prompt gets the second stored reply on replay, and a live call when none
+  was stored, so retries never loop on one cached answer.
+- fresh=True asks live and overwrites the stored reply for that occurrence.
+- One writer per key at a time inside a process; two processes writing the same key at the same moment
+  can lose one reply (shortcut: a thread lock only; add a file lock if runs ever share prompts in parallel).
 - Only real replies are stored (never mock output, never None).
 - Files live beside the source cache (settings.reply_cache_folder): <folder>/<role>/<key[:2]>/<key>.json.
 - Switch: settings.reply_cache (config reply_cache, env VIDBUSH_REPLY_CACHE=0, CLI --no-reply-cache).
@@ -22,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = 1
+VERSION = 1  # part of every key: bump only when the key itself changes, not the file format
 
 
 def request_key(role: str, model: str, system: str, user: Any, options: dict[str, Any]) -> str:
@@ -63,39 +67,49 @@ class ReplyCache:
             self._served[key] = n + 1
         if not self.enabled or fresh:
             return n, None
-        replies = self._read(role, key).get("replies") or []
-        if n < len(replies):
+        replies = _as_map(self._read(role, key).get("replies"))
+        if str(n) in replies:
             with self._lock:
                 self.hits += 1
-            return n, replies[n]
+            return n, replies[str(n)]
         return n, None
 
-    def give_back(self, key: str) -> None:
-        """Release a reserved index when the live call failed (no reply to store)."""
-        with self._lock:
-            if self._served.get(key, 0) > 0:
-                self._served[key] -= 1
-
-    def put(self, role: str, model: str, key: str, n: int, value: Any) -> None:
-        """Store a live reply as occurrence n (appended; an index already filled is kept)."""
+    def put(self, role: str, model: str, key: str, n: int, value: Any, overwrite: bool = False) -> None:
+        """Store a live reply as occurrence n (a filled occurrence is kept unless overwrite)."""
         if not self.enabled or value is None:
             return
         p = self._path(role, key)
         with self._lock:
-            data = self._read(role, key) or {"role": role, "model": model, "replies": []}
-            replies = data.setdefault("replies", [])
-            if n < len(replies):
+            data = self._read(role, key) or {"role": role, "model": model, "replies": {}}
+            replies = data["replies"] = _as_map(data.get("replies"))
+            if str(n) in replies and not overwrite:
                 return
-            replies.append(value)
+            replies[str(n)] = value
             data["ts"] = time.time()
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
             try:
                 tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
-                os.replace(tmp, p)
-                self.stores += 1
             except (OSError, TypeError, ValueError):
                 tmp.unlink(missing_ok=True)
+                return
+            for attempt in range(5):  # Windows: a reader holding the file makes os.replace fail briefly
+                try:
+                    os.replace(tmp, p)
+                    self.stores += 1
+                    return
+                except PermissionError:
+                    time.sleep(0.05 * (attempt + 1))
+                except OSError:
+                    break
+            tmp.unlink(missing_ok=True)
+
+
+def _as_map(replies: Any) -> dict[str, Any]:
+    """Replies by occurrence index; files written before the map format hold a plain list."""
+    if isinstance(replies, list):
+        return {str(i): v for i, v in enumerate(replies)}
+    return dict(replies) if isinstance(replies, dict) else {}
 
 
 def default_folder(source_cache_folder: str) -> str:

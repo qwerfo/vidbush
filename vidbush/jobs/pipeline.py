@@ -163,9 +163,14 @@ def _run_locked(settings: Settings, project_id: str, stages: Optional[dict[str, 
         try:
             _run_stage(ctx, name, funcs[name], rec, on_progress)
         except CostCapReached as e:
+            costcap.mark_forced_pending(ctx, name, force | downstream(name))
             costcap.stopped_inside(ctx, name, e.total_usd, e.cap_usd)
             capped = True
             break
+        except Exception:
+            costcap.mark_forced_pending(ctx, name, force | downstream(name))
+            ctx.save_project()
+            raise
         force |= downstream(name)
         if cost_cap is not None and costcap.reached(ctx, name, cost_cap, force):
             capped = True
