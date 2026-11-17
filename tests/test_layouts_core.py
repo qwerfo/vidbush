@@ -149,3 +149,8 @@ def test_no_narration_changes_nothing():
     warned = []
     ctx = SimpleNamespace(maybe_load=lambda *a: None, log=SimpleNamespace(warn=lambda m, **k: warned.append(m)))
     assert render_shot_layouts(sl, ctx) == {} and shot.layout is spec and warned
+
+
+def test_analysis_keeps_saliency_and_protect_apart():
+    a = P.analyse(np.full((270, 480, 3), 90, np.uint8), ocr=False)
+    assert a.protect == [] and a.saliency is not None and a.saliency.shape == (270, 480)

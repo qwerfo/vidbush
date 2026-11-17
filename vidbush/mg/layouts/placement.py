@@ -34,8 +34,8 @@ class Analysis:
     faces: list[tuple[float, float, float, float]] = field(default_factory=list)  # 0..1 boxes x0,y0,x1,y1
     text: list[tuple[float, float, float, float]] = field(default_factory=list)
     detail: Optional[np.ndarray] = None  # float map 0..1 at work size
-    protect: list[tuple[float, float, float, float]] = field(default_factory=list)  # boxes never to cover
     saliency: Optional[np.ndarray] = None
+    protect: list[tuple[float, float, float, float]] = field(default_factory=list)  # boxes never to cover
 
 
 @dataclass

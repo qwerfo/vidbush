@@ -28,7 +28,7 @@ from .jobs import make_job
 from .panel import DOCK_S, NEVER, PanelPlan, change_time, large_rect
 from .placement import place_panel
 
-LAYOUT_RENDER_VERSION = "layouts-6"  # bump when drawing code changes pixels
+LAYOUT_RENDER_VERSION = "layouts-7"  # bump when drawing code changes pixels
 PANEL_HOLD_S = 2.5  # a panel stays this long after its last element is spoken, then leaves
 PANEL_MIN_S = 3.0
 FULL_MIN_S, FULL_MAX_S = 3.0, 7.0
