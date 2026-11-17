@@ -11,6 +11,7 @@ picture_kind(cand) is the one place that tells real pictures from generated ones
 """
 from __future__ import annotations
 
+import inspect
 import re
 import threading
 import time
@@ -63,7 +64,7 @@ _LABEL_RULES: tuple[tuple[str, str], ...] = (
     (r"black frame|blank", "black_frame"), (r"frozen|freeze|still frame", "frozen_frame"),
 )
 
-Result = tuple[float, str, Optional[str]]
+Result = tuple[Optional[float], str, Optional[str]]  # score None: not judged
 
 # ---------------------------------------------------------------- picture kinds
 
@@ -274,26 +275,46 @@ def spoken_in(words: list[Word], start: float, end: float, margin: float = SPOKE
 
 def score_candidate(shot: Shot, cand: Candidate, ctx: Any, narration: str = "", spoken: str = "") -> Result:
     """Score one candidate against its shot, the beat narration and the words spoken over the shot.
-    Returns (score, reason, reject or None); flags land on cand.flags."""
+    Returns (score, reason, reject or None); flags land on cand.flags. A reply with no usable score is
+    asked again UNUSABLE_RETRIES times; still unusable, the score is None (unjudged, never shippable)."""
     rej = local_reject(cand)
     if rej:
         return 0.0, rej, rej
     frames = [k for k in cand.keyframes if Path(k).exists()][:MAX_KEYFRAMES]
-    with _VISION_SLOTS:
-        raw = ctx.seats.vision_json("judge", "judge", JUDGE_SYSTEM, judge_prompt(shot, cand, narration, spoken), frames,
-                                    ctx.stage or "judge", intent=shot.intent,
-                                    details=keyframe_details(len(frames), getattr(ctx, "settings", None)))
-    if raw.get("_mock") and JUDGE_MOCK_FLAG not in cand.flags:
-        cand.flags.append(JUDGE_MOCK_FLAG)
-    verdict = parse_verdict(raw)
-    if verdict is None:
-        ctx.log.warn("judge reply unusable, neutral score", shot=shot.id, candidate=cand.id)
-        return 50.0, "judge reply unusable", None
+    vision = ctx.seats.vision_json
+    fresh_ok = _takes_fresh(vision)
+    verdict = None
+    for attempt in range(1 + UNUSABLE_RETRIES):
+        extra = {"fresh": True} if attempt and fresh_ok else {}  # a retry must not read the cached bad reply
+        with _VISION_SLOTS:
+            raw = vision("judge", "judge", JUDGE_SYSTEM, judge_prompt(shot, cand, narration, spoken), frames,
+                         ctx.stage or "judge", intent=shot.intent,
+                         details=keyframe_details(len(frames), getattr(ctx, "settings", None)), **extra)
+        if isinstance(raw, dict) and raw.get("_mock") and JUDGE_MOCK_FLAG not in cand.flags:
+            cand.flags.append(JUDGE_MOCK_FLAG)
+        verdict = parse_verdict(raw)
+        if verdict is not None:
+            break
+        ctx.log.warn("judge reply unusable", shot=shot.id, candidate=cand.id, attempt=attempt + 1)
+    if verdict is None:  # not a verdict on the picture: left unjudged, a later judge run scores it
+        return None, UNUSABLE_REASON, None
     score, reason, rejects = verdict
     _flag_from_rejects(cand, rejects)
     score, reason = _short_clip_penalty(shot, cand, score, reason)
     reject = "; ".join(rejects) if rejects else None
     return round(score, 1), reason or "no reason given", reject
+
+
+UNUSABLE_RETRIES = 2  # more asks after a reply with no usable score
+UNUSABLE_REASON = "judge reply unusable"
+
+
+def _takes_fresh(fn: Any) -> bool:
+    """True when the seat call accepts fresh=True (skip the reply cache)."""
+    try:
+        return "fresh" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 SHORT_CLIP_PENALTY = 15.0

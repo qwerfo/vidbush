@@ -334,3 +334,49 @@ def test_an_outage_that_outlasts_the_waits_leaves_the_candidate_unscored(monkeyp
     cand = Candidate(id="c1", source="youtube", media="video", url="https://y/1")
     JM.score_many([(shot, cand)], SimpleNamespace(log=log), workers=1)
     assert cand.score is None and cand.reject_reason is None and "unavailable" in cand.judge_reason
+
+
+def _unusable_ctx(tmp_path, replies, with_fresh):
+    from types import SimpleNamespace
+    from PIL import Image
+    frame = tmp_path / "k0.jpg"
+    Image.new("RGB", (1280, 720), (90, 90, 120)).save(frame)
+    sent: list = []
+
+    if with_fresh:
+        def vision_json(role, task, system, prompt, images, stage, intent="", details=None, fresh=False):
+            sent.append(fresh)
+            return replies.pop(0)
+    else:
+        def vision_json(role, task, system, prompt, images, stage, **k):
+            sent.append(k.get("fresh"))
+            return replies.pop(0)
+    log = SimpleNamespace(warn=lambda *a, **k: None, info=lambda *a, **k: None)
+    return SimpleNamespace(seats=SimpleNamespace(vision_json=vision_json), stage="judge", log=log), str(frame), sent
+
+
+@pytest.mark.parametrize("with_fresh", [True, False])
+def test_an_unusable_judge_reply_is_retried_then_left_unjudged(tmp_path, with_fresh):
+    """A reply with no usable score is asked again (fresh when the seat supports it), never scored 50."""
+    from vidbush.judge import judge as JM
+    from vidbush.models import Candidate, Shot, ShotType
+    ctx, frame, sent = _unusable_ctx(tmp_path, [{"reason": "?"}, "garbage", {"score": "high"}], with_fresh)
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage, intent="x")
+    cand = Candidate(id="c1", source="youtube", media="video", url="https://y/1", keyframes=[frame],
+                     width=1920, height=1080)
+    JM.score_many([(shot, cand)], ctx, workers=1)
+    assert cand.score is None and cand.reject_reason is None and cand.judge_reason == "judge reply unusable"
+    assert sent == ([False, True, True] if with_fresh else [None, None, None])
+    ctx2, _, sent2 = _unusable_ctx(tmp_path, [{"reason": "?"}, {"score": 77, "reason": "fits"}], with_fresh)
+    assert JM.score_candidate(shot, cand, ctx2)[0] == 77.0 and len(sent2) == 2
+
+
+def test_an_unjudged_candidate_never_ranks_over_a_judged_one():
+    from vidbush.judge import director_loop as DL
+    from vidbush.models import Candidate, Shot, ShotType
+    unjudged = Candidate(id="u", source="youtube", media="video", url="https://y/u", judge_reason="judge reply unusable")
+    judged = Candidate(id="j", source="youtube", media="video", url="https://y/j", score=0.0, judge_reason="weak")
+    shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage, intent="x",
+                candidates=[unjudged, judged])
+    assert [c.id for c in DL._ranked(shot)] == ["j", "u"]
+    assert not DL._shippable(unjudged, shot)

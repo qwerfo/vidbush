@@ -124,9 +124,9 @@ def _ai_tried(shot: Shot) -> bool:
 
 
 def _ranked(shot: Shot) -> list[Candidate]:
-    """Best first: clean candidates, then those without a hard reject, then by score."""
-    return sorted(shot.candidates, key=lambda c: (_clean(c, shot), c.reject_reason is None, c.score or 0.0),
-                  reverse=True)
+    """Best first: clean candidates, then those without a hard reject, then judged before unjudged, then by score."""
+    return sorted(shot.candidates, key=lambda c: (_clean(c, shot), c.reject_reason is None, c.score is not None,
+                                                  c.score or 0.0), reverse=True)
 
 
 def asset_key(c: Candidate) -> str:
