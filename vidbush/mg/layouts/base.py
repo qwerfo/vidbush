@@ -88,12 +88,17 @@ class LayoutJob:
 
 # ---------------------------------------------------------------- pictures
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=4)  # archival scans decode to hundreds of MB each
 def _still(path: str) -> np.ndarray:
     from PIL import Image, ImageOps
 
     from ...render.segment import to_8bit_rgb
-    return np.asarray(to_8bit_rgb(ImageOps.exif_transpose(Image.open(path))))
+    Image.MAX_IMAGE_PIXELS = max(Image.MAX_IMAGE_PIXELS or 0, 300_000_000)  # archival scans run to 140 megapixels
+    im = Image.open(path)
+    if max(im.size) > 16000:  # beyond any scan we read (OCR needs the full page)
+        im.draft("RGB", (16000, 16000))
+        im.thumbnail((16000, 16000))
+    return np.asarray(to_8bit_rgb(ImageOps.exif_transpose(im)))
 
 
 def picture_size(ref: PictureRef) -> tuple[int, int]:

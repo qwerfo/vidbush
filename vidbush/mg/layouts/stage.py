@@ -28,10 +28,11 @@ from .jobs import make_job
 from .panel import DOCK_S, NEVER, PanelPlan, change_time, large_rect
 from .placement import place_panel
 
-LAYOUT_RENDER_VERSION = "layouts-7"  # bump when drawing code changes pixels
+LAYOUT_RENDER_VERSION = "layouts-8"  # bump when drawing code changes pixels
 PANEL_HOLD_S = 2.5  # a panel stays this long after its last element is spoken, then leaves
 PANEL_MIN_S = 3.0
 FULL_MIN_S, FULL_MAX_S = 3.0, 7.0
+DOC_MAX_S = 14.0  # a document read in two or three marked passages needs longer than a card
 SAMPLES = 4  # frames of the underlying picture read for placement
 PANEL_SHRINK = (0.85, 0.72)  # smaller sizes tried when no position clears the picture at the preferred size
 
@@ -250,9 +251,10 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             if first > 1.5 and spec.kind != LayoutKind.document_focus:  # a document is first seen whole
                 shot.layout_notes.append(f"full layout's first words come {first:.1f} s after the cut: start the "
                                          "layout nearer its words")
-            if not FULL_MIN_S <= shot.duration <= FULL_MAX_S:
+            top = DOC_MAX_S if spec.kind == LayoutKind.document_focus else FULL_MAX_S
+            if not FULL_MIN_S <= shot.duration <= top:
                 shot.layout_notes.append(f"full layout held {shot.duration:.1f} s, outside {FULL_MIN_S:g} to "
-                                         f"{FULL_MAX_S:g} s")
+                                         f"{top:g} s")
         if spec.kind == LayoutKind.name_card and pres == "full":
             from .pictures import NameCard
             if NameCard.fallback_needed(job):
@@ -359,7 +361,8 @@ def _plan_panel(shot: Shot, job: LayoutJob, pres: str, previous: str, ctx: Any) 
     job.duration = max(0.5, end - start)
     job.extra["_start"] = start
     W, H = job.width, job.height
-    share = panel_share(job.spec, job.extra)
+    # a document's panel size comes from its page (OCR line heights), so the sizing sees the pictures too
+    share = panel_share(job.spec, dict(job.extra, pictures={i: r.path for i, r in job.pictures.items()}))
     size = (share[0] * W, share[1] * H)
     change = change_time(job, pres)
     if pres == "full_then_dock":  # the panel rests only after the dock; read the picture over that time

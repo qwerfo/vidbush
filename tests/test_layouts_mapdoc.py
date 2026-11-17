@@ -5,14 +5,14 @@ import pytest
 from PIL import Image, ImageDraw
 
 from vidbush.mg.layouts.base import LayoutJob, PictureRef
-from vidbush.mg.layouts.document import DocumentFocus, find_phrase, ocr_lines, read_progress
+from vidbush.mg.layouts.document import DocumentFocus, find_phrase, mark_form, ocr_lines, read_progress
 from vidbush.mg.layouts.routemap import RouteMap, parse_route, route_window, split_place
 from vidbush.mg.layouts.timing import Cue
 from vidbush.mg.textdraw import font
 from vidbush.models import LayoutElement, LayoutSpec
 
 PAGE_LINES = ["THE DAILY RECORD", "Congress voted today that the", "territory shall become a state",
-              "after years of patient waiting.", "Weather: cold and clear."]
+              "after years of patient waiting.", "Dated August 2nd, 1939"]
 
 
 @pytest.fixture(scope="module")
@@ -63,8 +63,9 @@ def test_fallback_when_phrase_absent(page):
 
 def test_focus_when_phrase_present(page):
     job = _doc_job(page, "wikimedia", "territory shall become a state")
-    comp = DocumentFocus(job, 640, 360)
-    assert comp.mode == "focus"
+    comp = DocumentFocus(job, 1280, 720)
+    assert comp.mode == "page"
+    assert [t.form for t in comp.targets] == ["highlight"]
     comp.render(10), comp.render(100)
 
 
@@ -131,3 +132,67 @@ def test_unresolved_place_dropped():
     comp = RouteMap(job, 640, 360, True)
     assert [mk.label for mk in comp.map.p.markers] == ["Nome"]
     assert any("Qwxzyville" in n and "dropped" in n for n in job.notes)
+
+
+def _marks_job(path: str, purpose=None, presentation=None) -> LayoutJob:
+    spec = LayoutSpec(kind="document_focus", purpose=purpose, presentation=presentation, elements=[
+        LayoutElement(role="document", picture="p"),
+        LayoutElement(role="mark", text="August 2nd, 1939", anchor="in August"),
+        LayoutElement(role="mark", text="territory shall become a state", anchor="become a state"),
+        LayoutElement(role="source", text="The Daily Record, 1939")])
+    cues = [Cue(0, 0.0, 0.0, 0.0, False), Cue(1, 1.0, 1.25, 1.7, True), Cue(2, 3.25, 3.5, 4.4, True),
+            Cue(3, 1.0, 1.0, 1.0, False)]
+    job = LayoutJob(spec=spec, cues=cues, duration=6.0)
+    job.pictures[0] = PictureRef(path, "image", source="wikimedia")
+    return job
+
+
+def test_mark_forms():
+    assert mark_form("August 2nd, 1939", 3, 1) == "ring"
+    assert mark_form("signature Albert Einstein", 2, 1) == "ring"
+    assert mark_form("64-20", 2, 1) == "ring"
+    assert mark_form("Texas", 1, 1) == "underline"
+    assert mark_form("extremely powerful bombs of a new type", 7, 1) == "highlight"
+    assert mark_form("a long passage over three lines of type", 8, 3) == "block"
+
+
+def test_two_marks_in_spoken_order(page):
+    comp = DocumentFocus(_marks_job(page), 1920, 1080)
+    a, b = comp.targets
+    assert (a.form, b.form) == ("ring", "highlight")
+    assert a.start == 1.25 and b.start == 3.5  # each mark starts on its own first word
+    assert a.t1 <= a.start and b.t0 >= a.t1 and b.t1 <= b.start  # the camera is there as each word comes
+    drawn = []
+    for f in ("_ring", "_highlight", "_underline", "_block"):
+        setattr(comp, f, lambda *args, _f=f: drawn.append(_f))
+    for t, want in ((1.2, []), (2.0, ["_ring"]), (3.45, ["_ring"]), (3.8, ["_ring", "_highlight"])):
+        drawn.clear()
+        comp.render(int(round(t * comp.fps)))
+        assert drawn == want, (t, drawn)
+
+
+def test_camera_never_still(page):
+    comp = DocumentFocus(_marks_job(page), 1920, 1080)
+    views = [comp.camera(t) for t in (0.0, 0.2, 2.5, 2.7, 5.5, 5.9)]
+    for (s1, c1), (s2, c2) in zip(views[::2], views[1::2]):
+        assert s1 != s2 or (c1 != c2).any()
+
+
+def test_period_has_no_marks(page):
+    job = _marks_job(page, purpose="period")
+    comp = DocumentFocus(job, 1920, 1080)
+    assert comp.targets == [] and comp.mode == "page"
+    assert any("period" in n for n in job.notes)
+
+
+def test_small_panel_is_look_only(page):
+    job = _marks_job(page, presentation="panel")
+    comp = DocumentFocus(job, 240, 160, True)
+    assert comp.targets == [] and not comp.fits()
+    assert any("look only" in n for n in job.notes)
+    w, h = DocumentFocus.panel_share(LayoutSpec(kind="document_focus", elements=[
+        LayoutElement(role="document", picture=page), LayoutElement(role="mark", text="territory shall become a state")]))
+    assert 0.29 <= w <= 0.5 and 0.35 <= h <= 0.6
+    big = DocumentFocus(_marks_job(page, presentation="panel"), int(w * 1920), int(h * 1080), True)
+    assert big.fits() and len(big.targets) == 2
+    assert all(t.lh * t.s >= 34 for t in big.targets)  # marked type at the floor on screen
