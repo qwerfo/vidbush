@@ -233,3 +233,17 @@ def test_reused_video_needs_a_different_segment():
     same = cand("b", 1, 1, media="video", url="http://x/v.mp4", in_point=11.0)
     other = cand("b", 2, 1, media="video", url="http://x/v.mp4", in_point=20.0)
     assert usage.penalty(same, 200.0) > usage.penalty(other, 200.0)
+
+
+def test_a_requery_seat_error_falls_back_to_heuristic_queries():
+    """A provider error or a bad reply from the requery call gives heuristic queries, never aborts the resolve."""
+    from types import SimpleNamespace
+    from vidbush.providers.base import ProviderError
+    from vidbush.providers.llm import BadJSONError
+    s = shot(0)
+    log = SimpleNamespace(warn=lambda *a, **k: None, info=lambda *a, **k: None)
+    for err in (ProviderError("all providers failed for director"), BadJSONError("not json")):
+        def boom(*a, _e=err, **k):
+            raise _e
+        ctx = SimpleNamespace(seats=SimpleNamespace(llm_json=boom), stage="judge", log=log, maybe_load=lambda *a: None)
+        assert dl.requery_queries(s, ctx, ["wrong subject"]) == dl.heuristic_queries(s, "")
