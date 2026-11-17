@@ -1,11 +1,12 @@
 """Review verdicts to EditOps, only where the mapping is safe.
 
 - wrong picture on footage or a still: change_type to the same type, which is the editor path that
-  re-sources one shot (editor/ops.py _resource). The comment becomes the shot's operator_wish (the
-  judge reads it as a wish) and its wanted part a query; the reviewed pick goes to must_avoid and is
-  rejected so the judge cannot pick it again. A plain comment is never a must_avoid item: "I want steam
-  shovels" is a wish, not a prohibition.
-- wrong picture on an AI image or AI video: regenerate_ai with the comment as the operator's wish.
+  re-sources one shot (editor/ops.py _resource). The comment is split (comment_parts): the wanted part
+  ("I want steam shovels" -> "steam shovels") becomes the shot's operator_wish and a query; the
+  complaint sentences ("this shows a modern ship") go to must_avoid. The reviewed pick is rejected so the
+  judge cannot pick it again, and described in must_avoid by its title when it has one.
+- wrong picture on an AI image or AI video: regenerate_ai with the wanted part as the positive prompt
+  delta and the complaint as must_avoid, which ai_images sends as the negative prompt.
 - quality problem with a hard reject ticked: the same re-source, with each ticked reject added to
   must_avoid instead of the comment.
 - wrong timing: no op. The plan lists it so the UI can open the existing duration editor.
@@ -64,6 +65,22 @@ def comment_query(comment: str) -> str:
     return ""
 
 
+def comment_parts(comment: str) -> tuple[str, str]:
+    """(wish, complaint) of a review comment: the wanted part (comment_query) and the sentences that ask
+    for nothing, which say what is wrong. A complaint is never a wish, a wish never a must_avoid item."""
+    sentences = re.split(r"(?<=[.!?;])\s+", _flat(comment))
+    complaint = " ".join(s for s in sentences if s and not _WANT_RE.search(s)).strip()
+    return comment_query(comment), complaint[:AVOID_PROMPT_CHARS].rstrip(" ,")
+
+
+def _rejected_pick(shot: Shot) -> list[str]:
+    """must_avoid text for the reviewed pick: its title or url, never an opaque candidate id (the pick
+    itself is rejected through reject_selected either way)."""
+    pick = shot.selected_candidate()
+    what = _flat(pick.title or pick.url) if pick is not None else ""
+    return [f"the picture rejected in review: {what[:120]}"] if what else []
+
+
 def _fix_failed(settings: Optional[Settings], project_id: str, e: ShotReview) -> bool:
     """True when the job that carried this entry's fix failed, or its edit plan lists an error for the shot."""
     if settings is None or e.fix is None or e.fix.job_id is None:
@@ -103,10 +120,15 @@ def _resource_op(shot: Shot, avoid: list[str], queries: list[str], reason: str, 
     return EditOp(op=EditOpName.change_type, args=args, reason=why)
 
 
-def _ai_op(shot: Shot, avoid: str, why: str, wish: str = "") -> EditOp:
+def _ai_op(shot: Shot, avoid: str, why: str, wish: str = "", complaint: str = "") -> EditOp:
+    """The wish is the positive prompt delta; the complaint goes to must_avoid (the negative prompt)."""
     note = _flat(wish or avoid)[:AVOID_PROMPT_CHARS].rstrip(" ,.")
-    delta = f"Operator wish: {note}" if wish else f"Avoid: {note}"
-    return EditOp(op=EditOpName.regenerate_ai, args={"shot_id": shot.id, "prompt_delta": delta}, reason=why)
+    args: dict[str, Any] = {"shot_id": shot.id, "prompt_delta": f"Show: {note}" if wish else f"Avoid: {note}"}
+    if wish:
+        args["operator_wish"] = wish
+    if complaint:
+        args["add_must_avoid"] = [complaint]
+    return EditOp(op=EditOpName.regenerate_ai, args=args, reason=why)
 
 
 def op_for(shot: Shot, e: ShotReview) -> tuple[Optional[EditOp], str]:
@@ -115,13 +137,15 @@ def op_for(shot: Shot, e: ShotReview) -> tuple[Optional[EditOp], str]:
     comment = _flat(e.comment)
     if e.verdict == "wrong_picture":
         if shot.type in RESOURCE_TYPES:
-            avoid = [f"the picture rejected in review ({shot.selected or 'none'})"]
-            queries = [q for q in [comment_query(comment)] if q]
+            wish, complaint = comment_parts(comment)
+            avoid = _rejected_pick(shot) + ([complaint] if complaint else [])
             why = f"review: shot {n} wrong picture" + (f": {comment}" if comment else "")
-            return _resource_op(shot, avoid, queries, "operator review: wrong picture", why, comment), why
+            return _resource_op(shot, avoid, [wish] if wish else [], "operator review: wrong picture", why,
+                                wish), why
         if shot.type in AI_TYPES:
+            wish, complaint = comment_parts(comment)
             why = f"review: shot {n} wrong picture, new AI image"
-            return _ai_op(shot, "the previous image, it did not fit the narration", why, comment), why
+            return _ai_op(shot, "the previous image, it did not fit the narration", why, wish, complaint), why
         if shot.type == ShotType.ai_video:
             return None, "AI video: regenerating would turn it into a still, edit by hand"
         return None, "motion graphic: a wrong picture needs a hand edit"

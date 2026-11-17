@@ -728,7 +728,7 @@ class EditOp(Model):
     """One structured edit. args keys by op:
     swap_shot: shot_id, candidate_id
     upload_shot: shot_id, path
-    regenerate_ai: shot_id, prompt_delta
+    regenerate_ai: shot_id, prompt_delta, optional add_must_avoid (negatives), operator_wish
     set_duration: shot_id, seconds
     split_shot: shot_id, at (seconds into shot)
     merge_shots: a, b

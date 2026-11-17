@@ -49,8 +49,10 @@ BELOW_FLOOR_FLAG = "below_floor"  # nothing met the floor and generation failed:
 BORROWED_FLAG = "borrowed_from_beat"  # a real candidate taken from another shot of the same beat
 BORROW_TRIES = 3  # beat candidates tried for one floor slot (each may cost a judge call)
 DESIGNED_FLAG = "designed_animation"  # marker on an ai_image shot whose pick is designed animation
+UNJUDGED_FLAG = "unjudged"  # nothing on the shot was judged (judge replies unusable): an unseen pick shipped
 SHOT_FLAGS = {"mock", "low_res", "small_archival", "nc_nd", "anachronism", "no_match_accepted",
-              "standard_youtube_licence", NEEDS_MOTION_FLAG, BELOW_FLOOR_FLAG, BORROWED_FLAG, DESIGNED_FLAG}
+              "standard_youtube_licence", NEEDS_MOTION_FLAG, BELOW_FLOOR_FLAG, BORROWED_FLAG, DESIGNED_FLAG,
+              UNJUDGED_FLAG}
 MAX_QUERIES = 6
 
 REQUERY_SYSTEM = (
@@ -146,10 +148,11 @@ def _seed_ai(shots: list[Shot], ctx: Any) -> None:
         list(pool.map(lambda s: add_ai(s, ctx), todo))
 
 
-def add_ai(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Candidate:
+def add_ai(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Optional[Candidate]:
     """Generate an AI still, judge it, and regenerate a failed one with what it must show and the judge's
-    reason as direction, up to settings.judge.ai_retries times. Every take is appended; the best is returned.
-    No still is used unjudged. A failed retry keeps the takes made so far; a failed first take raises.
+    reason as direction, up to settings.judge.ai_retries times. Every take is appended; the best judged take
+    is returned, None when no take could be judged (an unseen still is never handed out as a pick).
+    A failed retry keeps the takes made so far; a failed first take raises.
     A mock judge score is image statistics, not content, so it never buys a retry."""
     from ..visuals.ai_images import generate_ai_candidate
     threshold = float(ctx.settings.judge.threshold)
@@ -172,7 +175,11 @@ def add_ai(shot: Shot, ctx: Any, prompt: Optional[str] = None) -> Candidate:
             break
         problem = "; ".join(x for x in (cand.reject_reason, cand.judge_reason) if x)[:300] or "judged below threshold"
         ctx.log.info("AI still below threshold, regenerating", shot=shot.id, take=take + 1, score=cand.score)
-    return max(takes, key=lambda c: (_clean(c, shot), c.score or 0.0))  # ties keep the earlier take
+    judged = [c for c in takes if c.score is not None]
+    if not judged:
+        ctx.log.warn("no AI still take could be judged", shot=shot.id, takes=len(takes))
+        return None
+    return max(judged, key=lambda c: (_clean(c, shot), c.score))  # ties keep the earlier take
 
 
 # ---------------------------------------------------------------- attempts 2 and 3+
@@ -233,6 +240,8 @@ def requery_queries(shot: Shot, ctx: Any, reasons: list[str]) -> list[str]:
     try:
         raw = ctx.seats.llm_json("director", "requery", REQUERY_SYSTEM, user, ctx.stage or "judge")
     except ProviderError as e:  # BadJSON and transport failures included
+        if "all providers failed" in str(e):
+            raise  # an outage, not a bad answer: no outage-time queries are written (as in judge.score_many)
         ctx.log.warn("requery seat failed, heuristic queries", shot=shot.id, error=str(e)[:300])
         raw = None
     got = raw.get("queries") if isinstance(raw, dict) else None
@@ -474,7 +483,7 @@ def _choose(shot: Shot, usage: _Usage, threshold: float, ctx: Any,
             allowed = [c for c in allowed if picture_kind(c) != AI_PHOTO]
         passing = [c for c in allowed if _ok(c, shot, threshold)]
         return _diverse(passing or allowed, usage, shot, ctx), not passing, False, False
-    ranked = _ranked(shot)
+    ranked = [c for c in _ranked(shot) if c.score is not None] or _ranked(shot)  # unjudged only if nothing is judged
     tier = ([c for c in ranked if _clean(c, shot)] or [c for c in ranked if c.reject_reason is None] or ranked[:1])
     pick = _diverse(tier, usage, shot, ctx)
     below = not (_clean(pick, shot) and (pick.score or 0.0) >= FLOOR)
@@ -552,7 +561,8 @@ def _try_ai(shot: Shot, ctx: Any) -> bool:
     if _ai_tried(shot) or needs_readable_text(shot):
         return False
     try:
-        add_ai(shot, ctx)
+        if add_ai(shot, ctx) is None:
+            return False  # no take could be judged: the least bad judged candidate stays the fallback
     except Exception as e:  # noqa: BLE001  generation failure falls back to the least penalised repeat
         ctx.log.warn("AI still for a repeated segment failed", shot=shot.id, error=str(e)[:300])
         return False
@@ -607,6 +617,8 @@ def _apply(shot: Shot, pick: Candidate, accepted: bool, notes: list[str], repeat
         shot.flags.append(SEGMENT_REPEAT_FLAG)
     if below:
         shot.flags.append(BELOW_FLOOR_FLAG)
+    if pick.score is None and pick.source != SourceKind.upload:
+        shot.flags.append(UNJUDGED_FLAG)
     tail = (["best available accepted"] if accepted else []) + (["repeats a used segment"] if repeat else []) + \
         (["nothing met the floor"] if below else [])
     reason = pick.reject_reason or pick.judge_reason or ""

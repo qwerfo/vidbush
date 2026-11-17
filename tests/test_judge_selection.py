@@ -380,3 +380,55 @@ def test_an_unjudged_candidate_never_ranks_over_a_judged_one():
                 candidates=[unjudged, judged])
     assert [c.id for c in DL._ranked(shot)] == ["j", "u"]
     assert not DL._shippable(unjudged, shot)
+
+
+
+def _sel_ctx():
+    from types import SimpleNamespace
+    log = SimpleNamespace(warn=lambda *a, **k: None, info=lambda *a, **k: None)
+    return SimpleNamespace(log=log, settings=SimpleNamespace(judge=SimpleNamespace(threshold=70, ai_retries=0)))
+
+
+def test_the_fallback_never_ships_an_unjudged_candidate_while_a_judged_one_exists():
+    """Judged A repeats a banned neighbour segment, unjudged B is free: the fallback still keeps judged A."""
+    from vidbush.judge import director_loop as DL
+    from vidbush.models import Candidate, Shot, ShotType
+    a = Candidate(id="a", source="youtube", media="video", url="https://y/a", score=20.0, judge_reason="weak")
+    b = Candidate(id="b", source="youtube", media="video", url="https://y/b", judge_reason="judge reply unusable")
+    s = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage, intent="x",
+             candidates=[b, a])
+
+    class Usage(DL._Usage):
+        def banned(self, c, scene_id):
+            return c.id == "a"
+    pick = DL._choose(s, Usage(), 70.0, _sel_ctx())[0]
+    assert pick.id == "a"
+    DL._apply(s, pick, True, [])
+    assert DL.UNJUDGED_FLAG not in s.flags
+    only = Shot(id="s2", index=1, beat_id="b", start=4, end=8, duration=4, type=ShotType.footage, intent="x",
+                candidates=[b.model_copy()])
+    pick = DL._choose(only, DL._Usage(), 70.0, _sel_ctx())[0]
+    DL._apply(only, pick, True, [])
+    assert pick.score is None and DL.UNJUDGED_FLAG in only.flags  # nothing judged at all: shipped, flagged
+
+
+def test_add_ai_returns_no_unjudged_take(monkeypatch):
+    """No AI take judged: add_ai returns None, the editor drops the edit, the selection keeps a judged pick."""
+    import pytest as _pytest
+    from types import SimpleNamespace
+    from vidbush.editor import ops
+    from vidbush.editor.retime import EditError
+    from vidbush.judge import ai_checks
+    from vidbush.judge import director_loop as DL
+    from vidbush.models import Candidate, Shot, ShotType
+    from vidbush.visuals import ai_images
+    monkeypatch.setattr(ai_images, "generate_ai_candidate", lambda shot, ctx, prompt=None, problem="": Candidate(
+        id=f"{shot.id}_ai_{len(shot.candidates)}", source="ai_image", media="image"))
+    monkeypatch.setattr(DL, "_prefilter_and_score", lambda pairs, ctx, workers=1: None)  # judge reply unusable
+    monkeypatch.setattr(ai_checks, "check_still", lambda *a, **k: None)
+    s = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.ai_image, intent="x")
+    assert DL.add_ai(s, _sel_ctx()) is None and len(s.candidates) == 1
+    assert DL._try_ai(Shot(id="s3", index=2, beat_id="b", start=0, end=4, duration=4, type=ShotType.footage,
+                           intent="x"), _sel_ctx()) is False
+    with _pytest.raises(EditError):
+        ops._ai_candidate(SimpleNamespace(ctx=_sel_ctx), s, None)

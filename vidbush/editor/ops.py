@@ -249,13 +249,18 @@ def op_upload_shot(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Out
 
 
 def _ai_candidate(sess: EditSession, shot: Shot, prompt: Optional[str]) -> Candidate:
-    """Best judged take of the director loop's AI still helper (regenerated with the judge's reason)."""
+    """Best judged take of the director loop's AI still helper (regenerated with the judge's reason).
+    EditError when no take could be judged: the edit is dropped and the shot keeps its pick."""
     from ..judge.director_loop import add_ai
-    return add_ai(shot, sess.ctx(), prompt=prompt)
+    cand = add_ai(shot, sess.ctx(), prompt=prompt)
+    if cand is None:
+        raise EditError(f"{shot.id}: the new AI image could not be judged, the shot keeps its picture")
+    return cand
 
 
 def op_regenerate_ai(sess: EditSession, sl: ShotList, args: dict[str, Any]) -> Outcome:
     shot = resolve_shot(sl, _need(args, "shot_id", "shot"))
+    _review_notes(shot, {k: args[k] for k in ("add_must_avoid", "operator_wish") if k in args})  # negatives, wish
     delta = no_em_dash(str(_arg(args, "prompt_delta", "prompt", default="")).strip())
     prompt = None
     if delta:
