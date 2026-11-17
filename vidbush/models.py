@@ -443,7 +443,8 @@ class LayoutKind(str, Enum):
 
 
 # The kinds that may be shown as a panel over the shot's picture; every other kind is always full frame.
-PANEL_LAYOUT_KINDS = frozenset({LayoutKind.route_map, LayoutKind.chart, LayoutKind.table, LayoutKind.timeline})
+PANEL_LAYOUT_KINDS = frozenset({LayoutKind.route_map, LayoutKind.chart, LayoutKind.table, LayoutKind.timeline,
+                                LayoutKind.document_focus})
 LayoutPresentation = Literal["full", "panel", "full_then_dock", "panel_then_expand"]
 
 # Element roles each kind reads, in the order a viewer meets them. Unknown roles are ignored by the renderer.
@@ -461,7 +462,7 @@ LAYOUT_ROLES: dict[LayoutKind, tuple[str, ...]] = {
     LayoutKind.chart: ("bar", "point"),
     LayoutKind.table: ("header", "row"),
     LayoutKind.timeline: ("event",),
-    LayoutKind.document_focus: ("document", "quote", "source"),
+    LayoutKind.document_focus: ("document", "quote", "mark", "source"),
 }
 
 
@@ -479,6 +480,10 @@ class LayoutSpec(Model):
     title: str = ""
     presentation: Optional[LayoutPresentation] = None  # route_map, chart, table and timeline only; None is full
     id: str = ""  # timeline: a later spec with the same id returns to it with the earlier events in place
+    # document_focus: evidence (a passage quoted or referred to: recognise the page, move to it, mark it as read),
+    # period (atmosphere or time: a panel or a slow drift, no marking), subject (the narration is about the
+    # document: full frame, explored, each named part marked in spoken order); None reads as evidence
+    purpose: Optional[Literal["evidence", "period", "subject"]] = None
 
 
 class StillSequence(Model):
