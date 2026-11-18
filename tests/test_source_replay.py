@@ -35,3 +35,15 @@ def test_replay_reads_the_keyword_cache_key_and_ignores_the_ttl(tmp_path):
 
 def test_replay_drops_reads_the_current_log_message():
     assert "off-topic results demoted to fillers" in DROP_MESSAGES
+
+
+def test_offline_adapter_routes_and_screens_like_the_live_one():
+    from vidbush.source.replay import REPLAY_ADAPTERS, OfflineAdapter
+
+    class Inner:
+        name, media, classes = "chronam", {"image"}, {"newspaper", "archive"}
+        matches_description, uses_real_thing = True, True
+
+    off = OfflineAdapter(Inner())
+    assert off.classes == {"newspaper", "archive"} and off.matches_description and off.uses_real_thing
+    assert {"webimage", "openverse", "chronam"} <= set(REPLAY_ADAPTERS)

@@ -34,7 +34,8 @@ from ..models import ShotList
 from . import registry, throttle
 from .base import RawResult
 
-REPLAY_ADAPTERS = ["youtube", "wikimedia", "archive", "loc", "nara", "nasa", "pexels", "pixabay"]
+REPLAY_ADAPTERS = ["youtube", "wikimedia", "archive", "loc", "nara", "nasa", "pexels", "pixabay", "webimage",
+                   "openverse", "chronam"]
 DROP_MESSAGES = ("off-topic results demoted to fillers", "off-topic results dropped")  # current, then older logs
 
 
@@ -74,6 +75,9 @@ class OfflineAdapter:
     def __init__(self, inner: Any) -> None:
         self.inner, self.name, self.media = inner, inner.name, set(inner.media)
         self.keyword_words = getattr(inner, "keyword_words", 0)
+        for attr in ("classes", "matches_description", "uses_real_thing"):  # routing, screening, cache key
+            if hasattr(inner, attr):
+                setattr(self, attr, getattr(inner, attr))
         if hasattr(inner, "search_hints"):
             self.search_hints = inner.search_hints
         self.misses: list[tuple[str, str, str]] = []  # (shot, query, media), sent past the budget

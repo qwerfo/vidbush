@@ -439,6 +439,8 @@ _usage_lock = threading.Lock()
 
 def record_usage(ctx: "StageContext") -> None:
     """Persist this run's searches per adapter ({used, budget, refused}) in work/source_notes.json."""
+    from . import youtube_api
+    youtube_api.flush_costs(ctx)  # paid YouTube downloads into the cost report
     usage = throttle.usage(run_id(ctx))
     try:
         path = Path(ctx.work) / SOURCE_NOTES

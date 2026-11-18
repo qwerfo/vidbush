@@ -48,6 +48,9 @@ class SourcesConfig(BaseModel):
     youtube_cookie_file: str = ""  # yt-dlp cookiefile, a Netscape cookies.txt path
     youtube_download_workers: int = 3  # parallel downloads of different videos (searches stay serial)
     youtube_windows: int = 3  # windows sampled across a video when no transcript or chapters match
+    # paid second route (source/youtube_api.py) taken once YouTube answers a download with a bot check
+    youtube_api: bool = True
+    youtube_api_budget_usd: float = 0.5  # per run (process); 0.0002 USD per 720p video, 0.0001 per subtitle file
 
 
 class PrefilterConfig(BaseModel):

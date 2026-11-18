@@ -520,13 +520,49 @@ BOT_BLOCK = _Pause()
 BOT_MARKERS = ("confirm you", "not a bot", "sign in to confirm")
 
 
-def note_bot_block(err: Exception) -> None:
-    """Remember a bot check so the run stops sending requests to YouTube for a while."""
-    if any(m in str(err).lower() for m in BOT_MARKERS) and not BOT_BLOCK.is_set():
+class _Route:
+    """Which route YouTube downloads take in this process: "free" (yt-dlp) until a bot check, then "api".
+    shortcut: process wide, so a long running server keeps the paid route after its first bot check; reset
+    ROUTE.name per job if the server ever runs many projects."""
+
+    def __init__(self) -> None:
+        self.name = "free"
+        self.counts = {"free": 0, "api": 0}  # videos downloaded on each route (cached files not counted)
+
+
+ROUTE = _Route()
+
+
+def api_usable(settings: Optional[Settings]) -> bool:
+    from . import youtube_api
+    cfg = settings.sources if settings is not None else None
+    return bool(cfg is not None and cfg.youtube_api and cfg.youtube_api_budget_usd > 0
+                and youtube_api.api_key(settings))
+
+
+def is_bot_check(err: Exception) -> bool:
+    return any(m in str(err).lower() for m in BOT_MARKERS)
+
+
+def note_bot_block(err: Exception, settings: Optional[Settings] = None) -> bool:
+    """A bot check switches this run's downloads to the paid route when it is usable (True), else pauses
+    YouTube for a while so the run stops sending requests to it."""
+    if not is_bot_check(err):
+        return False
+    if api_usable(settings):
+        if ROUTE.name != "api":
+            ROUTE.name = "api"
+            logging.getLogger("vidbush.source").warning(
+                "YouTube asked to sign in (bot check). YouTube downloads now go through the video download API "
+                "for the rest of this run.")
+        return True
+    if not BOT_BLOCK.is_set():
         BOT_BLOCK.set()
         logging.getLogger("vidbush.source").warning(
             "YouTube asked to sign in (bot check). YouTube is paused for %d minutes, then tried again. "
-            "Set YOUTUBE_COOKIES or YOUTUBE_COOKIES_FROM_BROWSER in .env to fix it.", BOT_PAUSE_S // 60)
+            "Set VIDEO_DOWNLOAD_API_KEY in .env.local to download through the paid route instead.",
+            BOT_PAUSE_S // 60)
+    return False
 
 
 class YoutubeAdapter(BaseAdapter):
@@ -580,11 +616,67 @@ class YoutubeAdapter(BaseAdapter):
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         if BOT_BLOCK.is_set():
             return []
+        if ROUTE.name == "api":
+            return self._fetch_api(raw, out_dir, shot, settings)
         try:
             return self._fetch(raw, out_dir, shot, settings)
         except Exception as e:
-            note_bot_block(e)
+            if note_bot_block(e, settings):
+                return self._fetch_api(raw, out_dir, shot, settings)
             raise
+
+    def _fetch_api(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
+        """The paid route: same windows, height floor, licence and candidates as _fetch. The service has no
+        section downloads, so the 720p file is fetched whole once and each window is cut from it locally.
+        Licence: the service reports none, so the search result's licence stands (Creative Commons when the
+        Creative Commons filtered search found it, else Standard YouTube Licence, flagged as on the free route)."""
+        from ..util import video_size
+        from . import youtube_api as api
+        cfg = settings.sources
+        stem = base.cache_dir(settings) / base.url_hash(f"{raw.url}#vda-{api.FORMAT}")
+        whole = stem.with_suffix(".mp4")
+        if not whole.exists() and not api.LEDGER.can_spend(api.FORMAT, cfg.youtube_api_budget_usd):
+            raise base.Rejected(f"video download API budget {cfg.youtube_api_budget_usd} USD spent this run")
+        client = api.VdaClient(api.api_key(settings))
+        info: dict[str, Any] = {"title": raw.title, "duration": float(raw.duration or 0)}
+        with throttle.exclusive("youtube", raw.url):
+            if not whole.exists():
+                with throttle.download_slot("youtube", cfg.youtube_download_workers, max_wait=DOWNLOAD_WAIT_S):
+                    _, job_info = client.download(raw.url, whole)
+                ROUTE.counts["api"] += 1
+                if job_info.get("title"):
+                    info["title"] = str(job_info["title"])
+        w, h = video_size(whole)
+        if h < cfg.youtube_min_height:
+            raise base.Rejected(f"{h}p is below the {cfg.youtube_min_height}p floor (video download API)")
+        info["duration"] = probe_duration(whole) or info["duration"]
+        framed = frame_window(info, shot, settings)
+        if framed is not None:
+            windows = [framed]
+        else:
+            subs = stem.with_suffix(".vtt")
+            vtt = subs.read_text(encoding="utf-8") if subs.exists() else ""
+            if not subs.exists() and api.LEDGER.can_spend("vtt", cfg.youtube_api_budget_usd):
+                vtt = client.subtitles(raw.url, str(raw.extra.get("lang") or ""))
+                subs.write_text(vtt, encoding="utf-8")  # an empty file remembers "no subtitles"
+            windows = choose_windows(info, shot, settings, parse_vtt(vtt) if vtt else [])
+        files: list[tuple[float, float, Path]] = []
+        for a, b in windows:
+            dst = stem.parent / f"{stem.name}_{a:.0f}-{b:.0f}.mp4"
+            if not dst.exists():
+                api.cut_window(whole, a, b, dst)
+            files.append((a, b, dst))
+        full = raw.model_copy(update={"width": w, "height": h, "download_url": raw.url,
+                                      "title": str(info.get("title") or raw.title)})
+        full.extra = {**raw.extra, "download_route": "video_download_api"}
+        vid = raw.extra.get("id", base.url_hash(raw.url))
+        out: list[Candidate] = []
+        for (a, b, src), quota in zip(files, clip_quota(len(files))):
+            dst = link_into(src, out_dir, window_name(vid, window_start(a, b, src), src.suffix))
+            spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=quota)
+            part = full.model_copy(update={"note": f"section {a:.0f}-{b:.0f} s of the source video"})
+            out.extend(make_candidates(part, dst, shot, settings, spans=spans))
+        return out
 
     def _fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         cfg = settings.sources
@@ -628,6 +720,7 @@ class YoutubeAdapter(BaseAdapter):
                 try:
                     with throttle.download_slot("youtube", cfg.youtube_download_workers, max_wait=DOWNLOAD_WAIT_S):
                         out.append((a, b, ydl_download(url, self._download_opts(a, b, settings), stem)))
+                    ROUTE.counts["free"] += 1
                 except Exception as e:  # noqa: BLE001 - other windows may still arrive
                     error = e
         if not out and error is not None:
