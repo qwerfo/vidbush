@@ -84,7 +84,10 @@ def pick_shotlist(shotlist: ShotList, ctx: Any) -> ShotList:
     work = Path(ctx.project.paths.work)
     clauses = C.load(work / "clauses.json")
     plan = json.loads((work / "plan_v2.json").read_text(encoding="utf-8"))
-    scenes = scene_plans_from(plan)
+    # the director's plans as the planner wrote them: this stage rewrites plan_v2.json, so reading the scene
+    # plans back from it would make a rerun pick from its own earlier output (and miss every stored reply)
+    direct = work / "direct.json"
+    scenes = json.loads(direct.read_text(encoding="utf-8")) if direct.exists() else scene_plans_from(plan)
     script = ctx.load("script", Script)
     narration = ctx.load("narration", Narration)
 
