@@ -40,3 +40,21 @@ def test_demo_end_to_end_with_the_clause_planner(settings):
     assert (root / "final.mp4").exists()
     for name in ("clauses.json", "direct.json", "plan_v2.json", "sourcing.shotlist.json", "judge.shotlist.json"):
         assert (root / "work" / name).exists(), name
+
+
+def test_an_empty_shot_holds_the_previous_picture_or_takes_a_related_one_with_its_words(tmp_path):
+    from vidbush.models import Candidate, SourceKind
+    f = tmp_path / "a.mp4"
+    f.write_bytes(b"x")
+    vid = Candidate(id="v", source=SourceKind.youtube, media="video", in_point=0.0, out_point=8.0,
+                    local_path=str(f), url="u1")
+    other = Candidate(id="o", source=SourceKind.wikimedia, media="image", local_path=str(f), url="u2", score=80)
+    a, b, c = _shot(0, ShotType.footage), _shot(1, ShotType.footage), _shot(2, ShotType.footage, 6.0)
+    a.candidates, a.selected = [vid], "v"
+    pool = ShotList(project_id="p", duration=12.0, shots=[a.model_copy(), b.model_copy(update={"candidates": [other]}),
+                                                         c.model_copy()])
+    sl = ShotList(project_id="p", duration=12.0, shots=[a, b, c])
+    notes = L.fill_empty_shots(sl, lambda x, y: "the town was small", pool)
+    assert b.selected == "v" and "filled:hold_previous" in b.flags  # 3 + 3 s inside the 8 s clip
+    assert c.selected == "o" and c.type == ShotType.image_overlay and c.overlay.payload["title"] == "the town was small"
+    assert len(notes) == 2

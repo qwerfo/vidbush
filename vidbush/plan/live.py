@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import LayoutKind, ShotList, ShotType
+from ..models import LayoutKind, Narration, ShotList, ShotType
 from . import edit as E
 from . import vocab as V
 
@@ -70,6 +70,9 @@ def pick_clause(sourced: ShotList, ctx: Any) -> ShotList:
         if not (work / name).exists():
             raise RuntimeError(f"{work / name} is missing: rerun the shotlist stage (resume --force shotlist)")
     sl = pick_shotlist(sourced, ctx)
+    nar = ctx.load("narration", Narration)
+    for n in fill_empty_shots(sl, lambda a, b: spoken(nar, a, b), sourced):
+        ctx.log.info("empty shot filled", note=n)
     rulings = check_ai_rulings(sl)
     plan = json.loads((work / PLAN_FILE).read_text(encoding="utf-8"))
     plan["ai_rulings"] = rulings
@@ -77,6 +80,70 @@ def pick_clause(sourced: ShotList, ctx: Any) -> ShotList:
     if any(rulings.values()):
         ctx.log.warn("AI rulings broken on the picked shot list", **{k: v for k, v in rulings.items() if v})
     return sl
+
+
+def spoken(narration: Any, a: float, b: float) -> str:
+    """The words whose middle falls in [a, b)."""
+    return " ".join(w.text for w in narration.words if a <= (w.start + w.end) / 2 < b)
+
+
+def _real(c: Any) -> bool:
+    from ..models import GENERATED_SOURCES, SourceKind
+    return (c is not None and c.source not in GENERATED_SOURCES and c.source != SourceKind.motion
+            and not c.reject_reason and bool(c.local_path))
+
+
+def _limit(c: Any) -> float:
+    if c.media == "video":
+        return max(0.0, min(V.HOLD_MAX_S, (c.out_point or 0) - (c.in_point or 0)))
+    return V.HOLD_MAX_S
+
+
+def fill_empty_shots(sl: ShotList, words_at: Any = None, pool: Optional[ShotList] = None) -> list[str]:
+    """No shot leaves the pick with nothing on screen (the renderer would show a plain slate). In order:
+    the previous shot's real picture holds on when the two together stay inside its hold limit; else the
+    shot's own best unused real candidate, or the scene's, with the clause's words over it; else it stays
+    empty and is reported. A shot with a layout is left to the layouts renderer. Returns notes."""
+    from ..models import MotionKind, MotionSpec
+    notes: list[str] = []
+    shown = {c.url or c.local_path for s in sl.shots for c in [s.selected_candidate()] if c is not None}
+    for i, s in enumerate(sl.shots):
+        if s.selected_candidate() is not None or s.layout is not None:
+            continue
+        prev = sl.shots[i - 1] if i else None
+        pc = prev.selected_candidate() if prev is not None else None
+        if (prev is not None and prev.scene_id == s.scene_id and _real(pc) and prev.overlay is None
+                and prev.duration + s.duration <= _limit(pc) + 1e-6):
+            s.candidates.append(pc.model_copy(update={"in_point": (pc.in_point or 0) + prev.duration}))
+            s.selected, s.type = pc.id, prev.type
+            s.flags.append("filled:hold_previous")
+            notes.append(f"{s.id}: holds {prev.id}'s picture")
+            continue
+        own = [c for c in s.candidates if _real(c) and (c.url or c.local_path) not in shown]
+        # the scene's whole sourced pool (the pick keeps only what it chose), else the picked list's
+        src = pool.shots if pool is not None else sl.shots
+        scene = [c for t in src if t.scene_id == s.scene_id and t.start < s.end + 30 and t.end > s.start - 30
+                 for c in t.candidates if _real(c) and (c.url or c.local_path) not in shown]
+        pick = next(iter(sorted(own or scene, key=lambda c: -(c.score or 0))), None)
+        if pick is None:
+            s.flags.append("filled:nothing")
+            notes.append(f"{s.id}: nothing real in the shot or scene, left empty")
+            continue
+        if pick.id not in {c.id for c in s.candidates}:
+            s.candidates.append(pick)
+        s.selected = pick.id
+        shown.add(pick.url or pick.local_path)
+        words = " ".join((words_at(s.start, s.end) if words_at else "").split()[:6])
+        video = pick.media == "video"
+        if words:
+            s.type = ShotType.footage_overlay if video else ShotType.image_overlay
+            s.overlay = MotionSpec(kind=MotionKind.text_overlay, duration=s.duration, background="transparent",
+                                   payload={"title": words, "subtitle": ""})
+        else:
+            s.type = ShotType.footage if video else ShotType.image
+        s.flags.append("filled:related_with_words")
+        notes.append(f"{s.id}: related real picture {pick.id} with its words")
+    return notes
 
 
 def check_ai_rulings(sl: ShotList) -> dict[str, Any]:
