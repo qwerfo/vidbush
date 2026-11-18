@@ -83,13 +83,15 @@ def _graph(shot: Shot, profile: StyleProfile, settings: Settings, base: str, win
     lut_f = fc.lut(resolve_media(lut, settings)) if (lut and graded and resolve_media(lut, settings).exists()) else ""
     if lut and graded and not lut_f:
         log.warn("colour LUT missing, rendering ungraded", lut=lut)
-    nodes = [f"[0:v]{fc.chain(base, lut_f, fc.TO_YUV)}[base]"]
+    look = shot.grade if graded else ""  # matched look (render/look.py)
+    nodes = [f"[0:v]{fc.chain(base, lut_f, look, fc.TO_YUV)}[base]"]
     extra: list[str] = []
     top = "[base]"
     ov = resolve_media(shot.overlay_path, settings) if shot.overlay_path else None
     if ov is not None and ov.exists():
         extra = ["-i", str(ov)]
-        lead = shot.overlay.start_at if shot.overlay is not None else 0.0  # text appears when its anchor is said
+        # a layout panel or a text overlay appears when its first words are said, not at the cut
+        lead = shot.layout_at if shot.layout is not None else shot.overlay.start_at if shot.overlay is not None else 0.0
         nodes.append(f"[1:v]setpts=PTS-STARTPTS+{lead:.3f}/TB,fps={r.fps},scale={r.width}:{r.height},"
                      "format=yuva420p[ov]")
         nodes.append("[base][ov]overlay=0:0:eof_action=pass:format=yuv420[comp]")
@@ -287,6 +289,23 @@ def blur_fill_image(im: Any, w: int, h: int, vis_h: int, max_scale: float = MAX_
     return bg
 
 
+def framed_image(im: Any, w: int, h: int, vis_h: int, max_scale: float = MAX_STILL_UPSCALE) -> Any:
+    """A narrow still as a framed picture on the house ink ground (paper border, soft shadow), fitted to
+    about 80 percent of the picture height and never enlarged more than max_scale."""
+    from PIL import Image
+
+    from ..mg.house import DEFAULT
+    from ..mg.layouts.base import framed, ink_ground
+    from ..mg.textdraw import blit
+    k = h / 1080.0
+    scale = min(0.8 * vis_h / max(im.height, 1), 0.9 * w / max(im.width, 1), max_scale)
+    fw, fh = max(8, int(im.width * scale)), max(8, int(im.height * scale))
+    ground = np.dstack([ink_ground(w, h, DEFAULT), np.full((h, w), 255, np.uint8)])
+    spr = framed(np.asarray(im.resize((fw, fh), Image.LANCZOS)), fw, fh, DEFAULT, k)
+    blit(ground, spr, (w - spr.w) / 2, (h - spr.h) / 2)
+    return Image.fromarray(ground[..., :3])
+
+
 def _prepare_still(path: Path, crop: Optional[list[float]], kb: dict[str, float], settings: Settings,
                    cache_dir: Path, vis_h: Optional[int] = None) -> np.ndarray:
     """RGB array of the still: EXIF upright, cropped, cover resized (or blur filled when portrait, or when
@@ -296,7 +315,7 @@ def _prepare_still(path: Path, crop: Optional[list[float]], kb: dict[str, float]
     zmax = max(kb["zoom0"], kb["zoom1"], 1.0)
     w, h = int(np.ceil(r.width * zmax)), int(np.ceil(r.height * zmax))
     vis = int(np.ceil((vis_h or r.height) * zmax))
-    key = stable_hash("still-4", content_fingerprint(path), crop, w, h, vis)
+    key = stable_hash("still-5", content_fingerprint(path), crop, w, h, vis)
     cached = cache_dir / f"{key}.png"
     if cached.exists():
         return np.asarray(Image.open(cached).convert("RGB"))
@@ -306,7 +325,10 @@ def _prepare_still(path: Path, crop: Optional[list[float]], kb: dict[str, float]
     if crop and len(crop) == 4 and 0.01 < crop[2] and 0.01 < crop[3]:
         x, y, cw, ch = crop
         im = im.crop((int(x * im.width), int(y * im.height), int((x + cw) * im.width), int((y + ch) * im.height)))
-    if im.width / max(im.height, 1) < PORTRAIT_ASPECT or small:
+    from .stillmotion import is_narrow
+    if is_narrow(im.width, im.height, w, vis):  # never full screen on blurred bars: framed on the house ground
+        im = framed_image(im, w, h, vis)
+    elif im.width / max(im.height, 1) < PORTRAIT_ASPECT or small:
         im = blur_fill_image(im, w, h, vis)
     else:
         im = ImageOps.fit(im, (w, h), method=Image.LANCZOS, centering=(0.5, 0.5))

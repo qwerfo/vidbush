@@ -89,6 +89,12 @@ class SourceKind(str, Enum):
     ai_video = "ai_video"
     upload = "upload"
     motion = "motion"  # rendered motion graphic
+    # designed animation (vidbush/art): openly illustrated, never posing as a photograph; counted apart
+    # from photo-style AI stills
+    illustrated_map = "illustrated_map"  # painted base of a true map view (registration checked)
+    illustration = "illustration"  # still in the brand's declared illustration style
+    art_video = "art_video"  # generated clip whose first frame is an illustration or painted map
+
 
 
 # Pictures Vidbush makes rather than sources, in three kinds told apart everywhere: photo-style AI stills
@@ -97,7 +103,8 @@ class SourceKind(str, Enum):
 # and graphics (rendered motion graphics: cards, charts, data maps). A new generated source value joins
 # one of these sets here, and every reader follows.
 PHOTO_AI_SOURCES = {SourceKind.ai_image, SourceKind.ai_video}
-DESIGNED_SOURCES: set[SourceKind] = set()
+# designed animation (vidbush/art): disclosed as AI generated, never credited to a third party
+DESIGNED_SOURCES = {SourceKind.illustrated_map, SourceKind.illustration, SourceKind.art_video}
 GRAPHIC_SOURCES = {SourceKind.motion}
 GENERATED_SOURCES = PHOTO_AI_SOURCES | DESIGNED_SOURCES | GRAPHIC_SOURCES
 
@@ -363,6 +370,8 @@ class MapPayload(Model):
     labels: list[MapLabel] = Field(default_factory=list)
     shaded_regions: list[str] = Field(default_factory=list)  # country, state or province names, or ISO A3
     title: str = ""
+    art_base: str = ""  # painted base image of this view (vidbush/art), used instead of the drawn land and water
+    art_clip: str = ""  # checked clip of the painted base (subtle water and cloud motion), used when no push-in
 
 
 class ChartSeries(Model):
@@ -445,6 +454,75 @@ PAYLOAD_MODELS: dict[MotionKind, type[BaseModel]] = {
 }
 
 
+# ---------------------------------------------------------------- designed layouts (shared contract with the planner)
+
+class LayoutKind(str, Enum):
+    """Designed full-frame layouts and data panels drawn by our own renderer (vidbush/mg/layouts)."""
+
+    split_comparison = "split_comparison"
+    number_over_footage = "number_over_footage"
+    name_card = "name_card"
+    list_slideshow = "list_slideshow"
+    date_title = "date_title"
+    route_map = "route_map"
+    equals_card = "equals_card"
+    chart = "chart"
+    table = "table"
+    timeline = "timeline"
+    document_focus = "document_focus"
+
+
+# The kinds that may be shown as a panel over the shot's picture; every other kind is always full frame.
+PANEL_LAYOUT_KINDS = frozenset({LayoutKind.route_map, LayoutKind.chart, LayoutKind.table, LayoutKind.timeline,
+                                LayoutKind.document_focus})
+LayoutPresentation = Literal["full", "panel", "full_then_dock", "panel_then_expand"]
+
+# Element roles each kind reads, in the order a viewer meets them. Unknown roles are ignored by the renderer.
+# Text formats: chart "bar" or "point" elements are "<label>: <value><unit>" ("Alaska: 82%"); table "header"
+# and "row" cells are separated by " | "; timeline "event" is "<date>: <label>" ("1925: Serum run"); route_map
+# "route" is "<from place> to <to place>" (optional " by <road|rail|river|sea|air|trail>").
+LAYOUT_ROLES: dict[LayoutKind, tuple[str, ...]] = {
+    LayoutKind.split_comparison: ("left", "right"),
+    LayoutKind.number_over_footage: ("background", "number", "label"),
+    LayoutKind.name_card: ("portrait", "name", "role"),
+    LayoutKind.list_slideshow: ("item",),
+    LayoutKind.date_title: ("background", "date", "label"),
+    LayoutKind.route_map: ("place", "route", "distance"),
+    LayoutKind.equals_card: ("left", "right"),
+    LayoutKind.chart: ("bar", "point"),
+    LayoutKind.table: ("header", "row"),
+    LayoutKind.timeline: ("event",),
+    LayoutKind.document_focus: ("document", "quote", "mark", "source"),
+}
+
+
+class LayoutElement(Model):
+    role: str
+    text: str = ""
+    anchor: str = ""  # the exact narration words this element appears on
+    picture: Optional[str] = None  # a candidate reference (Candidate.id, or a local path), or null
+    stage: Literal[1, 2] = 1  # stage 2 elements appear only after a panel_then_expand has grown
+
+
+class LayoutSpec(Model):
+    kind: LayoutKind
+    elements: list[LayoutElement] = Field(default_factory=list)  # in spoken order
+    title: str = ""
+    presentation: Optional[LayoutPresentation] = None  # route_map, chart, table and timeline only; None is full
+    id: str = ""  # timeline: a later spec with the same id returns to it with the earlier events in place
+    # document_focus: evidence (a passage quoted or referred to: recognise the page, move to it, mark it as read),
+    # period (atmosphere or time: a panel or a slow drift, no marking), subject (the narration is about the
+    # document: full frame, explored, each named part marked in spoken order); None reads as evidence
+    purpose: Optional[Literal["evidence", "period", "subject"]] = None
+
+
+class StillSequence(Model):
+    """One high resolution photograph serving consecutive shots (planner labelled): whole, closer, detail."""
+
+    id: str
+    step: Literal["whole", "closer", "detail"] = "whole"
+
+
 # ---------------------------------------------------------------- shots
 
 class Candidate(Model):
@@ -525,6 +603,11 @@ class Shot(Model):
     kenburns: Optional[dict[str, float]] = None  # optional explicit {zoom0, zoom1, x0, y0, x1, y1}
     render_segment_path: str = ""
     render_hash: str = ""
+    layout: Optional[LayoutSpec] = None  # a designed layout or data panel for this shot (vidbush/mg/layouts)
+    still_sequence: Optional[StillSequence] = None
+    layout_notes: list[str] = Field(default_factory=list)  # render decisions a review can read (panel place, why)
+    layout_at: float = 0.0  # seconds into the shot a layout panel overlay starts (its first element's lead)
+    grade: str = ""  # matched look filter for this shot's source (render/look.py), set by the motion stage
 
     def selected_candidate(self) -> Optional[Candidate]:
         for c in self.candidates:
@@ -644,6 +727,12 @@ class Transitions(Model):
 
 class ColourGrade(Model):
     lut_path: Optional[str] = None
+    # matched look (vidbush/render/look.py): each real source is brought part of the way toward one exposure,
+    # white balance and saturation, so sources from many providers do not sit side by side unmatched;
+    # black and white archival keeps its own look (exposure only)
+    match_look: bool = False
+    match_strength: float = 0.6  # share of the measured difference that is corrected (mild)
+    brand_grade: str = ""  # optional named house grade applied after the match ("" = none; see look.GRADES)
 
 
 class MusicStyle(Model):
@@ -675,6 +764,27 @@ def default_visual_mix() -> dict[str, float]:
             OVERLAYS_KEY: 37, "ai_image": 0, "ai_video": 0}
 
 
+class ArtProfile(Model):
+    """Art layer shares (vidbush/art). Every default is off: a profile that sets none gets no art."""
+
+    illustrated_maps: float = 0.0  # share of map slots that may get a painted base (only maps that establish a place)
+    illustrations: float = 0.0  # share of shots that may get a declared-style illustration
+    clip_every_s: float = 0.0  # one generated clip per this many seconds of runtime (0 = no clips)
+    clip_opening_s: float = 60.0  # the opening is served first: it needs motion most
+    clip_min_s: float = 3.0
+    clip_max_s: float = 5.0
+    map_variants: int = 3  # paintings per map view; the best registered one is kept
+    illustration_variants: int = 2
+    map_repeat_s: float = 180.0  # never two illustrated maps of the same view within this window
+    map_model: str = "nano_banana_pro"
+    map_fallback_model: str = "gemini_flash_image"
+    illustration_model: str = "nano_banana_pro"
+    # photo-style AI stills stay still by default: moving, they read even more as footage of a real event (run 3
+    # review: an animated AI still of two ships on sea ice); real photographs never come alive
+    clip_from_ai_stills: bool = False
+    hour_credit_cap: float = 0.0  # skip new art while the key has used this many image credits this hour (0 = none)
+
+
 class StyleProfile(Model):
     id: str
     name: str = ""
@@ -686,6 +796,7 @@ class StyleProfile(Model):
     colour: ColourGrade = Field(default_factory=ColourGrade)
     music: MusicStyle = Field(default_factory=MusicStyle)
     motion: MotionStyle = Field(default_factory=MotionStyle)
+    art: ArtProfile = Field(default_factory=ArtProfile)
     palette: str = "documentary_warm"
     top10: bool = False  # number cards, item lower thirds, recap grid
     provenance: dict[str, Any] = Field(default_factory=dict)
@@ -753,8 +864,13 @@ class Brand(Model):
     outro_path: Optional[str] = None
     blocklist: list[str] = Field(default_factory=list)
     niche_notes: str = ""
+    # one style line applied to every illustration in a video so they read as one set (vidbush/art)
+    illustration_style: str = ""
     language: str = "en"
     licence_policy: LicencePolicy = Field(default_factory=LicencePolicy)
+    # house style block (vidbush/mg/house.py): overrides of the one type, colour and motion set every layout,
+    # panel, label and map frame in a video shares, e.g. {"accent": "#E8A33D"}; empty keeps the house defaults
+    house_style: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------- edit ops

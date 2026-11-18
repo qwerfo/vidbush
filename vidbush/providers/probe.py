@@ -19,6 +19,7 @@ from . import search as search_mod
 from . import tts as tts_mod
 from . import tts_algrow
 from . import tts_elevate
+from . import video_elevate
 from .base import ProviderError, ProviderSpec
 from .http import get_json
 
@@ -92,6 +93,8 @@ def probe_spec(role: str, spec: ProviderSpec, voice_id: str = "") -> str:
         return tts_algrow.probe(spec, PROBE_TIMEOUT_S)
     if spec.type == "elevate_tts":
         return tts_elevate.probe(spec, PROBE_TIMEOUT_S)
+    if spec.type == "elevate_video":
+        return video_elevate.probe(spec, PROBE_TIMEOUT_S)
     if role == "search":
         search_mod.search(spec, "test", n=1)
         return "search ok"

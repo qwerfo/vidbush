@@ -22,7 +22,7 @@ from ..config import Settings
 from ..models import Shot, SourceKind, StyleProfile
 from ..util import stable_hash
 
-RENDER_VERSION = "seg-6"
+RENDER_VERSION = "seg-7"  # seg-7: destination still motion, framed narrow stills, matched look
 KB_KEYS = ("zoom0", "zoom1", "x0", "y0", "x1", "y1")
 FP_BLOCK = 1 << 20  # bytes hashed at each end of a file
 _FP_MEMO: dict[tuple[str, int, int], str] = {}
@@ -108,9 +108,40 @@ def _fallback_kenburns(shot: Shot, intensity: float) -> dict[str, float]:
     return {k: round(p[k], 5) for k in KB_KEYS}
 
 
+def still_motion(shot: Shot, profile: StyleProfile, W: int = 1920, H: int = 1080) -> tuple[Optional[dict], str]:
+    """(Ken Burns params, reason) of a still's destination move (render/stillmotion.py), or (None, why)."""
+    from . import stillmotion as sm
+    from .segment import PORTRAIT_ASPECT, small_still, visible_height
+    c = shot.selected_candidate()
+    if c is None or c.media != "image" or shot.kenburns:
+        return None, "explicit move" if shot.kenburns else "not a still"
+    iw, ih = c.width, c.height
+    if not iw or not ih:
+        return sm.plan(shot, c, W, H, profile.motion.ken_burns_intensity)
+    crop = c.crop if c.crop and len(c.crop) == 4 else None
+    cw, ch = (iw * crop[2], ih * crop[3]) if crop else (iw, ih)
+    vis = visible_height(profile, W, H)
+    framed = sm.is_narrow(int(cw), int(ch), W, vis)
+    if not framed and (cw / max(ch, 1) < PORTRAIT_ASPECT or small_still(int(iw), int(ih), W, H)):
+        return {"zoom0": 1.0, "zoom1": 1.06, "x0": 0.5, "y0": 0.5, "x1": 0.5, "y1": 0.5},             "whole picture on a soft fill: slow push on the frame"
+    return sm.plan(shot, c, W, H, profile.motion.ken_burns_intensity, framed=framed)
+
+
 def kenburns_for(shot: Shot, profile: StyleProfile) -> dict[str, float]:
-    """Ken Burns parameters for a still shot (visuals.kenburns, or the local fallback)."""
+    """Ken Burns parameters for a still shot: a destination move from the picture (stillmotion), else
+    visuals.kenburns, else the local fallback."""
     intensity = profile.motion.ken_burns_intensity
+    try:
+        kb, _why = still_motion(shot, profile)
+    except Exception:  # noqa: BLE001  analysis failure keeps the default move
+        kb = None
+    if kb is not None:
+        kb = {k: float(kb[k]) for k in KB_KEYS}
+        kb["zoom0"], kb["zoom1"] = max(1.0, kb["zoom0"]), max(1.0, kb["zoom1"])
+        for c, zk in (("x0", "zoom0"), ("y0", "zoom0"), ("x1", "zoom1"), ("y1", "zoom1")):
+            bound = 0.5 - 0.5 / kb[zk]  # the crop never leaves the picture
+            kb[c] = min(0.5 + bound, max(0.5 - bound, kb[c]))
+        return {k: round(v, 5) for k, v in kb.items()}
     try:
         from ..visuals.kenburns import kenburns_params
     except ImportError:
@@ -140,6 +171,7 @@ def segment_hash(shot: Shot, profile: StyleProfile, caption_lines_in_window: lis
     overlay = None
     if shot.overlay_path:
         overlay = {"spec": shot.overlay.model_dump(mode="json") if shot.overlay else None,
+                   "layout": shot.layout.model_dump(mode="json") if shot.layout else None, "at": shot.layout_at,
                    "fp": content_fingerprint(resolve_media(shot.overlay_path, settings))}
     lut = profile.colour.lut_path
     parts = {
@@ -153,7 +185,8 @@ def segment_hash(shot: Shot, profile: StyleProfile, caption_lines_in_window: lis
         "captions": [caption_dict(ln) for ln in caption_lines_in_window] if profile.captions.enabled else [],
         "caption_style": profile.captions.model_dump(mode="json"),
         "letterbox": profile.letterbox.model_dump(mode="json"),
-        "colour": {"lut": lut, "fp": content_fingerprint(resolve_media(lut, settings)) if lut else None},
+        "colour": {"lut": lut, "fp": content_fingerprint(resolve_media(lut, settings)) if lut else None,
+                   "grade": shot.grade},
         "transition": {"in": shot.transition_in, "out": fade_out, "index0": shot.index == 0,
                        "d": profile.transitions.crossfade_duration},
         "render": {"w": r.width, "h": r.height, "fps": r.fps, "crf": r.crf, "preset": r.preset},

@@ -82,7 +82,10 @@ roles:
   image:
     - {provider: image_primary, model_env: IMAGE_MODEL, model: "your-image-model"}
     - {provider: image_fallback, model_env: IMAGE_FALLBACK_MODEL, model: "your-fallback-image-model"}
+  # Video (run 3 art layer): Elevate veo_3_1, the only video model in Elevate's catalogue (2026-11-15); 1080p is
+  # 2 credits, 720p 1 (set options.resolution). fal stays second when configured.
   video:
+    - {provider: elevate_video, model: "veo_3_1"}
     - {provider: video_primary, model_env: VIDEO_MODEL, model: "your-image-to-video-model"}
   # TTS order (Adam, 2026-11-11): ElevenLabs direct first while that key has credits (the brand model auto
   # picks eleven_v4 from model_preference), then Elevate eleven_v4, then Algrow.
@@ -120,6 +123,10 @@ providers:
   # Options: timeout_s (600, the cap), timeout_base_s (400) plus timeout_per_char_s (0.002), poll_s (18).
   elevate_tts:    {type: elevate_tts, base_url_env: ELEVATE_BASE_URL, key_env: ELEVATE_API_KEY,
                    options: {max_concurrency: 3}}
+  # Elevate video (vidbush/providers/video_elevate.py): subscription, 1 at once and 40 clips (80 credits) an hour
+  # per key, about 6 minutes a clip; veo renders 8 s whatever is asked. 0 USD per call, credits recorded.
+  elevate_video:  {type: elevate_video, base_url_env: ELEVATE_BASE_URL, key_env: ELEVATE_API_KEY,
+                   options: {max_concurrency: 1, resolution: "1080p", timeout_s: 900, poll_s: 10}}
   # Algrow TTS fronts ElevenLabs; subscription credits, recorded as 0 USD with the credit count.
   algrow_tts:     {type: algrow_tts, base_url_env: ALGROW_BASE_URL, key_env: ALGROW_API_KEY,
                    options: {max_concurrency: 3, timeout_s: 600, fallback_model: eleven_multilingual_v2}}

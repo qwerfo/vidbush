@@ -226,6 +226,61 @@ renderer that turns a MotionSpec into a clip of exactly `duration` seconds
 at `width x height`, `fps`, with alpha when asked, can replace the built-in
 one by setting `render.renderer` in `config/vidbush.yaml`.
 
+### Designed layouts and panels (V2, `vidbush/mg/layouts`)
+
+The planner writes `Shot.layout` (a `LayoutSpec`): one of eleven kinds (`split_comparison`, `number_over_footage`,
+`name_card`, `list_slideshow`, `date_title`, `route_map`, `equals_card`, `chart`, `table`, `timeline`,
+`document_focus`), its elements in spoken order (`role`, `text`, `anchor` = the exact narration words, `picture` =
+a candidate id or path, `stage` 1 or 2), an optional `title`, a `presentation` for the four panel kinds (route_map,
+chart, table, timeline: `full`, `panel`, `full_then_dock`, `panel_then_expand`) and an `id` for a timeline that
+returns. Role names per kind are in `models.LAYOUT_ROLES`. The motion stage calls
+`layouts.stage.render_shot_layouts` before the old motion jobs; a shot with a layout skips the old path.
+
+| Module | Role |
+|---|---|
+| `mg/house.py` | The house style (ink ground, paper type, amber signal, teal second voice, Inter, paper frames, drift), overridable per brand (`Brand.house_style`). Type floors in output pixels with the reason. |
+| `layouts/timing.py` | `anchor_span` (token match, hyphens split, nearest the shot) and `cue_times`: per element `appear` (0.25 s before its first word, never more than 0.3 s), `word`, `word_end`, clip relative. |
+| `layouts/base.py` | `LayoutJob` (spec, cues, pictures, frame profile, house, extra), `LayoutComp` (draws at its own size; `fs()` never returns under the floor; `box` excludes letterbox bars and caption band), `Footage` (a real clip or still at a size), `framed`, `drift`. |
+| `layouts/jobs.py` | `make_job`: cues from the narration, pictures from the candidate pool (generated pictures refused), nearby word timings in `extra`. |
+| `layouts/pictures.py` | split_comparison, number_over_footage, name_card (and `NameLowerThird`, its fallback), list_slideshow, date_title, equals_card. |
+| `layouts/data.py` | chart (bars or line), table, timeline (`extra["history"]` holds a returning timeline's earlier events); content scales to its box; `panel_share` sizes a panel from its content at the floors. |
+| `layouts/routemap.py` | route_map on `MapComp` (house chips, amber line): places on their words, the line drawn between the two words over real geometry (`mg/routes.py`), places geocoded and checked like `verify_map`, a registered painted base (art lane) when one holds the view. |
+| `layouts/document.py` | document_focus: OCR (prefilter RapidOCR, tiled, cached) finds the quote; whole page, move in, dim, underline as read; falls back to a push with the quote beside it. |
+| `layouts/panel.py` | `PanelComp`: the four presentations; content laid out at the large and the panel size, cross-faded during the 0.8 s size change; dock and expand timing; uint8 compositing. |
+| `layouts/placement.py` | Reads the picture beneath (faces, text, detail, the subject's heart) at sampled times and picks the calmest clear position of six; previous position penalised. |
+| `layouts/stage.py` | Per shot: drop a layout whose words are not spoken in it; place panels (smaller sizes tried, else full); full layouts become the selected `motion` candidate; panels become an alpha overlay starting at `Shot.layout_at` and ending 2.5 s after the last element; name card without a real portrait becomes a lower third (never on a generated picture); old map and chart insets become placed panels (`legacy_panel`). Decisions go to `Shot.layout_notes`. Clips are cached by a hash of everything that changes pixels and `LAYOUT_RENDER_VERSION`. |
+
+Removed on the old path (`mg/renderer.py`, `render/mg_python.py`): bare full-frame title, text and callout cards (the shot
+shows its best real picture), centre callouts, label boxes visible before their text.
+
+Stills (`render/stillmotion.py`, `render/cache.still_motion`): a destination move from the picture (hold, reveal from
+a detail, travel toward the subject, drift), a planner labelled `Shot.still_sequence` (whole, closer, detail of one
+photograph, capped at 1.5x native), and stills narrower than half the frame framed on the house ground
+(`segment.framed_image`). Matched look (`render/look.py`): `colour.match_look` sets `Shot.grade`, an ffmpeg filter
+applied to real sources in the segment. `RENDER_VERSION` seg-7.
+
+### Art layer (run 3, `vidbush/art`)
+
+Designed visuals that are openly illustrations or animations and are counted as animation, never as
+photographs: source values `illustrated_map`, `illustration` and `art_video` (photo-style AI stills stay
+`ai_image` and `ai_video`). `visuals/prepare.prepare_visuals` calls `art.plan.apply_art(shotlist, ctx)` after the
+judge. It does nothing unless the style profile's `art` block (`models.ArtProfile`, every share off by default)
+asks for it and the image seat has an Elevate provider. Every decision is written to `work/art/art_report.json`.
+
+| Module | Role |
+|---|---|
+| `art/mapref.py` | `reference(payload)`: the exact map view (same projection, center, widest zoom) drawn as land, water, lakes, major rivers and borders, with no text. `land_mask`, `register(painting, payload)`: colour classes learnt from the painting itself, a small scale and shift refit, then the largest wrong patch (disagreements thinner than 1.2 percent of the width removed; fail above 4 percent) and land overlap (0.9). Inland water does not count as coast. |
+| `art/paint.py` | `paint_reason(spec, window)`: None when a map establishes a place; a reason (route, arrow, shaded region, distance or border words, no coastline) keeps it plain. `map_prompt`: the director seat writes land, water and touches from the narration and the map's places; names and digits are stripped; fixed rules are added. `paint_map`: three variants (two `art.map_model`, one `art.map_fallback_model`), registration and OCR first, then a vision call on appeal and fit. The winner is warped onto the true view and saved with a sidecar naming that view. |
+| `art/hooks.py` | Two single-line hooks in `mg/mapdraw.py`. `painted_base` swaps `MapBase.plain` for the painting when the sidecar vouches for this exact view, and draws true borders and river names back on top. `moving_base` plays a checked clip of the painting as the base (cropped to the push-in, only with no shaded region and a push-in of at most 1.5x). Markers, routes, labels, title and source note stay the renderer's own. |
+| `art/illustrate.py` | `choose`: the director picks moments no footage can show (process, comparison, scale, before cameras); it replaces only AI photo-style stills, low scoring picks or empty slots, and never draws maps, charts, documents or signs. `illustrate`: the brand's `illustration_style` line comes first, names are removed, two variants, OCR, then the normal judge against the shot window. |
+| `art/clips.py` | `plan_clips`: one clip per `art.clip_every_s`, the opening first, from illustrations, painted maps and (when allowed) AI stills, never from real photographs. `make_clip`: video seat, then the first frame must match the still, a vision call answers fixed yes or no questions (same subject, same layout, no new objects, no text, no morphing), and a map clip's last frame must register. `compose` holds the still, then moves for 3 to 5 s. A failed clip keeps the still. |
+| `art/elevate.py` | Elevate image call with `reference_images` (RadioPlay's shape), raw and uncropped. A running task is resumed, never paid twice. `usage`/`hour_credits` for the shared hourly budget. |
+| `art/plan.py` | `apply_art`: maps (share of map slots, full screen first, a repeat window per view with reuse outside it), then illustrations, then clips. `art_counts(shotlist)` for reports. |
+| `art/prove.py`, `art/sheet.py` | Proving run on a finished project's stored files (read only), then the contact sheet, numbered clips and yield numbers. |
+
+Video seat: provider type `elevate_video` (`providers/video_elevate.py`, registered in `seats.VIDEO_TYPES`, probed by
+`doctor --probe`), model `veo_3_1`, 1080p by default.
+
 ### Shot types and slot families
 
 | Shot type | Visual source | Overlay |
@@ -335,7 +390,7 @@ used mock for a role configured as real ends as `needs_review`.
 
 Provider types are dispatched through registries in `vidbush/providers/seats.py`:
 `LLM_TYPES` (`openai_compat` in `llm.py`, `anthropic` in `llm_anthropic.py`, the
-native Messages API) for text and vision roles, and `TTS_TYPES` (`elevenlabs` in
+native Messages API) for text and vision roles, and `VIDEO_TYPES` (`elevate_video` in `video_elevate.py`; other video types use `video.py`), and `TTS_TYPES` (`elevenlabs` in
 `tts.py`, `algrow_tts` in `tts_algrow.py`, `elevate_tts` in `tts_elevate.py`, one
 line per type) for narration. A
 role entry naming an unregistered type is skipped with one warning. A role entry

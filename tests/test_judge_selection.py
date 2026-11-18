@@ -238,6 +238,19 @@ def test_ensure_usable_and_segment_repeat_ai_paths_set_ai_type(ctx, monkeypatch,
 
 # ---------------------------------------------------------------- 5. small archival stills
 
+def test_narrow_still_is_framed_never_on_blurred_bars(tmp_path, settings):
+    """A still under half the frame wide (600 x 400 at 1.5x is 900 px) sits framed on the dark house ground."""
+    from vidbush.mg.house import DEFAULT
+    from vidbush.mg.palettes import hex_rgb
+    kb = {"zoom0": 1.0, "zoom1": 1.0, "x0": 0.5, "y0": 0.5, "x1": 0.5, "y1": 0.5}
+    img = _prepare_still(make_still(tmp_path / "n.png", size=(600, 400)), None, kb, settings, tmp_path / "c",
+                         1080).astype(int)
+    side = img[400:700, 40:300]
+    assert abs(side.mean() - np.mean(hex_rgb(DEFAULT.ink))) < 25, "house ink ground beside the picture"
+    centre = img[500:580, 900:1020]
+    assert np.abs(centre - side.mean()).mean() > 20, "the picture itself in the middle"
+
+
 def test_small_public_domain_archival_still_is_accepted_stock_is_not():
     pd = cand("s", 1, 1, source=SourceKind.loc, licence="No known restrictions on publication", width=600, height=450)
     assert J.local_reject(pd) is None
@@ -250,11 +263,13 @@ def test_small_public_domain_archival_still_is_accepted_stock_is_not():
 
 
 def test_small_still_renders_whole_on_a_blurred_fill_never_over_1_5x(tmp_path, settings):
-    p = make_still(tmp_path / "small.png", size=(600, 400))
+    # 700 x 460 at 1.5x is 1050 px wide, over half the frame: whole on a blurred fill (a narrower still is
+    # framed on the house ground instead, see test_narrow_still_is_framed_never_on_blurred_bars)
+    p = make_still(tmp_path / "small.png", size=(700, 460))
     kb = {"zoom0": 1.0, "zoom1": 1.0, "x0": 0.5, "y0": 0.5, "x1": 0.5, "y1": 0.5}
     img = _prepare_still(p, None, kb, settings, tmp_path / "cache", 1080).astype(int)
     assert img.shape[:2] == (1080, 1920)
-    fw, fh = int(600 * MAX_STILL_UPSCALE), int(400 * MAX_STILL_UPSCALE)  # 900 x 600, centred
+    fw, fh = int(700 * MAX_STILL_UPSCALE), int(460 * MAX_STILL_UPSCALE)  # 1050 x 690, centred
     x0, y0 = (1920 - fw) // 2, (1080 - fh) // 2
     inside, outside = img[y0 + 10:y0 + fh - 10, x0 + 10:x0 + fw - 10], img[y0:y0 + fh, 20:x0 - 20]
     assert np.abs(np.diff(inside, axis=1)).mean() > 2 * np.abs(np.diff(outside, axis=1)).mean(), "sharp centre"
