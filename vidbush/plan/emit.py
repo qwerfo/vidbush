@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from ..models import (LAYOUT_ROLES, PANEL_LAYOUT_KINDS, Candidate, LayoutElement, LayoutKind, LayoutSpec,
-                      MotionKind, MotionSpec, Narration, Script, Shot, ShotList, ShotType)
+                      MotionKind, MotionSpec, Narration, RealThing, Script, Shot, ShotList, ShotType)
 from . import anchors as A
 from . import vocab as V
 from .clauses import Clause
@@ -134,6 +134,13 @@ def start_full_layouts_on_words(shots: list[Shot], first_word: dict[str, float],
         s.flags.append("cut_on_layout_words")
 
 
+def _real_thing(plan: dict) -> Optional[RealThing]:
+    rt = plan.get("real_thing")
+    if not isinstance(rt, dict) or not str(rt.get("name") or "").strip():
+        return None
+    return RealThing(**{k: str(rt.get(k) or "") for k in ("name", "kind", "date", "place")})
+
+
 def _placeholder(layout: LayoutSpec, duration: float) -> MotionSpec:
     title = layout.title or " / ".join(e.text for e in layout.elements[:3]) or layout.kind.replace("_", " ")
     return MotionSpec(kind=MotionKind.title_card, duration=round(duration, 3),
@@ -214,7 +221,10 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
             shot = Shot(id="", beat_id=gc[0].beat, scene_id=sp["scene"], start=start, end=end, duration=dur,
                         type=typ, intent=str(plan.get("subject", "")),
                         must_show=[plan["real_thing"]["name"]] if plan.get("real_thing") else [],
-                        queries=flat_queries(plan.get("queries", {})), layout=lay)
+                        queries=flat_queries(plan.get("queries", {})), layout=lay,
+                        source_queries={k: [str(q) for q in v] for k, v in (plan.get("queries") or {}).items()
+                                        if isinstance(v, list)},
+                        real_thing=_real_thing(plan))
             shot.flags = list(plan.get("grammar", []))
             if fallback:
                 shot.flags.append(f"fallback:{fallback}")

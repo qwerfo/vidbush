@@ -119,14 +119,21 @@ def stage_shotlist(ctx: StageContext) -> list[str]:
 
 def stage_sourcing(ctx: StageContext) -> list[str]:
     from ..source.registry import source_all
+    from ..plan.live import is_clause, source_clause
     shotlist = ctx.load("shotlist", ShotList)
-    shotlist = source_all(shotlist, ctx, force="sourcing" in ctx.extra.get("forced", ()))
+    if is_clause(ctx.profile):
+        shotlist = source_clause(shotlist, ctx)
+    else:
+        shotlist = source_all(shotlist, ctx, force="sourcing" in ctx.extra.get("forced", ()))
     return [str(ctx.save("shotlist", shotlist))]
 
 
 def stage_judge(ctx: StageContext) -> list[str]:
     from ..judge.director_loop import judge_and_select
+    from ..plan.live import is_clause, pick_clause
     shotlist = ctx.load("shotlist", ShotList)
+    if is_clause(ctx.profile):  # the planner's comparative edit over the scene pools picks, not the judge
+        return [str(ctx.save("shotlist", pick_clause(shotlist, ctx)))]
     if "judge" in ctx.extra.get("forced", ()) and not ctx.snapshot_used():
         clear_verdicts(shotlist)  # a project from before snapshots: its working copy holds old verdicts
     shotlist = judge_and_select(shotlist, ctx)
@@ -173,9 +180,31 @@ def stage_packaging(ctx: StageContext) -> list[str]:
     outs = build_qa(shotlist, ctx)  # before the slow thumbnails, so qa_report always describes this final.mp4
     outs += package(shotlist, ctx)
     refresh_mock_used(ctx)  # titles and thumbnails ran after build_qa
+    from ..plan.live import is_clause
+    if is_clause(ctx.profile):  # the tile audit of this final.mp4, so its six numbers open qa_report.md
+        outs += audit_at_end(shotlist, ctx)
     minutes = ctx.load("narration", Narration).duration / 60.0
     ctx.tracker.finalize(minutes)
     return [str(p) for p in outs] + [str(ctx.out_path("cost_report.json"))]
+
+
+def audit_at_end(shotlist: ShotList, ctx: StageContext) -> list[str]:
+    """Run the tile audit on the finished video (its cost goes to audit/audit_cost_report.json, as the audit
+    command's does) and rebuild the QA report so it opens with the six numbers. A failed audit is logged and
+    the QA report keeps its line saying how to run it."""
+    import argparse
+    from ..audit.cli import cmd_audit
+    from ..judge.qa import build_qa
+    try:
+        code = cmd_audit(ctx.settings, argparse.Namespace(target=str(ctx.root), script=None, out=None, every=2.0,
+                                                          limit=0, workers=8))
+    except Exception as e:  # noqa: BLE001 - the video is finished; an audit failure must not fail packaging
+        ctx.log.warn("tile audit failed", error=str(e)[:300])
+        return []
+    if code != 0:
+        ctx.log.warn("tile audit wrote no summary", code=code)
+        return []
+    return [str(p) for p in build_qa(shotlist, ctx)] + [str(ctx.root / "audit" / "audit.md")]
 
 
 def clear_verdicts(shotlist: ShotList) -> None:

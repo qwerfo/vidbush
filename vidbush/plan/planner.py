@@ -32,6 +32,8 @@ def plan_shotlist(project: Project, script: Script, narration: Narration, resear
     if work is not None:
         work.mkdir(parents=True, exist_ok=True)
         C.save(clauses, work / "clauses.json")
+        # the scene plans, so the pick stage can run the edit on the sourced pools and emit again
+        (work / "direct.json").write_text(json.dumps(scenes, indent=1, ensure_ascii=False), encoding="utf-8")
         (work / "plan_v2.json").write_text(json.dumps(plan, indent=1, ensure_ascii=False), encoding="utf-8")
     ideas = [VisualIdea(beat_id=s.beat_id, family="footage" if s.type.value.startswith("footage") else "still",
                         intent=s.intent, must_show=s.must_show, queries=s.queries) for s in sl.shots
