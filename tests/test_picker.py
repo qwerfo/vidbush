@@ -325,3 +325,68 @@ def test_unfound_evidence_document_is_open_for_the_ladder():
     assert not L.is_open({"filled_by": "pick", "_doc": object(), "_cand": None}, plan)
     period = dict(plan, layout={"purpose": "period", "elements": []})
     assert not L.is_open({"filled_by": "pick", "_doc": None, "_cand": None}, period)
+
+
+# ---------------------------------------------------------------- independent review fixes
+
+
+def test_model_cannot_choose_a_fallback_or_internal_keys(pool, recs):
+    sh = shots([3.0], ["person"])
+    raw = picks({"pick": None, "fallback": "ai_still", "overlay_text": "x", "_fallback_cand": "junk", "map_place": "y"})
+    p, _ = E.check(raw, sh, pool, recs, {}, 0)
+    assert not {"fallback", "overlay_text", "_fallback_cand", "map_place"} & set(k for k in p[0] if p[0].get(k))
+    e, _, _ = run_ladder(sh, pool, recs, raw, llm=[{"restated": []}])
+    assert e["picks"][0].get("fallback") != "ai_still"  # a named person never gets an AI still
+
+
+@pytest.mark.parametrize("reason, flags", [("channel_logo (prefilter: corner logo)", []),
+                                           ("talking_head (prefilter: face)", []), (None, ["ai_check_failed"])])
+def test_prefilter_labels_and_failed_ai_checks_are_never_offered(pool, reason, flags):
+    c = pool[0].model_copy(update={"reject_reason": reason, "flags": flags})
+    assert DS.rejected(c) and not E._usable(c)
+
+
+def test_an_empty_description_is_not_cached_or_offered(still, tmp_path):
+    seats = CountingSeats({})
+    assert DS.describe_one(seats, still, tmp_path / "d") is None
+    assert not (tmp_path / "d" / f"{DS.record_key(still)}.json").exists()
+
+
+def test_one_shared_name_word_is_not_identity(harbour, recs):
+    recs["real1"]["source_facts"]["description"] = "the harbour master's office"
+    sh = named(shots([3.0]))
+    _, errors = E.check(picks({"pick": 1, "identity": "harbour", "identity_field": "description"}),
+                        sh, harbour, recs, {}, 0)
+    assert any("do not name Juneau Harbour" in e for e in errors)
+
+
+def test_late_first_usable_range_is_clamped_inside_the_clip(pool, recs):
+    recs["vid6"]["visual"]["usable"] = [{"from": 28.0, "to": 30.0, "note": ""}]
+    t, why = E.time_problem(pool[5], recs["vid6"], None, 5.0)
+    assert why is None and t == 25.0
+
+
+def test_restated_text_must_be_the_clauses_own_words(pool, recs):
+    e, _, _ = run_ladder(shots([3.0]), pool, recs, picks(None),
+                         llm=[restated(6, text="other clause line"), restated(6, text="other clause line")])
+    assert e["picks"][0].get("filled_by") != "restate"
+    assert any("not this clause's own words" in x for a in e["restate_attempts"] for x in a["errors"])
+
+
+def test_restated_footage_under_a_named_thing_must_name_it(pool, recs):
+    sh = named(shots([3.0]))
+    e, _, _ = run_ladder(sh, pool, recs, picks(None), llm=[restated(6), restated(6)])
+    assert e["picks"][0].get("filled_by") != "restate"
+    recs["vid6"]["source_facts"]["title"] = "Juneau Harbour river"
+    e, _, _ = run_ladder(named(shots([3.0])), pool, recs, picks(None), llm=[restated(6)])
+    assert e["picks"][0]["filled_by"] == "restate"
+
+
+def test_a_re_sourced_ai_pick_is_checked_against_its_real_neighbours(pool, recs):
+    sh = shots([2.0, 2.0, 2.0])
+    e = {"picks": [{"clause": "c001", "_cand": pool[2]}, {"clause": "c002", "_cand": pool[3]},
+                   {"clause": "c003", "_cand": pool[4]}], "shots": sh}
+    lad = L.Ladder(FakeSeats(), None, None)
+    assert "AI stills in a row" in lad._neighbour_problem(e, 2, 0)
+    e["picks"][2]["_cand"] = pool[0]
+    assert lad._neighbour_problem(e, 2, 0) == ""

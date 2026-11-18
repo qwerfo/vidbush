@@ -695,7 +695,8 @@ def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Ite
             ctx.log.info("still too thin for a 16:9 frame, dropped", shot=shot.id, candidate=c.id,
                          size=f"{c.width}x{c.height}")
             continue
-        if (c.media == "image" and c.source != SourceKind.local and not archival_still(c)  # own library kept
+        if (c.media == "image" and c.source not in (SourceKind.local, SourceKind.upload)  # own pictures kept
+                and not archival_still(c)
                 and 0 < _long_side(c) < MIN_STILL_LONG_SIDE):
             ctx.log.info("still too small, dropped", shot=shot.id, candidate=c.id, size=f"{c.width}x{c.height}")
             continue

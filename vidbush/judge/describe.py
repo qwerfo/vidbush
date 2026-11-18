@@ -267,18 +267,40 @@ def describe_one(seats, c: Candidate, root: Path) -> Optional[dict[str, Any]]:
             return None
         raw = seats.vision_json(_role(seats), TASK, SYSTEM, _prompt(c, frames), [p for _, p in frames], STAGE,
                                 details=["high"] * len(frames))
+        if not answered(raw) and not (isinstance(raw, dict) and raw.get("_mock")):
+            return None  # an unusable reply: the asset is simply not offered, and asked again next run
         vis = {"version": VERSION, "key": key, "media": c.media,
                "frames": [{"t": t, "path": p} for t, p in frames], "visual": _clean(raw, c),
                "ocr_text": ocr_words(c.local_path) if c.media != "video" else "",
                "mock": bool(isinstance(raw, dict) and raw.get("_mock"))}
         if not vis["mock"]:  # a mock answer is never cached as a description
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(vis, ensure_ascii=False, indent=1), encoding="utf-8")
+            _write_atomic(path, json.dumps(vis, ensure_ascii=False, indent=1))
     rec = dict(vis)
     rec["cached"] = cached
     rec["ai"] = is_ai(c)
     rec["source_facts"] = source_facts(c)
     return rec
+
+
+def rejected(c: Candidate) -> bool:
+    """A local reject (prefilter labels read "<label> (prefilter: ...)"), a resolution reject, or an AI still
+    that failed its fixed questions: physical or legal, never described and never offered to the picker."""
+    rr = (c.reject_reason or "").lower()
+    return (rr.startswith(("prefilter", "resolution")) or "(prefilter" in rr or "burned_in" in rr
+            or "ai_check_failed" in c.flags)
+
+
+def answered(raw: Any) -> bool:
+    """A real description: a dict with what it shows and a quality list. Anything else is never cached,
+    because a cached empty record would pass a watermarked asset as clean for every later run."""
+    return isinstance(raw, dict) and bool(str(raw.get("shows") or "").strip()) and isinstance(raw.get("quality"), list)
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def blocked(rec: dict[str, Any]) -> list[str]:
@@ -294,7 +316,7 @@ def describe_pool(seats, pool: list[Candidate], settings: Any = None, log: Optio
     fresh = [c for c in pool if c.score is None and c.reject_reason is None and not is_ai(c)]
     if settings is not None and fresh:
         apply_prefilter(fresh, settings)
-    todo = [c for c in pool if not (c.reject_reason or "").lower().startswith(("prefilter", "resolution"))]
+    todo = [c for c in pool if not rejected(c)]
     out: dict[str, dict[str, Any]] = {}
     lock = threading.Lock()
 
@@ -309,8 +331,21 @@ def describe_pool(seats, pool: list[Candidate], settings: Any = None, log: Optio
             with lock:
                 out[c.id] = r
 
+    groups: dict[str, list[Candidate]] = {}
+    for c in todo:
+        try:
+            k = record_key(c) if c.local_path and Path(c.local_path).exists() else c.id
+        except OSError:
+            k = c.id
+        groups.setdefault(k, []).append(c)
+
+    def first_then_rest(cs: list[Candidate]) -> None:
+        one(cs[0])
+        for c in cs[1:]:  # same content and range: the first call's cached record serves them
+            one(c)
+
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        list(ex.map(one, todo))
+        list(ex.map(first_then_rest, groups.values()))
     if log:
         log(f"described {len(out)} of {len(pool)} assets ({len(pool) - len(todo)} prefilter rejects, "
             f"{sum(1 for r in out.values() if not r['cached'])} new calls)")

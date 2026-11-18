@@ -68,6 +68,12 @@ def _ai_run_around(e: dict, i: int, ai_tail: int) -> int:
     return before + 1 + after
 
 
+def _names(rec: dict, rt: dict) -> bool:
+    """The record's facts or visible text contain every word of the real thing's name."""
+    name = set(E.content_words(rt.get("name", "")))
+    return bool(name) and name <= set(E.content_words(E.record_text(rec)))
+
+
 def _used(e: dict, used_before: dict[str, str]) -> dict[str, str]:
     used = dict(used_before)
     for p in e["picks"]:
@@ -128,10 +134,14 @@ class Ladder:
             return
         recs = DS.describe_pool(self.seats, new, self.settings, self.log)
         e["records"].update(recs)
-        new = [c for c in new if c.id in recs and not DS.blocked(recs[c.id])]
-        e["pool"] = e["pool"] + new
+        new = [c for c in new if c.id in recs and not DS.blocked(recs[c.id]) and E.seeable(recs[c.id])]
         if not new:
             return
+        # the re-pick sees the new assets first, then the old pool, within the same image cap
+        merged = new + [c for c in e["pool"] if c not in new]
+        e["pool"] = merged[:E.MAX_ASSETS] if len(merged) > E.MAX_ASSETS else merged
+        if len(merged) > E.MAX_ASSETS and self.log:
+            self.log(f"{scene_plan['scene']} re-pick pool capped at {E.MAX_ASSETS}, {len(merged) - E.MAX_ASSETS} left out")
         sub = [e["shots"][i] for i in idx]
         used = _used(e, used_before)
         picks, attempts, _ = E.pick_call(self.seats, scene_plan.get("scene_purpose", ""), sub, narration, e["pool"],
@@ -139,11 +149,32 @@ class Ladder:
                                          self.log, tag="_r")
         e["attempts"] += [dict(a, step="resource") for a in attempts]
         for i, p in zip(idx, picks):
-            if p.get("_cand") is not None:
-                p["filled_by"] = "resource"
-                e["picks"][i] = p
-            else:
+            if p.get("_cand") is None:
                 e["picks"][i]["search_again_reason"] = p.get("reason", "")
+                continue
+            old = e["picks"][i]
+            e["picks"][i] = p
+            # the re-pick saw these shots alone: check AI runs and holds against the real neighbours
+            why = self._neighbour_problem(e, i, ai_tail)
+            if why:
+                old["resolved"] = (old.get("resolved", "") + f"; re-sourced pick {why}").strip("; ")
+                e["picks"][i] = old
+            else:
+                p["filled_by"] = "resource"
+
+    def _neighbour_problem(self, e: dict, i: int, ai_tail: int) -> str:
+        p = e["picks"][i]
+        c = p["_cand"]
+        if E.is_ai(c) and _ai_run_around(e, i, ai_tail) > V.AI_RUN_MAX:
+            return "removed: too many AI stills in a row"
+        dur = E.shot_seconds(e["shots"][i])
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(e["picks"]):
+                n = e["picks"][j].get("_cand")
+                if n is not None and E.asset_key(n) == E.asset_key(c):
+                    if dur + E.shot_seconds(e["shots"][j]) > E._limit(c) + 1e-6:
+                        return "removed: with the same asset next to it, it stays on screen over the limit"
+        return ""
 
     # ------------------------------------------------------------ 2. restate as a layout
     def step_restate(self, e, scene_plan, narration, used_before) -> None:
@@ -198,10 +229,14 @@ class Ladder:
                 errs.append(f"{cid}: text needs 1 to {MAX_TEXT_WORDS} words.")
             if kind == "number_over_footage" and not re.search(r"\d", text):
                 errs.append(f"{cid}: number_over_footage text needs the number (in digits) with its unit.")
+            clause_words = set(E.content_words(" ".join(w.text for w in words)))
+            tw = E.content_words(text)
+            if kind == "text_over_footage" and tw and sum(x in clause_words for x in tw) * 2 < len(tw):
+                errs.append(f"{cid}: text '{text}' is not this clause's own words; type words spoken in it.")
             beneath = None
+            rt = s["plan"].get("real_thing") or {}
             if kind in ("number_over_footage", "date_title", "text_over_footage"):
                 beneath = E._cand_at(e["pool"], r.get("beneath"))
-                rt = s["plan"].get("real_thing") or {}
                 if beneath is None or E.is_ai(beneath):
                     errs.append(f"{cid}: beneath must be a real asset number from the pool.")
                 elif E.asset_key(beneath) in used:
@@ -210,6 +245,13 @@ class Ladder:
                     _, twhy = E.time_problem(beneath, e["records"].get(beneath.id, {}), None, dur)
                     if twhy:
                         errs.append(f"{cid}: asset {r.get('beneath')}: {twhy}.")
+                    if beneath.media != "video" and dur > V.HOLD_MAX_S + 1e-6:
+                        errs.append(f"{cid}: a still under text for {dur:.1f} s is over the {V.HOLD_MAX_S:g} s "
+                                    f"limit; choose footage.")
+                    if rt.get("name") and rt.get("kind") != "document" and not _names(e["records"].get(beneath.id, {}), rt):
+                        errs.append(f"{cid}: asset {r.get('beneath')} would be read as {rt['name']} but its record "
+                                    f"does not name it; a look-alike is refused. Choose footage whose record names "
+                                    f"it, or a route_map or date_title over something else.")
                     if rt.get("kind") == "document" and kind != "text_over_footage":
                         errs.append(f"{cid}: a missing document is stated as its quoted words over footage "
                                     f"(text_over_footage).")
@@ -248,6 +290,8 @@ class Ladder:
             return t if t is not None else "a"
 
         if kind == "text_over_footage":
+            p["_cand"] = None  # emit reads the fallback only when no picture is picked: the text footage is it
+            p["pick"] = None
             p["fallback"] = "text_over_footage"
             p["_fallback_cand"] = beneath
             p["overlay_text"] = text
@@ -277,6 +321,8 @@ class Ladder:
         dur = E.shot_seconds(s)
         prev = e["picks"][i - 1] if i > 0 else None
         pc = prev.get("_cand") if prev else None
+        if p.get("_cand") is not None:  # a missing document over its own picture: nothing to hold or generate
+            return
         if pc is not None and not E.is_ai(pc) and dur <= SHORT_CLAUSE_S + 1e-6:
             prev_dur = E.shot_seconds(e["shots"][i - 1])
             if prev_dur + dur <= V.HOLD_MAX_S + 1e-6:

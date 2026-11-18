@@ -24,6 +24,7 @@ from . import vocab as V
 from .clauses import Clause
 
 RETRIES = 1
+PICK_KEYS = frozenset(PP.PICK_OUTPUT["picks"][0]) | {"reason"}
 SEAT, FALLBACK_SEAT, TASK, STAGE = "picker", "vision", "plan_pick", "judge"
 FRAME_POS = {"a": 0.2, "b": 0.5, "c": 0.8}  # keyframe letters of source/keyframes.py, kept for old replays
 NO_AI_KINDS = ("person", "event", "document")
@@ -48,7 +49,10 @@ def _usable(c: Candidate) -> bool:
     rr = (c.reject_reason or "").lower()
     if "mock" in c.flags or not c.local_path or not Path(c.local_path).exists():
         return False
-    return not (rr.startswith("prefilter") or rr.startswith("resolution") or "burned_in" in rr)
+    return not rejected(c)
+
+
+rejected = DS.rejected  # the one definition lives with describe, which also skips them
 
 
 def asset_key(c: Candidate) -> str:
@@ -156,8 +160,13 @@ def identity_supported(rec: dict, real_thing: dict, quote: str, field: str) -> O
     q = _norm(quote)
     if not q or q not in _norm(record_field(rec, field)):
         return f"the identity words are not in the record's {field}"
-    name = set(content_words(real_thing.get("name", ""))) | set(_WORD.findall(str(real_thing.get("date", ""))))
-    if name and not name & set(content_words(quote)):
+    name = set(content_words(real_thing.get("name", "")))
+    date = set(_WORD.findall(str(real_thing.get("date", ""))))
+    have = set(content_words(quote))
+    if not name and not date:
+        return "the real thing has no name to check"
+    # every word of the name (one shared surname is not the person), or the full date
+    if not ((name and name <= have) or (date and date <= have)):
         return f"the identity words do not name {real_thing.get('name', 'the real thing')}"
     return None
 
@@ -261,6 +270,7 @@ def time_problem(c: Candidate, rec: dict, start: Any, seconds: float) -> tuple[O
     except (TypeError, ValueError):
         ranges = rec.get("visual", {}).get("usable") or []
         t = ranges[0]["from"] if ranges else c.in_point
+        t = min(t, c.out_point - seconds)  # a late usable range still leaves the shot inside the clip
     if t < c.in_point - 0.05 or t + seconds > c.out_point + 0.05:
         return None, (f"start {t:.1f} s plus {seconds:.1f} s is outside the clip "
                       f"({c.in_point:.1f} to {c.out_point:.1f} s)")
@@ -286,7 +296,9 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
 
     for s in shots:
         cid = s["clauses"][0].id
-        p = dict(by.get(cid) or {"clause": cid, "pick": None, "reason": "no answer for this clause"})
+        got = by.get(cid) or {"clause": cid, "pick": None, "reason": "no answer for this clause"}
+        # only the picker's own fields: fallbacks, overlay text and internal keys belong to the ladder and code
+        p = {k: v for k, v in got.items() if k in PICK_KEYS}
         p["clause"] = cid
         dur = shot_seconds(s)
         rt = s["plan"].get("real_thing") or {}
@@ -363,7 +375,9 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
             if seen(ek) and seen(ek) != cid and not p.get("callback"):
                 errors.append(f"{cid}: element {k} asset {ep.get('pick')} is already used at {seen(ek)}.")
             used.setdefault(ek, cid)
-            et, _ = time_problem(ec, recs.get(ec.id, {}), ep.get("start"), dur)
+            et, ewhy = time_problem(ec, recs.get(ec.id, {}), ep.get("start"), dur)
+            if ewhy:
+                errors.append(f"{cid}: element {k} asset {ep.get('pick')}: {ewhy}.")
             eps.append({"element": k, "pick": int(ep["pick"]), "frame": et if et is not None else "a", "_cand": ec})
         p["element_picks"] = eps
         p["_doc"] = None
@@ -379,6 +393,11 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
                     if lay.get("purpose") in V.MARKED_PURPOSES else []
                 found = passages_found(recs.get(dc.id, {}), passages)
                 p["passages_found"] = found
+                if rt.get("name") and not passages and identity_supported(
+                        recs.get(dc.id, {}), rt, str(p.get("identity") or ""), str(p.get("identity_field") or "")):
+                    errors.append(f"{cid}: document_pick {p.get('document_pick')} is not shown to be "
+                                  f"{rt['name']}; copy the record words that show it, or leave it null.")
+                    p["_doc_unverified"] = True
                 if passages and not all(found):
                     missing = [t for t, f in zip(passages, found) if not f]
                     errors.append(f"{cid}: document_pick {p.get('document_pick')}: the text reader did not find "
@@ -469,6 +488,11 @@ def resolve(picks: list[dict], shots: list[dict], ai_tail: int, recs: dict[str, 
 # ---------------------------------------------------------------- the call
 
 
+def seeable(rec: dict) -> bool:
+    """The picker is only offered an asset it can see: one with a frame on disk for its card."""
+    return any(Path(f.get("path", "")).exists() for f in rec.get("frames", []))
+
+
 def picker_role(seats) -> str:
     try:
         return SEAT if any(p.configured for p in seats.providers_for(SEAT)) else FALLBACK_SEAT
@@ -524,7 +548,7 @@ def edit_scene(seats, scene_plan: dict, clauses: list[Clause], narration: Narrat
     pool, dropped = shortlist(pool_all, {}, rows)
     recs = DS.describe_pool(seats, pool, settings, log)
     blocked = [c for c in pool if c.id in recs and DS.blocked(recs[c.id])]
-    pool = [c for c in pool if c.id in recs and not DS.blocked(recs[c.id])]
+    pool = [c for c in pool if c.id in recs and not DS.blocked(recs[c.id]) and seeable(recs[c.id])]
     if log and dropped:
         log(f"{scene_plan['scene']}: pool shortlisted to {len(pool)} assets, {len(dropped)} left out")
     picks, attempts, raw = pick_call(seats, scene_plan.get("scene_purpose", ""), shots, narration, pool, recs,
