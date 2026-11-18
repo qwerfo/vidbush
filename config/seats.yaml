@@ -71,6 +71,25 @@ roles:
     - {provider: closerouter, model: "google/gemini-3.8-flash"}
     - {provider: openlux, model_match: {family: gemini, version: "3.8-flash", prefix: ""}}
     - {provider: wellflow, model: "gemini-3.8-flash"}
+  # Describer (v2 picker, vidbush/judge/describe.py): one call per asset, cached by content hash, so a
+  # cheap vision model is enough. When closerouter is down, openlux Sonnet is priced per token and cost
+  # about 0.002 USD a call with low reasoning effort (0.007 without, 2026-11-18), while wellflow reports no cost (estimated at 0.01 USD an image)
+  # and openlux gemini spent 10k tokens and 38 s on one image.
+  describer:
+    - {provider: closerouter, model: "google/gemini-3.8-flash"}
+    - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824},
+                                                             extra_body: {reasoning_effort: low}}}
+    - {provider: wellflow, model: "gemini-3.8-flash"}
+  # Picker (v2, vidbush/plan/edit.py): one call per scene compares the described pool and picks per clause.
+  # The director's model (the strongest vision model the policy already uses), then the cheap vision model.
+  # Medium reasoning effort on openlux: at its default one scene's pick spent 193k tokens (2026-11-18).
+  picker:
+    - {provider: closerouter, model_env: LLM_DIRECTOR_MODEL, model_match: {family: sonnet, version: "5.5"}}
+    - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824},
+                                                             extra_body: {reasoning_effort: medium}}}
+    - {provider: anthropic_direct, model: "claude-sonnet-5-5"}
+    - {provider: closerouter, model: "google/gemini-3.8-flash"}
+    - {provider: wellflow, model: "gemini-3.8-flash"}
   # Auditor (python -m vidbush audit): one vision call per 2 s tile of a finished video. Sonnet 5.5 agreed
   # best with the reference tile rows on probe slices (2026-11-17); Gemini 3.8 Flash and Opus 5.5 were
   # further off, and wellflow_cheap answers images with server_error. Same order as director.

@@ -75,7 +75,11 @@ _LEADING = re.compile(r"^.*?\bof\s+", re.I)
 # ---------------------------------------------------------------- entry point
 
 def judge_and_select(shotlist: ShotList, ctx: Any) -> ShotList:
-    """Score, select, re-query, convert to AI; every non motion shot ends with a selected candidate."""
+    """Score, select, re-query, convert to AI; every non motion shot ends with a selected candidate.
+    A clause-planned project takes the describe and pick path instead (judge/pick_stage.py)."""
+    from .pick_stage import is_clause_project, pick_shotlist
+    if is_clause_project(ctx):
+        return pick_shotlist(shotlist, ctx)
     threshold = float(ctx.settings.judge.threshold)
     active = [s for s in shotlist.shots if s.type != ShotType.motion_graphic]
     _seed_ai(active, ctx)

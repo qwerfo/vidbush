@@ -55,7 +55,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, NamedTuple, Optional, Union
 
-from ..models import FOOTAGE_TYPES, GENERATED_SOURCES, Candidate, RealThing, Shot, ShotList, ShotType
+from ..models import FOOTAGE_TYPES, GENERATED_SOURCES, Candidate, RealThing, Shot, ShotList, ShotType, SourceKind
 from . import base, throttle
 from .base import Media, RawResult, SourceAdapter
 from .blocklist import Blocklist
@@ -346,23 +346,34 @@ def sent_query(adapter: SourceAdapter, query: str) -> str:
     return base.archive_query(query, words) if words else query
 
 
+def class_query(adapter: SourceAdapter, query: str, cls: str) -> str:
+    """The query as the adapter phrases it for its query class (adapter.class_query), else the query."""
+    phrase = getattr(adapter, "class_query", None)
+    return phrase(query, cls) if cls and callable(phrase) else query
+
+
 def _search_one(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
-                ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]] = None) -> list[RawResult]:
+                ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]] = None,
+                cls: str = "") -> list[RawResult]:
     """One search: disk cache first, then the run budget (one per pass), then the adapter. Never raises.
     A search the budget deferred or the host throttled is added to unsent as (shot, source, query).
-    The same request is never in flight twice: a second caller waits and reads the first one's cache."""
+    The same request is never in flight twice: a second caller waits and reads the first one's cache.
+    cls is the query's class: the adapter may phrase the query it sends for it (class_query); routing,
+    unsent and the recorded query stay the planned query."""
     if adapter.name in UNCACHED:
-        return _search_sent(adapter, query, media, n, shot, ctx, unsent)
+        return _search_sent(adapter, query, media, n, shot, ctx, unsent, cls)
     variant = search_variant(adapter, ctx, shot)
-    with throttle.exclusive(f"search:{adapter.name}", f"{sent_query(adapter, query)}|{media}|{n}|{variant}"):
-        return _search_sent(adapter, query, media, n, shot, ctx, unsent)
+    sent = sent_query(adapter, class_query(adapter, query, cls))
+    with throttle.exclusive(f"search:{adapter.name}", f"{sent}|{media}|{n}|{variant}"):
+        return _search_sent(adapter, query, media, n, shot, ctx, unsent, cls)
 
 
 def _search_sent(adapter: SourceAdapter, query: str, media: Media, n: int, shot: Shot,
-                 ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]]) -> list[RawResult]:
+                 ctx: "StageContext", unsent: Optional[set[tuple[str, str, str]]], cls: str = "") -> list[RawResult]:
     cacheable = adapter.name not in UNCACHED
     hints = search_hints(adapter, ctx)
-    variant, key = search_variant(adapter, ctx, shot), sent_query(adapter, query)
+    phrased = class_query(adapter, query, cls)
+    variant, key = search_variant(adapter, ctx, shot), sent_query(adapter, phrased)
     if cacheable:
         hit = cache_get(adapter.name, key, media, n, ctx.settings, variant)
         if hit is not None:
@@ -379,7 +390,7 @@ def _search_sent(adapter: SourceAdapter, query: str, media: Media, n: int, shot:
             hints.pop("prefer_cc")  # the last search of the budget runs the normal pass only
     charged = (1 + bool(hints.get("prefer_cc"))) if cacheable else 0  # prefer_cc sends two passes
     try:
-        results = adapter.search(query, media, n, ctx.settings, shot=shot, **hints)
+        results = adapter.search(phrased, media, n, ctx.settings, shot=shot, **hints)
     except throttle.Throttled as e:
         for _ in range(charged - min(charged, e.sent)):  # a search is charged only when it was sent
             throttle.refund_budget(run_id(ctx), adapter.name, shot.id)
@@ -525,7 +536,8 @@ def search_shot(shot: Shot, adapters: list[SourceAdapter], media: Media, queries
     cap = ctx.settings.sources.max_candidates
     plan = queries if isinstance(queries, QueryPlan) else QueryPlan(list(queries), {}, None)
     seen_shot = _thing_shot(shot, plan)
-    jobs = [(a, q, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap), seen_shot, ctx))
+    jobs = [(a, q, pools.submit(a, _search_one, a, q, media, _per_adapter_n(a, cap), seen_shot, ctx, None,
+                                query_class(plan, a, q)))
             for a in adapters if media in a.media for q in adapter_queries(plan, a)]
     merged: dict[str, list[RawResult]] = defaultdict(list)
     for a, q, fut in jobs:
@@ -639,6 +651,19 @@ def _still_from_video(c: Candidate, out_dir: Path) -> Candidate:
 
 
 MAX_STILL_ASPECT = 2.6  # wider stills (panoramas) lose too much to a 16:9 cover crop
+MIN_STILL_LONG_SIDE = 500  # under this a still is a thumbnail; public domain archival keeps the judge's rule
+
+
+def _long_side(c: Candidate) -> int:
+    """Long side in px: the source's size, else the file's (0 when neither is known)."""
+    if c.width and c.height:
+        return max(c.width, c.height)
+    try:
+        from PIL import Image
+        with Image.open(c.local_path) as im:
+            return max(im.size)
+    except Exception:  # noqa: BLE001 - unreadable here: the judge checks the file
+        return 0
 
 
 def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Iterable[str] = ()) -> list[Candidate]:
@@ -646,6 +671,8 @@ def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Ite
 
     A public domain archival still under 1280 px is flagged small_archival instead of low_res: the judge
     accepts it down to judge.MIN_ARCHIVAL_WIDTH and the render frames it on a blurred fill, never upscaled.
+    Any other still under MIN_STILL_LONG_SIDE on its long side is dropped (size read from the file when
+    the source gave none).
     """
     from ..judge.judge import archival_still
     from .keyframes import extract_keyframes
@@ -667,6 +694,10 @@ def finalize(shot: Shot, cands: list[Candidate], ctx: "StageContext", taken: Ite
         if c.media == "image" and c.width and c.height and c.width / c.height > MAX_STILL_ASPECT:
             ctx.log.info("still too thin for a 16:9 frame, dropped", shot=shot.id, candidate=c.id,
                          size=f"{c.width}x{c.height}")
+            continue
+        if (c.media == "image" and c.source != SourceKind.local and not archival_still(c)  # own library kept
+                and 0 < _long_side(c) < MIN_STILL_LONG_SIDE):
+            ctx.log.info("still too small, dropped", shot=shot.id, candidate=c.id, size=f"{c.width}x{c.height}")
             continue
         if (c.media == "video" and min(c.width, c.height) < 720) or (c.media == "image" and c.width < 1280):
             c.flags = sorted(set(c.flags) | {"small_archival" if archival_still(c) else "low_res"})
@@ -922,7 +953,8 @@ def _adapter_rounds(a: SourceAdapter, shots: list[Shot], queries: dict[str, Quer
                     continue
                 allowance[a.name] -= 1 + bool(search_hints(a, ctx).get("prefer_cc"))
             jobs.append((s.id, q, pools.submit(a, _search_one, a, q, shot_media(s), _per_adapter_n(a, cap),
-                                               _thing_shot(s, queries[s.id]), ctx, unsent)))
+                                               _thing_shot(s, queries[s.id]), ctx, unsent,
+                                               query_class(queries[s.id], a, q))))
         for i, (sid, q, fut) in enumerate(jobs):
             if stop is not None and stop.is_set():
                 for _, _, later in jobs[i:]:

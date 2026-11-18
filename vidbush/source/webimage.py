@@ -25,7 +25,15 @@ FIRECRAWL = "https://api.firecrawl.dev/v2/search"
 BRAVE = "https://api.search.brave.com/res/v1/images/search"
 TAVILY = "https://api.tavily.com/search"
 LICENCE = "unknown (web image search)"
-MIN_LONG_SIDE = 300
+MIN_LONG_SIDE = 500  # the licence is unknown, so never the public domain archival allowance
+# stock agencies and their image CDNs, matched by host suffix: their previews carry a watermark
+STOCK_HOSTS = ("shutterstock.com", "gettyimages.com", "gettyimages.co.uk", "istockphoto.com", "alamy.com",
+               "dreamstime.com", "stock.adobe.com", "ftcdn.net", "depositphotos.com", "123rf.com",
+               "bigstockphoto.com", "pond5.com", "agefotostock.com", "canstockphoto.com", "colourbox.com",
+               "vectorstock.com", "freepik.com", "superstock.com", "masterfile.com")
+NEWSPAPER_CLASS = "newspaper"
+NEWSPAPER_FLAG = "newspaper_page"
+NEWSPAPER_WORDS = ("newspaper", "front page", "headline", "gazette")
 SEAT_PROVIDERS = ("serper", "brave", "tavily")
 IMAGE_ACCEPT = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
 FORMAT_EXT = {"JPEG": ".jpg", "MPO": ".jpg", "PNG": ".png", "WEBP": ".webp", "TIFF": ".tif"}
@@ -53,14 +61,27 @@ def site_of(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def stock_host(url: str) -> bool:
+    """The URL is on a stock agency or one of its image CDNs (subdomains count)."""
+    host = site_of(url)
+    return bool(host) and any(host == h or host.endswith("." + h) for h in STOCK_HOSTS)
+
+
+def newspaper_query(query: str) -> str:
+    """A newspaper-class query phrased for a newspaper page, unless it already asks for one."""
+    low = query.lower()
+    return query if any(w in low for w in NEWSPAPER_WORDS) else f"{query} newspaper page"
+
+
 def _usable(url: str) -> bool:
     return urlparse(url or "").scheme in ("http", "https") and "x-raw-image" not in url
 
 
 def _result(provider: str, image: str, title: str, page: str, width: Any, height: Any, position: Any,
             description: str = "") -> Optional[RawResult]:
-    """One RawResult, or None for a non-http(s) image or one known to be under MIN_LONG_SIDE."""
-    if not _usable(image):
+    """One RawResult, or None for a non-http(s) image, a stock agency image or page, or one known to be
+    under MIN_LONG_SIDE."""
+    if not _usable(image) or stock_host(image) or stock_host(page or ""):
         return None
     w, h = int(width or 0), int(height or 0)
     if 0 < max(w, h) < MIN_LONG_SIDE:
@@ -117,6 +138,11 @@ class WebImageAdapter(BaseAdapter):
     classes = frozenset({"web_image", "newspaper"})
     matches_description = True
 
+    def class_query(self, query: str, cls: str) -> str:
+        """The query sent for one query class: a newspaper query asks for a newspaper page (loc.gov's
+        Chronicling America challenges this connection and asks automated clients to pause)."""
+        return newspaper_query(query) if cls == NEWSPAPER_CLASS else query
+
     def available(self, settings: Settings) -> bool:
         return not settings.offline and pick_provider(settings) is not None
 
@@ -161,6 +187,9 @@ class WebImageAdapter(BaseAdapter):
             raise base.Rejected(f"not a still image format ({fmt or 'unknown'})")
         if max(w, h) < MIN_LONG_SIDE:
             raise base.Rejected(f"image too small ({w}x{h})")
-        raw = raw.model_copy(update={"width": w, "height": h})
+        extra = raw.extra
+        if extra.get("query_class") == NEWSPAPER_CLASS:  # evidence only where the text reader finds the words
+            extra = {**extra, "flags": sorted(set(extra.get("flags") or []) | {NEWSPAPER_FLAG})}
+        raw = raw.model_copy(update={"width": w, "height": h, "extra": extra})
         dst = link_into(src, out_dir, f"webimage_{base.url_hash(raw.download_url)}{FORMAT_EXT[fmt]}")
         return make_candidates(raw, dst, shot, settings)

@@ -7,6 +7,7 @@ frame a. Each row is labelled with the candidate number (and AI for a generated 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -67,3 +68,50 @@ def build(entries: list[dict], out_dir: Path, prefix: str) -> list[str]:
         sheet.save(p, quality=88)
         paths.append(str(p))
     return paths
+
+
+# ---------------------------------------------------------------- picker cards (one asset per image)
+
+CARD_W = 640  # the vision seat fits every image into 640 px; one asset per image keeps it at full width
+CARD_MAIN_H = 360
+STRIP_H = 120
+CARD_MAX_H = 640
+
+
+def asset_card(n: int, rec: dict, out_dir: Path, prefix: str) -> Optional[str]:
+    """One numbered image for one asset: a still at full width (documents keep their height up to 640 px),
+    a video's first frame large with its other frames below, each with its time in the asset."""
+    frames = [(f["t"], f["path"]) for f in rec.get("frames", []) if Path(f["path"]).exists()]
+    if not frames:
+        return None
+    out_dir.mkdir(parents=True, exist_ok=True)
+    big, small = _font(18), _font(13)
+    video = rec.get("media") == "video"
+    if video:
+        h = CAP_H + CARD_MAIN_H + (STRIP_H if len(frames) > 1 else 0)
+        card = Image.new("RGB", (CARD_W, h), (0, 0, 0))
+        card.paste(_fit(frames[0][1], CARD_W, CARD_MAIN_H), (0, CAP_H))
+        d = ImageDraw.Draw(card)
+        d.rectangle([0, CAP_H, 64, CAP_H + 18], fill=(0, 0, 0))
+        d.text((4, CAP_H + 1), f"{frames[0][0]:.1f}s", fill=(255, 255, 255), font=small)
+        rest = frames[1:4]
+        w = CARD_W // max(1, len(rest)) if rest else CARD_W
+        for k, (t, p) in enumerate(rest):
+            x = k * w
+            card.paste(_fit(p, w - 2, STRIP_H - 2), (x, CAP_H + CARD_MAIN_H + 2))
+            d.rectangle([x, CAP_H + CARD_MAIN_H + 2, x + 60, CAP_H + CARD_MAIN_H + 20], fill=(0, 0, 0))
+            d.text((x + 4, CAP_H + CARD_MAIN_H + 3), f"{t:.1f}s", fill=(255, 255, 255), font=small)
+    else:
+        with Image.open(frames[0][1]) as im:
+            iw, ih = im.size
+        body_h = max(120, min(CARD_MAX_H - CAP_H, round(CARD_W * ih / max(1, iw))))
+        card = Image.new("RGB", (CARD_W, CAP_H + body_h), (0, 0, 0))
+        card.paste(_fit(frames[0][1], CARD_W, body_h), (0, CAP_H))
+        d = ImageDraw.Draw(card)
+    ai = rec.get("ai")
+    d.rectangle([0, 0, CARD_W, CAP_H - 1], fill=(230, 90, 90) if ai else (250, 210, 40))
+    d.text((6, 2), f"#{n}" + ("  AI generated" if ai else "") + ("  video" if video else "  still"),
+           fill=(0, 0, 0), font=big)
+    p = out_dir / f"{prefix}_a{n:03d}.jpg"
+    card.save(p, quality=90)
+    return str(p)
