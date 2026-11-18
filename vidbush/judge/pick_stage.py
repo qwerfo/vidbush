@@ -18,6 +18,7 @@ from typing import Any, Optional
 from ..models import Candidate, Narration, Script, Shot, ShotList, ShotType
 
 PLAN_KEYS_DROPPED = ("clauses", "start", "end", "edit", "note")
+RESOURCE_ASSETS = 3  # ladder step 1: assets fetched per open clause (sourcing fetches max_candidates, 8)
 
 
 def is_clause_project(ctx: Any) -> bool:
@@ -90,8 +91,13 @@ def pick_shotlist(shotlist: ShotList, ctx: Any) -> ShotList:
         ctx.log.info(m)
 
     def resource(wants: dict, scene_id: str) -> list[Candidate]:
+        import copy
         from ..source.registry import source_pool
-        found = source_pool(shots_for(wants, scene_id), ctx)
+        # a repair costs less than the sourcing it repairs: at most RESOURCE_ASSETS distinct assets a clause
+        small = copy.copy(ctx)
+        small.settings = ctx.settings.model_copy(deep=True)
+        small.settings.sources.max_candidates = min(RESOURCE_ASSETS, ctx.settings.sources.max_candidates)
+        found = source_pool(shots_for(wants, scene_id), small)
         return [c for cs in found.values() for c in cs]
 
     ladder = Ladder(ctx.seats, ctx.settings, work / "pick_sheets", log, resource)
