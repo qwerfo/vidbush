@@ -100,7 +100,8 @@ def pick_shotlist(shotlist: ShotList, ctx: Any) -> ShotList:
         found = source_pool(shots_for(wants, scene_id), small)
         return [c for cs in found.values() for c in cs]
 
-    ladder = Ladder(ctx.seats, ctx.settings, work / "pick_sheets", log, resource)
+    on = bool(getattr(ctx.settings.judge, "ladder_resource", False))
+    ladder = Ladder(ctx.seats, ctx.settings, work / "pick_sheets", log, resource if on else None)
     edits = E.edit_all(ctx.seats, scenes, clauses, narration, shotlist, work / "pick_sheets", log=log,
                        settings=ctx.settings, ladder=ladder)
     new_plan, sl = M.emit(ctx.project.id, script, narration, clauses, scenes, edits)

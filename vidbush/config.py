@@ -77,6 +77,8 @@ class JudgeConfig(BaseModel):
     threshold: float = 70.0
     max_attempts: int = 3
     ai_retries: int = 2  # regenerations of a failed AI still, the judge's reason as direction
+    # picker ladder step 1 (live re-source of open clauses): off by default, its wall clock has no bound yet
+    ladder_resource: bool = False
     post_render_every_s: float = 3.0
     first_keyframe_detail: str = "high"  # image detail for the first keyframe of each candidate: high | low | auto
     keyframe_detail: str = "low"  # detail for the other keyframes; the post-render QA pass is always low
