@@ -693,6 +693,11 @@ One line each: the decision and why.
 - AI stills are generated in the pick stage only for shots the ladder ends at an AI still, through the existing add_ai (judged, retried with the judge's reason); the rulings are measured again on the final shot list and each breach is flagged (plan_v2.json ai_rulings).
 - The packaging stage runs the tile audit on the finished video for clause projects and rebuilds the QA report, so the six numbers open qa_report.md; the audit's cost stays in audit/audit_cost_report.json as with the audit command, and an audit failure never fails packaging.
 - Review findings in files the picker lane owns tonight (plan/edit.py check and resolve; source/youtube.py paid route budget reservation, subtitle cache of transient failures, unvalidated whole file cache, route reset per run) were not edited: the main lane's wrapper covers the AI and document ones, the rest wait for the picker merge.
+- v2/picker and v2/sound were merged as soon as both said READY (picker a59bd9e, sound 25866ed), in a second worktree, so the running alaska_v2a kept its code; docs kept both sides, sound's HANDOFF section renumbered 17.
+- The judge stage of a clause project is the picker's pick_shotlist (describe once, pick per scene, its ladder); the main lane's interim edit wrapper and ladder were deleted, only the AI rulings check on the picked list stays, because two pick paths would drift.
+- alaska_v2a stopped at its cost cap inside the pick stage after scene 1 of 11: the interim edit sent full image sheets to openlux Sonnet at about 0.26 USD a call (0.5 USD a scene), so finishing it would have cost about 5.5 USD for a pick path replaced the same night; it is not rendered.
+- alaska_v2b forks alaska_v2a after sourcing (same clauses, director plans and pools; sources/ is a junction, nothing re-downloaded) and runs pick onward on v2/base with the picker and sound; its cost report starts empty, so the pools' cost stays with alaska_v2a and the --cost-cap 5 measures this run only.
+- The sourcing classifier booked 0.01 USD a call on openlux against 0.0001 on closerouter (closerouter answered 503 for part of the run): 2.98 USD of alaska_v2a's 5.23; the seat order already puts closerouter first, so nothing changed tonight, but it is the largest avoidable cost in a run.
 
 ## V2: picker (parallel1, branch v2/picker, night 2)
 
