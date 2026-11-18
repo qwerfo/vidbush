@@ -129,10 +129,10 @@ def test_leveller_holds_a_bed_with_swells() -> None:
 def test_qa_finds_a_gap_and_a_cut() -> None:
     x = np.full(int(6 * SR), 0.05, dtype=np.float32)
     x[int(2 * SR): int(2.5 * SR)] = 0.0
-    assert sound_qa.gaps(x) == [(2.0, 0.5)]
+    assert sound_qa.gaps(x, SR) == [(2.0, 0.5)]
     y = np.full(int(6 * SR), 0.05, dtype=np.float32)
     y[int(3 * SR):] *= 0.01  # a hard 40 dB drop
-    assert sound_qa.cuts(y) and sound_qa.cuts(np.full(int(6 * SR), 0.05, dtype=np.float32)) == []
+    assert sound_qa.cuts(y, SR) and sound_qa.cuts(np.full(int(6 * SR), 0.05, dtype=np.float32), SR) == []
 
 
 def _speech(path: Path, spans: list[tuple[float, float]], total: float) -> Path:
@@ -174,3 +174,81 @@ def test_planned_mix_writes_plan_stems_and_exact_length(tmp_path: Path, settings
     assert all((work / "stems" / f"{k}.wav").exists() for k in ("narration", "music", "ambience", "effects"))
     assert json.loads((work / "mix.json").read_text(encoding="utf-8"))["tracks"]
     assert "## Sound" in sound_qa.qa_section(work)
+
+
+# ---------------------------------------------------------------- review fixes
+
+
+def test_loops_end_on_inputs_shorter_than_their_crossfade() -> None:
+    short = (np.random.default_rng(0).standard_normal((int(2.5 * SR), 2)) * 0.1).astype(np.float32)
+    assert len(mixer.looped(short, 2.4, 20.0, loopable=False)) == int(20 * SR)
+    assert len(mixer.delooped(short, 20.0, "x")) == int(20 * SR)
+    assert len(mixer.delooped(short[:3], 5.0, "x")) == int(5 * SR)
+
+
+def test_close_quiets_merge_so_the_music_never_bobs_up() -> None:
+    sl = ShotList(project_id="t", duration=60, shots=[_shot(1, 10, 12, "x", flags=["quiet"]),
+                                                       _shot(2, 15.6, 17, "x", flags=["quiet"])])
+    assert len(sp.quiet_spans(sl, {})) == 1
+
+
+def test_place_holds_through_a_short_other_place() -> None:
+    shots = [_shot(1, 0, 10, "sea ice"), _shot(2, 10, 13, "a river"), _shot(3, 13, 25, "sea ice at dusk")]
+    beds = sp.plan_ambience(ShotList(project_id="t", duration=25, shots=shots), [])
+    assert [(b.place, b.start, b.end) for b in beds] == [("snow_wind", 0.0, 25.0)]
+
+
+def test_instant_steps_are_reported() -> None:
+    assert sound_qa.shortest_ramp([(0, 1), (5, 1), (5, 0), (9, 0)]) == 0.0
+
+
+def _seed_library(root: Path) -> None:
+    from vidbush.audio import library
+    rng = np.random.default_rng(3)
+    n = int(30 * SR)
+    spec = np.fft.rfft(rng.standard_normal((n, 2)), axis=0)
+    spec[int(n * 1500 / SR):] = 0
+    bed = np.fft.irfft(spec, n, axis=0)
+    bed = (bed / np.abs(bed).max() * 0.1).astype(np.float32)
+    library.store(root, library.Sound(id="", file="", category="bed", place="snow_wind", name="wind",
+                                      review_status="approved by Adam"), bed)
+    library.store(root, library.Sound(id="", file="", category="bed", place="room_tone", name="tone",
+                                      review_status="approved by Adam"), bed * 0.2)
+    t = np.arange(int(0.6 * SR)) / SR
+    tap = (np.sin(2 * np.pi * 300 * t) * np.exp(-t * 12) * 0.3).astype(np.float32)
+    library.store(root, library.Sound(id="", file="", category="effect", effect="card_settle", family="paper",
+                                      name="card"), np.stack([tap, tap], 1))
+
+
+def test_planned_mix_end_to_end_with_crossfade_bed_effect_and_quiet(tmp_path: Path, settings: Any) -> None:
+    from vidbush.models import MotionSpec
+    _seed_library(Path(settings.sound_library))
+    rng = np.random.default_rng(0)
+    folder = tmp_path / "music"
+    folder.mkdir()
+    for name in ("calm.wav", "tense.wav"):
+        write_audio(folder / name, (rng.standard_normal((int(40 * SR), 2)) * 0.05).astype(np.float32))
+    (folder / "tracks.json").write_text(json.dumps({"calm.wav": {"mood": "calm", "checked": ["mood"]},
+                                                    "tense.wav": {"mood": "tense", "checked": ["mood"]}}),
+                                        encoding="utf-8")
+    total = 60.0
+    spans = [(0.3, 14.0), (14.3, 29.0), (31.0, 44.0), (44.3, 59.0)]
+    audio = _speech(tmp_path / "narration.wav", spans, total)
+    words = [Word(text="w", start=s, end=e, beat_id="b1" if s < 30 else "b2") for s, e in spans]
+    nar = Narration(audio_path=str(audio), duration=total, words=words,
+                    beat_spans={"b1": [0.0, 29.0], "b2": [30.0, total]})
+    script = Script(scenes=[Scene(id="s1", title="a", purpose="setup", beats=[Beat(id="b1", text="w")]),
+                            Scene(id="s2", title="b", purpose="turn", beats=[Beat(id="b2", text="w")])])
+    shots = [_shot(1, 0, 20, "a dog team on sea ice", "footage_overlay",
+                   overlay=MotionSpec(kind="callout", payload={"title": "A"}, start_at=5.0, duration=2.0)),
+             _shot(2, 20, 45, "a sled crossing sea ice"), _shot(3, 45, 60, "a sled on sea ice", flags=["quiet"])]
+    work = tmp_path / "work"
+    music.build_mix(nar, script, ShotList(project_id="t", duration=total, shots=shots),
+                    Brand(id="b", music_folder=str(folder)), StyleProfile(id="p"), settings, work, NullLogger(),
+                    random.Random(1))
+    plan = json.loads((work / "sound_plan.json").read_text(encoding="utf-8"))
+    assert [c["kind"] for c in plan["changes"]] == ["crossfade"]
+    assert [r["place"] for r in plan["ambience"]] == ["snow_wind", "room_tone"]
+    assert [e["kind"] for e in plan["effects"]] == ["card_settle"]
+    assert plan["qa"]["faults"] == [], plan["qa"]["faults"]
+    assert abs(plan["qa"]["music_under_speech_rel_db"] - (-18.0)) < 2.0

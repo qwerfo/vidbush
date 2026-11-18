@@ -65,7 +65,7 @@ def build() -> dict:
 
 def _excerpt_numbers(wav: Path, a: float, b: float) -> dict:
     x = read_audio(wav, SR, 1)[int(a * SR): int(b * SR), 0]
-    g = gaps(x)
+    g = gaps(x, SR)
     db = window_db(x, int(0.05 * SR))
     tmp = OUT / "_x.wav"
     run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a}", "-t", f"{b - a}", "-i", str(wav), str(tmp)])

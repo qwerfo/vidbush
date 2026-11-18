@@ -1383,7 +1383,7 @@ document focus needs a real document whose page carries the quote.
 
 v2/base = v2/audit + v2/sources + v2/layouts + v2/planner. Decisions: DECISIONS.md "V2: integration".
 
-### 16a. The layout contract
+### 15a. The layout contract
 
 The planner (`vidbush/plan/emit.py`) emits the layouts lane's `models.LayoutSpec`: roles from `LAYOUT_ROLES`,
 pictures as candidate ids on elements, a found document as a `document` element (plus `source`), background
@@ -1391,7 +1391,7 @@ elements for number_over_footage and date_title from the clause's own pick, time
 timeline_id, `purpose` only on document_focus. A full layout's cut is moved to its first anchored word
 (`start_full_layouts_on_words`); panels get `layout_at` from the renderer. Tests: `tests/test_plan_contract.py`.
 
-### 16b. YouTube's paid second route
+### 15b. YouTube's paid second route
 
 `vidbush/source/youtube_api.py` (provider notes: PROVIDER_NOTES.md "video-download-api.com"). Free yt-dlp first;
 the first bot check sets `youtube.ROUTE.name = "api"` for the rest of the process and the same video is fetched
@@ -1474,7 +1474,7 @@ timing); `python scripts/sound_proof.py cut` writes `opening_{old,new}.mp4` (0 t
 
 ### 16f. Cost and time
 
-The planned mix took 46 to 60 s on the laptop for the 11 minute Alaska film against 14 to 16 s for the old
+The planned mix took 46 to 60 s (final run 55.9 s) on the laptop for the 11 minute Alaska film against 14 to 16 s for the old
 ducked bed (about 45 s more per render). The library seed spent 990
 ElevenLabs credits and the proof runs 900 more on three coast retakes: 1,890 credits, about 0.34 USD.
 
@@ -1485,3 +1485,6 @@ ElevenLabs credits and the proof runs 900 more on three coast retakes: 1,890 cre
 - Place words are English and literal; a description that never names its place gets no bed.
 - Most library beds and every generated sound are unheard by Adam (see the catalogue's `review_status`).
 - Footage audio is still discarded.
+- Memory: the mix holds the narration and each layer as 48 kHz stereo float arrays, about 250 MB each for the
+  11 minute film (an estimated 5 to 6 GB peak for 30 minutes, not measured). `work/stems/` is about 500 MB for
+  11 minutes; delete it after review if disk is short.

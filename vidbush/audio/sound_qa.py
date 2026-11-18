@@ -26,7 +26,7 @@ CUT_AUDIBLE_DBFS = -55.0
 MIN_RAMP_S = 1.0
 LIMIT_SLACK_DB = 3.0
 WORD_MARGIN_DB = 10.0
-QA_SR = 48000
+QA_SR = 48000  # full band: at 24 kHz the meter loses everything above 12 kHz (3 dB on bright content)
 
 
 def _mask(spans: list[tuple[float, float]], n: int, sr: int) -> np.ndarray:
@@ -39,7 +39,7 @@ def _mask(spans: list[tuple[float, float]], n: int, sr: int) -> np.ndarray:
 def masked_lufs(x: np.ndarray, mask: np.ndarray, tmp: Path) -> float:
     """Integrated loudness of the samples under mask (joined), via the ebur128 meter."""
     sel = x[mask]
-    if sel.size < QA_SR * 0.5 or not np.any(np.abs(sel) > 1e-7):
+    if len(sel) < QA_SR * 0.5 or not np.any(np.abs(sel) > 1e-7):
         return -70.0
     write_audio(tmp, sel, sr=QA_SR, codec="pcm_f32le")
     try:
@@ -49,11 +49,12 @@ def masked_lufs(x: np.ndarray, mask: np.ndarray, tmp: Path) -> float:
 
 
 def window_db(x: np.ndarray, win: int) -> np.ndarray:
-    k = len(x) // win
+    """Level in dB of consecutive windows of win samples (stereo: the mean power of both channels)."""
+    p = np.mean(x.astype(np.float64) ** 2, axis=1) if x.ndim == 2 else x.astype(np.float64) ** 2
+    k = len(p) // win
     if k == 0:
         return np.array([-120.0])
-    blocks = x[: k * win].reshape(k, win).astype(np.float64)
-    return 10 * np.log10(np.mean(blocks ** 2, axis=1) + 1e-12)
+    return 10 * np.log10(np.mean(p[: k * win].reshape(k, win), axis=1) + 1e-12)
 
 
 def gaps(x: np.ndarray, sr: int = QA_SR) -> list[tuple[float, float]]:
@@ -106,7 +107,7 @@ def measure_mix(work_dir: Path, plan: dict[str, Any], speech: list[tuple[float, 
     """Every number in the sound section of qa_report.md, from the stems and the delivered mix."""
     work_dir = Path(work_dir)
     st = work_dir / "stems"
-    nar, mus, amb, fx = (read_audio(st / f"{k}.wav", QA_SR, 1)[:, 0]
+    nar, mus, amb, fx = (read_audio(st / f"{k}.wav", QA_SR, 2)  # stereo: a mono downmix loses 3 dB of wide music
                          for k in ("narration", "music", "ambience", "effects"))
     n = len(nar)
     g = float(plan["loudness"].get("final_gain_db", 0.0))
@@ -151,13 +152,15 @@ def measure_mix(work_dir: Path, plan: dict[str, Any], speech: list[tuple[float, 
     for c in bed_cuts[:10]:
         faults.append(f"cut: bed level steps {c['step_db']} dB at {c['t']:.2f} s")
     for k, v in ramps.items():
-        if v is not None and 0 < v < MIN_RAMP_S:
+        if v is not None and v < MIN_RAMP_S:
             faults.append(f"fast ramp: {k} changes over {v:.2f} s (rule: at least {MIN_RAMP_S} s)")
     rel_music = round(music_under - speech_lufs, 1)
-    if music_under > -69 and rel_music > lv["music_under_speech_db"] + LIMIT_SLACK_DB:
+    has_speech = speech_lufs > -69.0  # with no narration every level reads as "loud": nothing to compare
+    if has_speech and music_under > -69 and rel_music > lv["music_under_speech_db"] + LIMIT_SLACK_DB:
         faults.append(f"loud bed: music under speech at {rel_music} dB (set {lv['music_under_speech_db']} dB)")
     for b in beds:
-        if b["place"] != "room_tone" and b["rel_db"] > b["set_db"] + LIMIT_SLACK_DB and b["rel_db"] > -60:
+        if has_speech and b["place"] != "room_tone" and b["rel_db"] > b["set_db"] + LIMIT_SLACK_DB \
+                and b["rel_db"] > -60:
             faults.append(f"loud bed: {b['place']} at {b['rel_db']} dB (set {b['set_db']} dB) at {b['start']:.1f} s")
     for e in effects:
         if e["over_speech"] and e["margin_db"] < WORD_MARGIN_DB:

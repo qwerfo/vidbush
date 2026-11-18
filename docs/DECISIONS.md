@@ -716,3 +716,12 @@ One line each: the decision and why.
 - The sound QA reports a cut as a 400 ms level step over 15 dB within 0.2 s at an audible level, because an eased change moves under 10 dB in 0.2 s and a real cut 30 dB or more, while sounds inside a bed are judged by the bed rule.
 - qa_report.md gains a Sound section from work/sound_qa.md through one helper in judge/qa.py (with_sound), the only line outside vidbush/audio.
 - The older single ducked bed stays behind profile.sound.planned = false, so a project can go back to it.
+- Quiets closer than the music's return plus 2 s at level plus the next fade (6.1 s) merge into one, so the music never bobs up between two quiet clauses.
+- A phrase snap that would land a crossfade inside a quiet's fade keeps the scene's own change time instead.
+- A short shot of another place between two runs of one place no longer breaks the bed: short places are dropped first, then runs of one place within 8 s rejoin.
+- A freshly generated bed must pass the same checks as a library bed (10 s or longer, -62 LUFS or louder, steady), and each place gets one choice and at most one generation per render.
+- Loops and de-loops are built in one buffer from pieces at least two crossfades long, so a short file can never stall the mix and a 30 minute bed costs linear time.
+- The QA measures stems in stereo at 48 kHz: a mono downmix loses 3 dB on wide music and a 24 kHz read loses everything above 12 kHz.
+- A zero-length gain change counts as a fast ramp, and with no narration the QA reports no level faults, since there is nothing to compare against.
+- Stems are written at 16 bit (they are for measuring and the levels page); decode caches are cleared after each mix so a long-lived worker does not hold every track.
+- The legacy ducked path deletes a stale sound_plan.json and sound_qa.md, so qa_report.md never shows a sound section from an earlier mix.

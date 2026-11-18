@@ -33,6 +33,7 @@ EFFECT_WORD_MARGIN_DB = 12.0  # an effect plays at least this far under the word
 MIN_BED_LUFS = -62.0  # quieter beds are mostly noise once lifted to level
 MAX_BED_GAIN_DB = 30.0
 MAX_BED_SPREAD_DB = 12.0
+MIN_BED_S = 10.0  # shorter files loop too audibly to make a bed
 MAX_TAKES = 4  # a place with this many takes in the library (all unusable) gets no new generation
 LEVEL_WINDOW_S = 1.0  # bed leveller: 1 s power windows
 LEVEL_OVER_DB = 3.0  # moments louder than the bed's median by more than this are ridden down
@@ -85,41 +86,63 @@ def decoded(path: str) -> np.ndarray:
     return _DECODED[path]
 
 
-def _xfade(a: np.ndarray, b: np.ndarray, k: int) -> np.ndarray:
-    """a then b, overlapping k samples with an equal power crossfade."""
-    k = min(k, len(a), len(b))
-    if k <= 0:
-        return np.concatenate([a, b])
-    x = np.linspace(0.0, 1.0, k, dtype=np.float32)[:, None]
-    mid = a[-k:] * np.cos(x * np.pi / 2) + b[:k] * np.sin(x * np.pi / 2)
-    return np.concatenate([a[:-k], mid, b[k:]])
+def _chain(pieces: Any, n: int, k: int, channels: int = 2) -> np.ndarray:
+    """n samples from consecutive pieces overlapped k samples in equal power crossfades, written into one
+    buffer (linear time). Every piece must be at least 2k long, so each one advances the output."""
+    out = np.zeros((n + 2 * k + 1, channels), dtype=np.float32)
+    up = np.sin(np.linspace(0.0, 1.0, k, dtype=np.float32) * np.pi / 2)[:, None] if k else None
+    pos, first = 0, True
+    for piece in pieces:
+        seg = np.array(piece, dtype=np.float32, copy=True)
+        if k:
+            if not first:
+                seg[:k] *= up
+            seg[-k:] *= up[::-1]
+        end = min(len(out), pos + len(seg))
+        out[pos:end] += seg[: end - pos]
+        pos += len(seg) - k
+        first = False
+        if pos >= n:
+            break
+    return out[:n]
 
 
 def looped(audio: np.ndarray, start_s: float, length_s: float, loopable: bool) -> np.ndarray:
     """length_s of a track from start_s, wrapping to the start (short seam if it loops, else a long crossfade)."""
     n = int(round(length_s * SR))
-    k = int((LOOP_SEAM_S if loopable else RESTART_XFADE_S) * SR)
-    pos = int(start_s * SR) % max(len(audio), 1)
-    out = audio[pos:]
-    while len(out) < n + k:
-        out = _xfade(out, audio, k)
-    return out[:n]
+    if len(audio) < 4 or n <= 0:
+        return np.zeros((max(n, 0), 2), dtype=np.float32)
+    k = min(int((LOOP_SEAM_S if loopable else RESTART_XFADE_S) * SR), len(audio) // 4)
+    pos = int(start_s * SR) % len(audio)
+    if len(audio) - pos < 2 * k:
+        pos = 0
+
+    def pieces() -> Any:
+        yield audio[pos:]
+        while True:
+            yield audio
+
+    return _chain(pieces(), n, k)
 
 
 def delooped(audio: np.ndarray, length_s: float, seed: str) -> np.ndarray:
     """A bed of length_s from irregular stretches of the file at seeded offsets, crossfaded so no repeat
     point recurs at a fixed interval."""
     n = int(round(length_s * SR))
+    if len(audio) < 4 or n <= 0:
+        return np.zeros((max(n, 0), 2), dtype=np.float32)
     rng = random.Random(int(hashlib.sha256(seed.encode()).hexdigest()[:12], 16))
-    k = int(DELOOP_XFADE_S * SR)
+    k = min(int(DELOOP_XFADE_S * SR), len(audio) // 4)
     dur = len(audio) / SR
-    out = np.zeros((0, 2), dtype=np.float32)
-    while len(out) < n:
-        seg = min(rng.uniform(DELOOP_MIN_S, DELOOP_MAX_S), max(dur - 0.1, 0.5))
-        off = rng.uniform(0.0, max(0.0, dur - seg))
-        piece = audio[int(off * SR): int((off + seg) * SR)]
-        out = piece.copy() if not len(out) else _xfade(out, piece, k)
-    return out[:n]
+
+    def pieces() -> Any:
+        while True:
+            seg = max(min(rng.uniform(DELOOP_MIN_S, DELOOP_MAX_S), dur), 2 * k / SR + 0.01)
+            off = rng.uniform(0.0, max(0.0, dur - seg))
+            a = int(off * SR)
+            yield audio[a: max(a + 2 * k, a + int(seg * SR))]
+
+    return _chain(pieces(), n, k)
 
 
 def levelled(sig: np.ndarray) -> np.ndarray:
@@ -172,20 +195,28 @@ def level_lufs(path: Path) -> float:
     return rms_db(act) if act.size else -70.0
 
 
+def bed_ok(root: Path, snd: Any) -> bool:
+    """Long enough to loop, loud enough to lift without raising hiss, steady enough to sit under a voice."""
+    if snd is None or snd.loudness_lufs is None or float(snd.loudness_lufs) < MIN_BED_LUFS:
+        return False
+    path = Path(snd.file) if Path(snd.file).is_absolute() else root / snd.file
+    return path.exists() and (snd.seconds or MIN_BED_S) >= MIN_BED_S and bed_spread_db(path) <= MAX_BED_SPREAD_DB
+
+
 def usable_bed(settings: Settings, place: str, log: JsonLogger) -> Any:
-    """The first bed for a place loud enough to be lifted to its level without raising hiss (reviewed first,
-    then unreviewed); generate one when none is."""
+    """The first usable bed for a place (reviewed first, then unreviewed, see bed_ok); one new take is
+    generated when none is, and used only if it passes the same checks."""
     from . import library
     root = library_root_of(settings)
-    for snd in library.candidates(root, "bed", place):
-        if snd.loudness_lufs is not None and float(snd.loudness_lufs) >= MIN_BED_LUFS \
-                and bed_spread_db(root / snd.file) <= MAX_BED_SPREAD_DB:
+    found = library.candidates(root, "bed", place)
+    for snd in found:
+        if bed_ok(root, snd):
             return snd
-    n = len(library.candidates(root, "bed", place))
-    if n >= MAX_TAKES:
-        log.warn("no steady bed for this place in the library; leaving it without one", place=place, takes=n)
+    if len(found) >= MAX_TAKES:
+        log.warn("no steady bed for this place in the library; leaving it without one", place=place, takes=len(found))
         return None
-    return library.ensure(settings, "bed", place, log, variant=n)
+    snd = library.ensure(settings, "bed", place, log, variant=len(found))
+    return snd if bed_ok(root, snd) else None
 
 
 def bed_spread_db(path: Path) -> float:
@@ -306,6 +337,7 @@ def build_sound(narration: Narration, script: Script, shotlist: ShotList, brand:
     # ambience and room tone
     amb = np.zeros((n, 2), dtype=np.float32)
     amb_rows, amb_skipped = [], []
+    chosen: dict[str, Any] = {}  # one bed choice (and at most one generation) per place per render
     beds = sp.plan_ambience(shotlist, quiets) if cfg.ambience else []
     tone_spans = sp.room_tone_spans(quiets, beds, duration)
     layers = [(b.place, b.start, b.end, b.ease_in, b.ease_out, cfg.ambience_db, b.reason, b.shots) for b in beds]
@@ -314,7 +346,9 @@ def build_sound(narration: Narration, script: Script, shotlist: ShotList, brand:
     for place, a, b, ein, eout, db, reason, shots in layers:
         if b >= duration - 0.05:
             eout = 0.0  # a layer that reaches the last frame holds to it: a fade there would end in dead air
-        snd = usable_bed(settings, place, log)
+        if place not in chosen:
+            chosen[place] = usable_bed(settings, place, log)
+        snd = chosen[place]
         if snd is None and place == "room_tone":
             snd = synth_room_tone(work_dir)  # the floor under a quiet never depends on the library or network
         if snd is None:
@@ -354,7 +388,7 @@ def build_sound(narration: Narration, script: Script, shotlist: ShotList, brand:
 
     # sum, normalise, stems
     for name, arr in (("narration", nar), ("music", music), ("ambience", amb), ("effects", fx)):
-        write_audio(stems / f"{name}.wav", arr, codec="pcm_f32le")
+        write_audio(stems / f"{name}.wav", arr)  # 16 bit: these are for measuring and the levels page
     pre = work_dir / "mix_pre.wav"
     write_audio(pre, nar + music + amb + fx, codec="pcm_f32le")
     del music, amb, fx
@@ -393,6 +427,8 @@ def build_sound(narration: Narration, script: Script, shotlist: ShotList, brand:
         "ducking": {}, "sound_plan": "sound_plan.json",
         "sfx": {"enabled": cfg.effects, "events": [{"t": r["t"], "kind": r["kind"]} for r in fx_rows]},
         "loudness": plan["loudness"]})
+    _DECODED.clear()  # a long-lived worker must not keep every track, nor read a changed file from memory
+    _SPREAD.clear()
     log.info("mix ready", duration=duration, sections=len(sections), beds=len(amb_rows), effects=len(fx_rows),
              quiets=len(quiets), lufs=loud["lufs"], true_peak=loud["true_peak"], seconds=render_s)
     return out

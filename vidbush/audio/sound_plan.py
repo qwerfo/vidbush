@@ -33,6 +33,7 @@ QUIET_FADE_S = 1.5  # music fades out over this before a quiet clause
 LAND_S = 0.6  # after the quiet line ends, the music waits this long before returning
 RETURN_FADE_S = 2.0
 OPEN_GAP_S = 3.0  # a speech pause at least this long lets the music rise to its open level
+MIN_RETURN_HOLD_S = 2.0  # quiets closer than return + hold + the next fade merge: the music never bobs up
 MIN_SECTION_S = 20.0
 MAX_SECTION_S = 300.0
 MAX_SNAP_S = 4.0  # a scene change crossfade moves at most this far to reach a phrase boundary
@@ -152,7 +153,7 @@ def quiet_spans(shotlist: ShotList, plan: dict[str, Any]) -> list[QuietSpan]:
     spans.sort(key=lambda q: q.start)
     merged: list[QuietSpan] = []
     for q in spans:
-        if merged and q.start - merged[-1].end < QUIET_FADE_S + RETURN_FADE_S:
+        if merged and q.start - merged[-1].end < LAND_S + RETURN_FADE_S + MIN_RETURN_HOLD_S + QUIET_FADE_S:
             merged[-1].end = max(merged[-1].end, q.end)
             merged[-1].note = (merged[-1].note + " " + q.note).strip()
         else:
@@ -274,7 +275,10 @@ def plan_music(scenes: list[SceneInfo], quiets: list[QuietSpan], tracks: list[di
         snapped = False
         xf = XFADE_BY_MOOD.get(mood, 1.5) if kind == "crossfade" else 0.0
         if kind == "crossfade":
+            t0 = t
             t, snapped = snap_to_phrase(t, by_file[cur.track], cur.start, cur.offset, lo, hi)
+            if any(q.start - QUIET_FADE_S - xf <= t <= q.end + LAND_S + RETURN_FADE_S for q in quiets):
+                t, snapped = t0, False  # the phrase boundary lies in a quiet's fade: keep the scene's own time
         used[new["file"]] = used.get(new["file"], 0) + 1
         cur.end = round(t, 3)
         off = max(0.0, float(new.get("first_downbeat_s") or 0.0) - xf / 2)
@@ -420,6 +424,13 @@ def plan_ambience(shotlist: ShotList, quiets: list[QuietSpan],
             continue
         beds.append(AmbienceBed(place, float(s.start), float(s.end), [s.id], f"{s.id}: {why}"))
     beds = [b for b in beds if b.end - b.start >= MIN_PLACE_S]
+    held: list[AmbienceBed] = []  # a short other place dropped between two runs of one place: hold through it
+    for b in beds:
+        if held and held[-1].place == b.place and b.start - held[-1].end <= BRIDGE_S:
+            held[-1].end, held[-1].shots = b.end, held[-1].shots + b.shots
+        else:
+            held.append(b)
+    beds = held
     # adjacent beds of different places meet in a crossfade centred on the cut
     for a, b in zip(beds, beds[1:]):
         if b.start - a.end < PLACE_EASE_S:
@@ -464,9 +475,9 @@ def _layout_events(shot: Any, words: list[Any]) -> list[tuple[float, str, str]]:
     try:
         from ..mg.layouts.timing import cue_times
         cues = cue_times(lay.elements, words, float(shot.start), float(shot.end))
+        found = [(c, lay.elements[c.index]) for c in cues if getattr(c, "found", False)]
     except Exception:  # timing module missing or a malformed element: the graphic simply gets no sound
         return []
-    found = [(c, lay.elements[c.index]) for c in cues if getattr(c, "found", False)]
     if not found:
         return []
     if effect == "line_draw":

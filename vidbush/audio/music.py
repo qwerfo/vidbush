@@ -438,6 +438,8 @@ def build_mix(narration: Narration, script: Script, shotlist: ShotList, brand: B
         from .mixer import build_sound
         return build_sound(narration, script, shotlist, brand, profile, settings, work_dir, log)
     work_dir = Path(work_dir)
+    for stale in ("sound_plan.json", "sound_qa.md"):  # from an earlier planned mix: qa_report must not show it
+        (work_dir / stale).unlink(missing_ok=True)
     duration = float(shotlist.duration)
     n = int(round(duration * SR))
     sections, tracks, mode, folder = _choose(script, narration, duration, brand, profile, settings, work_dir,
