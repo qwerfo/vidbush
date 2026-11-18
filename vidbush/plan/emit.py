@@ -124,6 +124,9 @@ def start_full_layouts_on_words(shots: list[Shot], first_word: dict[str, float],
         if cut - s.start < 0.5 or s.end - cut < LAYOUT_MIN_S:
             continue
         limit = V.AI_HOLD_MAX_S if prev.type == ShotType.ai_image else V.HOLD_MAX_S
+        pc = origin.get(prev.selected or "")
+        if pc is not None and pc[0].media == "video":
+            limit = min(limit, max(0.0, pc[0].out_point - pc[0].in_point))  # its clip must cover the longer shot
         if cut - prev.start > limit:
             continue
         prev.end, s.start = cut, cut

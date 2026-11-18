@@ -64,3 +64,31 @@ def test_demo_end_to_end_with_the_clause_planner(settings):
     assert (root / "final.mp4").exists()
     for name in ("clauses.json", "direct.json", "plan_v2.json", "sourcing.shotlist.json", "judge.shotlist.json"):
         assert (root / "work" / name).exists(), name
+
+
+def test_a_hold_is_not_a_new_picture_and_never_resets_the_ai_run():
+    cl = [_clause(f"c{i}", i * 2.0, i * 2.0 + 2.0) for i in range(4)]
+    plans = [{"treatment": "picture"}] * 4
+    picks = [{"clause": "c0", "_cand": None, "fallback": "ai_still"},
+             {"clause": "c1", "_cand": None, "fallback": "hold_previous"},  # 4 s with c0: inside the AI limit
+             {"clause": "c2", "_cand": None, "fallback": "ai_still"},
+             {"clause": "c3", "_cand": None, "fallback": "ai_still"}]  # third AI picture in a row: refused
+    L.ladder([{"scene": "s01", "picks": picks}], [{"scene": "s01", "clauses": plans}], cl)
+    assert [p["fallback"] for p in picks] == ["ai_still", "hold_previous", "ai_still", "text_over_footage"]
+
+
+def test_a_document_never_falls_back_to_an_ai_still():
+    cl = [_clause("c0", 0.0, 3.0)]
+    plans = [{"treatment": "document_focus", "presentation": "panel", "real_thing": {"name": "x", "kind": "object"}}]
+    picks = [{"clause": "c0", "_cand": None, "fallback": "ai_still"}]
+    L.ladder([{"scene": "s01", "picks": picks}], [{"scene": "s01", "clauses": plans}], cl)
+    assert picks[0]["fallback"] == "text_over_footage"
+
+
+def test_a_hold_past_the_previous_pictures_limit_climbs_the_ladder():
+    cl = [_clause("c0", 0.0, 3.0), _clause("c1", 3.0, 8.0)]
+    plans = [{"treatment": "picture"}, {"treatment": "picture"}]
+    picks = [{"clause": "c0", "_cand": None, "fallback": "ai_still"},
+             {"clause": "c1", "_cand": None, "fallback": "hold_previous", "_fallback_cand": _cand("rel")}]
+    L.ladder([{"scene": "s01", "picks": picks}], [{"scene": "s01", "clauses": plans}], cl)
+    assert picks[1]["fallback"] == "text_over_footage"
