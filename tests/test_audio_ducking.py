@@ -19,7 +19,7 @@ from vidbush.util import NullLogger, run
 
 def _ducked(tmp_path: Path, library: Path, regions: list[tuple[float, float]], total: float) -> np.ndarray:  # noqa: F811
     """Bed level after ducking with the production envelope settings."""
-    profile = StyleProfile(id="p")
+    profile = StyleProfile(id="p", sound={"planned": False})
     tracks = {t.file: t for t in music.load_library(library)[0]}
     sections = [music.Section(track="calm.wav", start=0.0, end=total, purpose="hook")]
     env = music.speech_envelope(regions, total, music.KEY_MERGE_GAP_S, 0.08, music.KEY_HOLD_S)
@@ -91,7 +91,7 @@ def test_build_mix_places_sfx_when_enabled(tmp_path: Path, library: Path, settin
     work.mkdir()
     (work / "sfx.json").write_text(json.dumps({"enabled": True, "gain_db": -12}), encoding="utf-8")
     brand = Brand(id="b", music_folder=str(library))
-    music.build_mix(nar, script, sl, brand, StyleProfile(id="p"), settings, work, NullLogger(), random.Random(3))
+    music.build_mix(nar, script, sl, brand, StyleProfile(id="p", sound={"planned": False}), settings, work, NullLogger(), random.Random(3))
     info = json.loads((work / "mix.json").read_text())
     assert info["sfx"]["enabled"] and [e["t"] for e in info["sfx"]["events"]] == [6.0]
     assert not (work / "mix_sfx.wav").exists()

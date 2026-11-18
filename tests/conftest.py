@@ -19,6 +19,7 @@ def settings(tmp_path: Path):
     s.output_folder = str(tmp_path / "output")
     s.data_folder = str(tmp_path / "data")
     s.source_cache_folder = str(tmp_path / "cache")
+    s.sound_library = str(tmp_path / "sound_library")  # never the operator's library
     s.fail_at_stage = None
     return s
 

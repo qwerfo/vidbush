@@ -1,38 +1,103 @@
 {
-  "harbor_light.ogg": {
-    "title": "Harbor Light",
-    "mood": "calm",
-    "energy": 0.25,
-    "bpm": 68,
-    "duration_s": 112.94,
+  "_help": "Measured by vidbush.audio.tracks (python -m vidbush.audio.tracks <folder>). To correct a value, set it and add the field name to that track's \"checked\" list, e.g. \"checked\": [\"mood\"]. Checked fields are never overwritten on a re-run; other measured fields are refreshed when the file changes. title, licence and notes are never touched. mood is one of calm, tense, uplifting, mysterious; loop true means the end runs seamlessly into the start.",
+  "deep_archive.ogg": {
+    "title": "Deep Archive",
+    "mood": "mysterious",
+    "energy": 0.42,
+    "bpm": 60.0,
+    "bpm_confidence": 0.27,
+    "beat_s": 1.0,
+    "bar_s": 4.0,
+    "phrase_s": 16.0,
+    "first_downbeat_s": 0.0,
+    "duration_s": 96.0,
+    "lufs": -18.2,
+    "lra": 2.3,
+    "brightness": 0.29,
+    "centroid_hz": 565,
+    "onsets_per_s": 0.49,
     "loop": true,
-    "licence": "CC0-1.0"
-  },
-  "undertow.ogg": {
-    "title": "Undertow",
-    "mood": "tense",
-    "energy": 0.6,
-    "bpm": 76,
-    "duration_s": 101.05,
-    "loop": true,
-    "licence": "CC0-1.0"
+    "licence": "CC0-1.0",
+    "checked": [
+      "mood"
+    ],
+    "fingerprint": "deep_archive.ogg:1092711:01dd67ba23bf094c",
+    "measured_by": "vidbush.audio.tracks",
+    "measured_on": "18/11/2026"
   },
   "first_light.ogg": {
     "title": "First Light",
     "mood": "uplifting",
-    "energy": 0.75,
-    "bpm": 84,
+    "energy": 0.64,
+    "bpm": 84.0,
+    "bpm_confidence": 0.99,
+    "beat_s": 0.7143,
+    "bar_s": 2.8571,
+    "phrase_s": 11.429,
+    "first_downbeat_s": 1.44,
     "duration_s": 137.14,
+    "lufs": -18.9,
+    "lra": 1.9,
+    "brightness": 0.39,
+    "centroid_hz": 733,
+    "onsets_per_s": 2.27,
     "loop": true,
-    "licence": "CC0-1.0"
+    "licence": "CC0-1.0",
+    "checked": [
+      "mood"
+    ],
+    "fingerprint": "first_light.ogg:1706477:edb2d9cc07c4d2d6",
+    "measured_by": "vidbush.audio.tracks",
+    "measured_on": "18/11/2026"
   },
-  "deep_archive.ogg": {
-    "title": "Deep Archive",
-    "mood": "mysterious",
-    "energy": 0.4,
-    "bpm": 60,
-    "duration_s": 96.0,
+  "harbor_light.ogg": {
+    "title": "Harbor Light",
+    "mood": "calm",
+    "energy": 0.55,
+    "bpm": 68.0,
+    "bpm_confidence": 0.6,
+    "beat_s": 0.8824,
+    "bar_s": 3.5294,
+    "phrase_s": 14.118,
+    "first_downbeat_s": 0.012,
+    "duration_s": 112.94,
+    "lufs": -18.5,
+    "lra": 1.1,
+    "brightness": 0.32,
+    "centroid_hz": 603,
+    "onsets_per_s": 1.57,
     "loop": true,
-    "licence": "CC0-1.0"
+    "licence": "CC0-1.0",
+    "checked": [
+      "mood"
+    ],
+    "fingerprint": "harbor_light.ogg:1348077:47ee5297f15af1aa",
+    "measured_by": "vidbush.audio.tracks",
+    "measured_on": "18/11/2026"
+  },
+  "undertow.ogg": {
+    "title": "Undertow",
+    "mood": "tense",
+    "energy": 0.49,
+    "bpm": 76.0,
+    "bpm_confidence": 0.85,
+    "beat_s": 0.7895,
+    "bar_s": 3.1579,
+    "phrase_s": 12.632,
+    "first_downbeat_s": 0.012,
+    "duration_s": 101.05,
+    "lufs": -19.7,
+    "lra": 2.9,
+    "brightness": 0.08,
+    "centroid_hz": 313,
+    "onsets_per_s": 1.25,
+    "loop": true,
+    "licence": "CC0-1.0",
+    "checked": [
+      "mood"
+    ],
+    "fingerprint": "undertow.ogg:934664:41e7864205faa443",
+    "measured_by": "vidbush.audio.tracks",
+    "measured_on": "18/11/2026"
   }
 }
