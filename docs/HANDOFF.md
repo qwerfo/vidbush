@@ -1399,3 +1399,19 @@ again on the paid route. Without a key the old 30 minute pause stays. Config: `s
 `sources.youtube_api_budget_usd` (0.50 per run). Downloads per route this process: `youtube.ROUTE.counts`;
 paid jobs: `youtube_api.LEDGER` (spent, jobs), written into cost_report.json at each sourcing usage note.
 Live proof: `E:\coding projects\Vidbush\scratch\vda_live_test.py` (two videos, 1280x720, licence kept).
+
+### 15c. The clause pipeline in a run
+
+Switch a project to it: `work/profile_override.json` = `{"planner": "clause"}` (or `planner: clause` in a style
+profile). Stages and files:
+- shotlist: `plan/planner.py` writes `work/clauses.json`, `work/direct.json` (scene plans), `work/plan_v2.json`
+  and the shot list (per-class queries, real things, layouts).
+- sourcing: `plan/live.py` `source_clause`, one `registry.source_pool` per scene, three scenes at a time.
+- judge (the pick stage): `plan/live.py` `pick_clause`: `edit_scenes` (the planner's edit per scene, sheets in
+  `work/edit_sheets`), `ladder`, `emit` with the picks, AI stills where the ladder ends at one, `plan_v2.json`
+  rewritten with the picks and `ai_rulings`.
+- visuals, motion (layouts lane renderer), mix, assembly as before; packaging also runs the tile audit
+  (`audit/`) and rebuilds `qa_report.md` with the six numbers on top.
+Rerun the pick alone on the same pools: `python -m vidbush resume <id> --force judge`.
+Reuse another project's narration (no TTS paid twice): `E:\coding projects\Vidbush\scratch\make_v2_project.py
+<source id> <new id>` from the worktree, then `resume <new id> --cost-cap 5`.
