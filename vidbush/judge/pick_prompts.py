@@ -33,6 +33,11 @@ PICK_RULES = [
     "every pick of a clause with a real_thing, copy into identity the exact words of the record that show "
     "it is that thing, and name the record field they come from (title, description, page_url, date, "
     "text_in_frame, ocr_text). Code checks that the words are in that field.",
+    "The moment matters as much as the name: a picture of the named place or object in another period "
+    "(a modern photograph of a place the clause shows in a war, a ruin for a working building) is related, "
+    "not the thing at the moment it is said, because the viewer sees the wrong time. Use the record's period, "
+    "look and date. Example (invented): for 'the pier was crowded with refugees in 1912' a recent photo of "
+    "the empty pier is related.",
     "A document is only accepted as evidence when the quoted words were found on the page: a page that only "
     "looks similar would put the marks on words that are not there. For a document_focus with passages, "
     "pick a document only when its ocr_text or text_in_frame contains each passage; code checks this.",
@@ -106,6 +111,8 @@ RESTATE_RULES = [
     "Choose kind from the list given. Use only assets from the pool list, by number, and only ones whose "
     "record shows real footage or a real photograph (never an AI still beneath a named real person, event "
     "or document).",
+    "The asset beneath must not contradict the clause's place or period (no modern beach under a past "
+    "event), because the typed words then sit on a picture that says something else.",
     "text: what is typed on screen, at most 6 words, taken from the clause's own words (a number carries its "
     "unit; quoted words are typed as they are said). anchor: the exact clause words the text appears on.",
     "For route_map give places, the place names in the order they are said. For split_comparison give "
