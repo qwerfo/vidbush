@@ -18,6 +18,7 @@ from typing import Any, Optional
 from ..models import Candidate, Narration, Script, Shot, ShotList, ShotType
 
 PLAN_KEYS_DROPPED = ("clauses", "start", "end", "edit", "note")
+AI_WORKERS = 3  # the image seat's max_concurrency (Elevate: 3 at once)
 RESOURCE_ASSETS = 3  # ladder step 1: assets fetched per open clause (sourcing fetches max_candidates, 8)
 
 
@@ -113,13 +114,16 @@ def pick_shotlist(shotlist: ShotList, ctx: Any) -> ShotList:
                 r["edit"].update(filled_by=p.get("filled_by", ""), identity=p.get("identity", ""),
                                  start=p.get("start"), restated=p.get("restated"))
     _finalize(sl, ctx.profile)
-    for s in sl.shots:
-        if s.type == ShotType.ai_image and s.selected_candidate() is None:
-            cand = _generate_ai(s, ctx)
-            if cand is not None:
-                s.selected = cand.id
-            else:
-                s.flags.append("ai_still_failed")
+    from concurrent.futures import ThreadPoolExecutor
+    todo = [s for s in sl.shots if s.type == ShotType.ai_image and s.selected_candidate() is None]
+    # shots in parallel (each touches only its own shot and files); takes within a shot stay serial
+    with ThreadPoolExecutor(max_workers=AI_WORKERS) as pool:
+        results = list(pool.map(lambda s: _generate_ai(s, ctx), todo))
+    for s, cand in zip(todo, results):
+        if cand is not None:
+            s.selected = cand.id
+        else:
+            s.flags.append("ai_still_failed")
     (work / "plan_v2.json").write_text(json.dumps(new_plan, indent=1, ensure_ascii=False), encoding="utf-8")
     ctx.log.info("pick done", shots=len(sl.shots), ladder=ladder.stats)
     return sl
