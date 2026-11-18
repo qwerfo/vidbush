@@ -90,21 +90,30 @@ class NaraAdapter(BaseAdapter):
     media = {"video", "image"}
     key_name = "NARA_API_KEY"
     keyword_words = 3  # the catalogue search matches every word
+    classes = frozenset({"archive"})
+    matches_description = True  # the catalogue matches scope notes and descriptions
 
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
-        params = {"q": base.keyword_query(query, self.keyword_words), "limit": max(n, 5) * OVERFETCH,
-                  "typeOfMaterials": FILMS if media == "video" else PHOTOS, "availableOnline": "true"}
+        """Subject and year first (base.archive_queries), the subject alone only when that finds nothing."""
         headers = {"x-api-key": settings.key(self.key_name), "Accept": "application/json"}
-        data = base.http_get_json(SEARCH, params=params, headers=headers, timeout=self.timeout(settings))
-        return parse_search(data, media)[:n]
+        out: list[RawResult] = []
+        for q in base.archive_queries(query, self.keyword_words):
+            params = {"q": q, "limit": max(n, 5) * OVERFETCH,
+                      "typeOfMaterials": FILMS if media == "video" else PHOTOS, "availableOnline": "true"}
+            data = base.http_get_json(SEARCH, params=params, headers=headers, timeout=self.timeout(settings))
+            out = parse_search(data, media)[:n]
+            if out:
+                break
+        return out
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         url = raw.download_url
         if raw.media == "video":
-            src = base.cached_video(url, ".mp4", settings, shot.duration, size=raw.extra.get("size", 0.0))
+            src = base.cached_video(url, ".mp4", settings, shot.duration, size=raw.extra.get("size", 0.0),
+                                    shot=shot, title=raw.title)
             dst = link_into(src, out_dir, f"nara_{base.url_hash(src.name)}.mp4")
-            spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=3)
+            spans = base.cut_clips(base.focused_scenes(dst, shot, settings, url, raw.title), shot.duration, max_clips=3)
             return make_candidates(raw, dst, shot, settings, spans=spans)
         ext = base.ext_from_url(url, ".jpg")
         src = cached_download(url, ext, settings, max_bytes=base.MAX_IMAGE_BYTES)

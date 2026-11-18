@@ -20,6 +20,7 @@ from .base import BaseAdapter, Media, RawResult, cached_download, link_into, mak
 
 PHOTOS = "https://www.loc.gov/photos/"
 FILMS = "https://www.loc.gov/film-and-videos/"
+ACCEPT = {"Accept": "application/json"}
 
 
 def rights_to_licence(rights: str) -> str:
@@ -85,6 +86,8 @@ class LocAdapter(BaseAdapter):
     name = "loc"
     media = {"video", "image"}
     keyword_words = 3  # loc.gov search matches every word
+    classes = frozenset({"archive"})
+    matches_description = True  # loc.gov search matches item descriptions and subjects, not only titles
 
     def timeout(self, settings: Settings) -> float:
         """loc.gov search often takes 20 to 40 s; a short timeout loses most of its results."""
@@ -93,12 +96,17 @@ class LocAdapter(BaseAdapter):
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
         url = FILMS if media == "video" else PHOTOS
-        q = base.keyword_query(query, self.keyword_words)
-        data = base.http_get_json(url, params={"q": q, "fo": "json", "c": max(n, 5)}, timeout=self.timeout(settings))
-        return parse_search(data, media)[:n]
+        for q in base.archive_queries(query, self.keyword_words):  # the plain form only when the first finds nothing
+            data = base.http_get_json(url, params={"q": q, "fo": "json", "c": max(n, 5)}, headers=ACCEPT,
+                                      timeout=self.timeout(settings))
+            res = parse_search(data, media)
+            if res:
+                return res[:n]
+        return []
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
-        item = base.http_get_json(raw.page_url.rstrip("/") + "/", params={"fo": "json"}, timeout=self.timeout(settings))
+        item = base.http_get_json(raw.page_url.rstrip("/") + "/", params={"fo": "json"}, headers=ACCEPT,
+                                  timeout=self.timeout(settings))
         f = best_resource(item, raw.media)
         if f:
             raw = raw.model_copy(update={"download_url": f["url"], "width": int(f.get("width") or raw.width),
@@ -108,9 +116,11 @@ class LocAdapter(BaseAdapter):
             return []
         if raw.media == "video":
             ext = ".mp4"
-            src = base.cached_video(raw.download_url, ext, settings, shot.duration, size=raw.extra.get("size", 0.0))
+            src = base.cached_video(raw.download_url, ext, settings, shot.duration, size=raw.extra.get("size", 0.0),
+                                    shot=shot, title=raw.title)
         else:
             ext, src = ".jpg", cached_download(raw.download_url, ".jpg", settings, max_bytes=base.MAX_IMAGE_BYTES)
         dst = link_into(src, out_dir, f"loc_{base.url_hash(src.name)}{ext}")
-        spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=3) if raw.media == "video" else None
+        spans = base.cut_clips(base.focused_scenes(dst, shot, settings, raw.download_url, raw.title), shot.duration,
+                               max_clips=3) if raw.media == "video" else None
         return make_candidates(raw, dst, shot, settings, spans=spans)

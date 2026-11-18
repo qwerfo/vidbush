@@ -282,7 +282,7 @@ def test_short_window_in_a_long_file_is_not_penalised(tmp_path):
 
 def test_finalize_flags_small_archival_instead_of_low_res(ctx, monkeypatch):
     from vidbush.source import keyframes, registry as reg
-    monkeypatch.setattr(keyframes, "extract_keyframes", lambda c, d: None)
+    monkeypatch.setattr(keyframes, "extract_keyframes", lambda c, d, **kw: None)
     pd = cand("x", 1, 1, source=SourceKind.wikimedia, licence="Public domain", width=700, height=500)
     stock = cand("x", 2, 2, source=SourceKind.pexels, licence="Pexels", width=1100, height=700)
     out = reg.finalize(shot(0), [pd, stock], ctx)

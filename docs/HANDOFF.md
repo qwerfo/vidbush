@@ -1155,3 +1155,65 @@ failed.
   warning in the cost report.
 - Source replay reads the search cache under the exact query the run sent
   and ignores the cache TTL.
+## 13. V2 sources: finding the specific real picture (branch v2/sources, 2026-11-17)
+
+Lane D of the Fable review (docs/FABLE_REVIEW.md on fable-review). Everything is in `vidbush/source/`;
+models and config changes are additive. Decisions: DECISIONS.md "V2: sources"; quirks: PROVIDER_NOTES.md "V2
+sources".
+
+### 13a. New sources
+
+| Source | Module | Key | Ran live here | Licence |
+|---|---|---|---|---|
+| Web image search | `webimage.py` | SERPER_API_KEY, else FIRECRAWL_API_KEY, else the search seat (serper, brave, tavily) | yes, Firecrawl | always "unknown (web image search)", flagged licence_unknown |
+| Openverse | `openverse.py` | none (anonymous) | yes | CC and public domain as given |
+| Chronicling America | `chronam.py` | none | search: no (www.loc.gov challenges this laptop); page images and word crops from tile.loc.gov: yes | public domain |
+| Wikimedia by entity | `wikimedia.py` | none | yes | as on Commons |
+| Library of Congress | `loc.py` (changed) | none | no: every request is a Cloudflare challenge; pause cut to 600 s so it never stalls a stage | as before |
+
+Missing or broken keys on this laptop: SERPER_API_KEY is not set; SEARCH_API_KEY (tavily) answers 401, so the
+research seat's web search fails too. Add a Serper key to `.env.local` to use Serper (it is tried first).
+
+### 13b. How queries reach sources
+
+- A shot may carry `source_queries` ({class: [queries]}) and `real_thing` ({name, kind, date, place}).
+  `registry.source_shot(shot, ctx, queries=...)` also takes `{"real_thing": {...}, "queries": {...}}`.
+  Classes: archive, encyclopedic, newspaper, web_image, web_video, stock (aliases: web, video).
+- Each adapter serves some classes (`adapter.classes`): YouTube web_video; Wikimedia encyclopedic and archive;
+  Internet Archive archive and web_video; NARA, NASA, LoC archive; Chronicling America newspaper and archive;
+  web image search web_image and newspaper; Openverse web_image, encyclopedic, stock, archive; Pexels and
+  Pixabay stock; the local library all. A flat `queries` list still goes to every source.
+- `registry.source_pool(shots, ctx)` sources a stretch of shots into one pool (every asset fetched once) for an
+  edit step that assigns from a pool. Nothing calls it yet.
+- Every candidate now carries `query`, `rank`, `description`, `date`, `page_url`, `found_by` (also in the
+  sidecar). The judge prompt and the planner's edit catalogue do not read them yet (other lanes' files).
+
+### 13c. Proof (Part C)
+
+Harness (scratch, not in the repo): `E:\coding projects\Vidbush\scratch\v2src\partc_run.py` with the things in
+`partc_things.py`; sheets by `partc_sheet.py`. Output in `E:\coding projects\Vidbush\sources_v2\`
+(`results_<script>.json`, `review\<script>\<id>_<media>.jpg` with every candidate, `contact_sheet_alaska.jpg`,
+`contact_sheet_dunkirk.jpg`). Each thing is a still shot sourced live with a real_thing structure written from
+the narration; four were also sourced as footage.
+
+Alaska (the review's 12): the real thing came back for 9 in pass 2 and 8 in the final pass (A04, the Billboard
+jukebox chart, was web rank 3 and fell outside the 8 fetched assets once Commons returned more for the song).
+Not found: the Anchorage Daily Times apology editorial, the "Texas No Longer Largest" headline, the Texas
+Senate song amendment (a real 1959 Senate Journal page came back, the wrong page). Dunkirk (8 chosen): 8 of 8.
+
+### 13d. Known limits
+
+- `replay.py` (lane A's file) does not copy `classes`, `matches_description` or `uses_real_thing` onto its
+  OfflineAdapter and does not list webimage, openverse, chronam: a replay routes and screens differently from
+  a live run and misses the entity sources' caches. Copy the three attributes with getattr and add the three
+  adapters there.
+- The judge's prompt line and qa.py SOURCE_LABELS do not know the new sources or the provenance fields.
+- An 8-asset cap per shot costs time on footage: one shot fetching 8 YouTube and archive assets took about 20
+  minutes cold in the proof (about 2 minutes from the cache). Watch the sourcing stage time on the next run.
+- YouTube answered a bot check after four proof passes in about three hours with no cookies set; the adapter
+  paused it for 30 minutes as designed. Set YOUTUBE_COOKIES_FROM_BROWSER for long sessions.
+- A search that sends a second request (the yearless retry, the entity path) is charged once to the budget;
+  a throttle on the second request refunds the whole charge (low impact).
+- Web image results are often stock previews with watermarks (alamy, getty) or small (Facebook, Reddit). The
+  licence is unknown for all of them; the near-duplicate filter keeps the openly licensed copy when the same
+  photo also arrives from Commons or Openverse.

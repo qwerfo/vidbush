@@ -81,6 +81,9 @@ class SourceKind(str, Enum):
     nasa = "nasa"
     pexels = "pexels"
     pixabay = "pixabay"
+    webimage = "webimage"  # general web image search (Firecrawl, Serper, Brave, Tavily); licence unknown, flagged
+    openverse = "openverse"  # openly licensed images (Openverse catalogue)
+    chronam = "chronam"  # Chronicling America historic US newspapers (Library of Congress)
     local = "local"  # operator footage library folder (and bundled fixtures)
     ai_image = "ai_image"
     ai_video = "ai_video"
@@ -469,6 +472,24 @@ class Candidate(Model):
     brief: dict[str, Any] = Field(default_factory=dict)
     prompt: str = ""
     checks: dict[str, Any] = Field(default_factory=dict)
+    # What found it and what is known about it (v2 sourcing), for the picker: the query sent, the result's
+    # rank in that source's answer (1 = first), the source's description or snippet, its date and page,
+    # and the adapter and query class that found it.
+    query: str = ""
+    rank: int = 0
+    description: str = ""
+    date: str = ""
+    page_url: str = ""
+    found_by: str = ""  # "<adapter>:<query class>", e.g. "wikimedia:encyclopedic"
+
+
+class RealThing(Model):
+    """The specific real thing a clause names (v2 planner): a person, place, document, object or event."""
+
+    name: str
+    kind: str = ""  # person | place | document | object | event
+    date: str = ""  # a year, a decade or a full date as the narration gives it
+    place: str = ""
 
 
 class Shot(Model):
@@ -484,6 +505,10 @@ class Shot(Model):
     must_show: list[str] = Field(default_factory=list)
     must_avoid: list[str] = Field(default_factory=list)
     queries: list[str] = Field(default_factory=list)
+    # v2 sourcing: queries per source class (archive, encyclopedic, newspaper, web_image, web_video, stock;
+    # aliases web and video), routed to the adapters that serve each class; empty uses queries for every source
+    source_queries: dict[str, list[str]] = Field(default_factory=dict)
+    real_thing: Optional[RealThing] = None
     overlay: Optional[MotionSpec] = None
     motion: Optional[MotionSpec] = None  # full-frame spec for motion_graphic shots
     operator_wish: str = ""  # an operator review comment: a wish the judge reads, never a must_avoid item

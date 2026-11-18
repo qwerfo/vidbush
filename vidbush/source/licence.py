@@ -105,4 +105,13 @@ def licence_flags(licence: str, settings: Settings) -> list[str]:
         flags.append("nc_nd")
     if getattr(settings.sources, "flag_standard_youtube", False) and is_standard_youtube(licence):
         flags.append(STANDARD_YOUTUBE_FLAG)
+    if is_unknown(licence):
+        flags.append(UNKNOWN_FLAG)  # Adam: unknown licences are flagged, never hidden
     return flags
+
+
+UNKNOWN_FLAG = "licence_unknown"
+
+
+def is_unknown(licence: str) -> bool:
+    return (licence or "").strip().lower().startswith(UNKNOWN)

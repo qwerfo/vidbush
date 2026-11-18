@@ -1,0 +1,73 @@
+{
+ "success": true,
+ "data": {
+  "images": [
+   {
+    "title": "Copy of newspaper headlines, June 30, 1958. | Anchorage Museum at Rasmuson  Center | Alaska's Digital Archives",
+    "imageUrl": "https://vilda.alaska.edu/iiif/2/cdmg2:4837/full/720,/0/default.jpg",
+    "imageWidth": 720,
+    "imageHeight": 508,
+    "url": "https://vilda.alaska.edu/digital/collection/cdmg2/id/4837/",
+    "position": 1
+   },
+   {
+    "title": "Anchorage Daily Times June 30 1958 newspaper",
+    "imageUrl": "https://lookaside.fbsbx.com/lookaside/crawler/media/?media_id=10160130452807075",
+    "imageWidth": 1536,
+    "imageHeight": 2048,
+    "url": "https://www.facebook.com/groups/115424478179883/posts/294037556985240/",
+    "position": 2
+   },
+   {
+    "title": "Anchorage Daily Times June 30 1958 newspaper",
+    "imageUrl": "https://lookaside.fbsbx.com/lookaside/crawler/media/?media_id=10160130452642075",
+    "imageWidth": 1533,
+    "imageHeight": 2048,
+    "url": "https://www.facebook.com/groups/115424478179883/posts/294037556985240/",
+    "position": 3
+   },
+   {
+    "title": "Statehood headline from Anchorage Daily Times. | Alaska State  Library-Historical Collections | Alaska's Digital Archives",
+    "imageUrl": "https://vilda.alaska.edu/digital/api/singleitem/image/cdmg21/9753/default.jpg",
+    "imageWidth": 720,
+    "imageHeight": 670,
+    "url": "https://vilda.alaska.edu/digital/collection/cdmg21/id/9753/",
+    "position": 4
+   },
+   {
+    "title": "1958 Anchorage Daily Times Alaska Statehood Newspapers - June 30, July 1  and 2 | #1798276693",
+    "imageUrl": "https://thumbs.worthpoint.com/zoom/images2/1/0116/30/1958-anchorage-daily-times-alaska_1_8d6f9add45b6d18323c3fb8701896ca1.jpg",
+    "imageWidth": 1600,
+    "imageHeight": 683,
+    "url": "https://www.worthpoint.com/worthopedia/1958-anchorage-daily-times-alaska-1798276693",
+    "position": 5
+   },
+   {
+    "title": "1958 Anchorage Daily Times Alaska Statehood Newspapers - June 30, July 1  and 2 | #1798276693",
+    "imageUrl": "https://thumbs.worthpoint.com/zoom/images4/1/0116/30/1958-anchorage-daily-times-alaska_1_8d6f9add45b6d18323c3fb8701896ca1.jpg",
+    "imageWidth": 806,
+    "imageHeight": 1080,
+    "url": "https://www.worthpoint.com/worthopedia/1958-anchorage-daily-times-alaska-1798276693",
+    "position": 6
+   },
+   {
+    "title": "1958 Anchorage Daily Times Alaska Statehood Newspapers - June 30, July 1  and 2 | #1798276693",
+    "imageUrl": "https://thumbs.worthpoint.com/zoom/images3/1/0116/30/1958-anchorage-daily-times-alaska_1_8d6f9add45b6d18323c3fb8701896ca1.jpg",
+    "imageWidth": 1600,
+    "imageHeight": 922,
+    "url": "https://www.worthpoint.com/worthopedia/1958-anchorage-daily-times-alaska-1798276693",
+    "position": 7
+   },
+   {
+    "title": "Anchorage Daily Times June 30 1958 newspaper",
+    "imageUrl": "https://lookaside.fbsbx.com/lookaside/crawler/media/?media_id=10160130452847075",
+    "imageWidth": 1620,
+    "imageHeight": 2048,
+    "url": "https://www.facebook.com/groups/115424478179883/posts/294037556985240/",
+    "position": 8
+   }
+  ]
+ },
+ "creditsUsed": 2,
+ "id": "01a1e6fd-5613-742e-b17b-a3731f44fb04"
+}

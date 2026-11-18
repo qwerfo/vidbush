@@ -207,3 +207,74 @@ Every seat in the 2026-11-11 policy answered on this laptop, which verifies the 
 - tts: elevenlabs `eleven_v4` (voice Brian), elevate_tts and algrow_tts (`eleven_v4`, 1125 Algrow credits) ok.
 - image: Elevate `gpt-image-2.5-fast` and Algrow `gpt-image-2.5` ok.
 - video and search have no configured provider (as in live run 1); no stage of the Alaska run calls them.
+
+## V2 sources (2026-11-17, parallel3 lane, branch v2/sources)
+
+Live checks from this laptop. Keys are read by name through settings.key; no value is ever printed.
+
+### Web image search (`webimage`, vidbush/source/webimage.py)
+
+- Provider order: SERPER_API_KEY (POST google.serper.dev/images), then FIRECRAWL_API_KEY (POST
+  api.firecrawl.dev/v2/search with `sources: [{type: images}]`), then the search seat (SEARCH_PROVIDER or the
+  web_search seat type: serper, brave or tavily, key SEARCH_API_KEY). One provider per run.
+- Live: only Firecrawl. SERPER_API_KEY is not set. SEARCH_API_KEY (tavily) answers 401 "missing or invalid API
+  key" with the key in the body and as a Bearer header, so the research seat's web search is broken too.
+  Serper, Brave and Tavily parsers are tested on hand-built fixtures from their documented shapes only.
+- Firecrawl images: 2 credits per search; each hit has title, imageUrl, imageWidth, imageHeight, url (the
+  page) and position. Hits are often facebook.com (lookaside.fbsbx.com), reddit (preview.redd.it), alamy and
+  worthpoint previews; many hosts serve WEBP or AVIF at .jpg URLs or an HTML page on hotlink. fetch decodes
+  every file with PIL, accepts JPEG, MPO, PNG, WEBP and TIFF only, and rejects with a logged reason
+  otherwise. Requests send Accept image/* and Referer = page URL.
+- Licence is always "unknown (web image search)", flagged licence_unknown; author is the page host.
+- The classes it serves are web_image and newspaper. Encyclopedic (bare name) queries are not sent to it: on
+  the open web a bare name returns its namesakes first ("Balto" gave the 1995 film's Blu-ray).
+
+### Openverse (`openverse`, vidbush/source/openverse.py)
+
+- Anonymous GET api.openverse.org/v1/images/?q=&page_size=&mature=false; no key. The anonymous limit is small
+  (documented as roughly 100 requests a day and a few a minute; not measured). Host rate 1 per 4 s, burst 3;
+  run budget 90 searches. OAuth client credentials (more quota) are not implemented.
+- Licence codes map to canonical names (pdm to Public domain, cc0 to CC0 1.0, by-sa 2.0 to CC BY-SA 2.0);
+  Openverse's own attribution line is the credit. Many CC BY-NC and ND results (flagged nc_nd, never hidden).
+- The image URL is often Flickr's medium rendition (1024 px or less), so results are often low_res.
+- fetch does not check the body decodes: a dead Flickr link could arrive as a placeholder image.
+
+### Chronicling America (`chronam`, vidbush/source/chronam.py)
+
+- The chroniclingamerica.loc.gov API is gone (308 to www.loc.gov). Search uses the loc.gov advanced form from
+  the Library's notebooks: /collections/chronicling-america/?dl=page&searchType=advanced&ops=PHRASE&qs=...
+  &start_date=&end_date=&c=&fo=json. The docs ask to keep result sets under 100,000 hits.
+- Live: www.loc.gov answers a Cloudflare 403 "Just a moment" challenge to every search and item request from
+  this laptop (with the contact User-Agent and Accept: application/json too). Search is unusable from this
+  connection; it fails in under a second and pauses the host (see Library of Congress below).
+- tile.loc.gov is not challenged: IIIF page images (about 5800x7400 native; /full/2000,/ in about 8 s cold)
+  and the word coordinates service (JSON even with format=alto_xml; first calls can time out) work. A real
+  page fetched live gave a readable 1754x986 headline crop and the 2000 px page.
+- Fixtures: chronam_search.json is the documented notebook result (real, trimmed) plus two synthetic results;
+  chronam_coords.json is a real tile.loc.gov response.
+
+### Wikimedia by entity (vidbush/source/wikimedia.py) and Wikidata
+
+- wbsearchentities ranks by its own order, not fame ("Balto": a Finnish research vessel first). Items often
+  keep their name only under language "mul"; the adapter asks languages=en|mul. P373 holds the bare category
+  name. Commons imageinfo URLs now carry ?utm_ parameters, stripped for dedupe.
+- About 4 requests per entity search (cap 5), then up to 2 for the text fallback. A Wikidata outage falls
+  through to text search. For video the entity category rarely holds video, and the text fallback uses the
+  query, not the entity label, so it can return namesakes (NASA hurricane videos for "Hurricane Turn").
+
+### Library of Congress (`loc`)
+
+- Unusable from this connection: every www.loc.gov request is a Cloudflare challenge, with or without the
+  operator contact User-Agent. The challenge pause is now 600 s (was 3900 s) and requests during it are
+  refused at once, so it never stalls a stage; the run budget caps retries.
+
+### Segment chooser (vidbush/source/segment.py)
+
+- Uses the cheap_classifier seat (Gemini 3.8 Flash on CloseRouter): one call per video and subject with one
+  numbered 5 x 4 sheet (1280 x 576), detail high. Cached under <source_cache>/segments/.
+- YouTube storyboards: yt-dlp lists them as formats with format_note "storyboard" (mhtml, fragments are JPEG
+  sprite sheets of rows x columns tiles). No video is downloaded to read them.
+- Proof run (2026-11-17): 22 segment choices, 12 named a frame, 10 found none (the caller kept its old rule);
+  22 calls cost 0.0064 USD in all on CloseRouter.
+- YouTube: a bot check ("Sign in to confirm you're not a bot") came after four proof passes in about three
+  hours without cookies; the adapter paused YouTube for 30 minutes as designed.

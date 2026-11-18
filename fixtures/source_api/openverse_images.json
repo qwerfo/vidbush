@@ -1,0 +1,192 @@
+{
+ "result_count": 240,
+ "page_count": 60,
+ "page_size": 4,
+ "page": 1,
+ "results": [
+  {
+   "id": "3ee743f1-b689-48b0-a9ba-4f59fbfacd84",
+   "title": "Sled Dog Race",
+   "indexed_on": "2020-05-08T12:50:25.103684Z",
+   "foreign_landing_url": "https://www.flickr.com/photos/41894176272@N01/339927",
+   "url": "https://live.staticflickr.com/1/339927_85be3e2df0.jpg",
+   "creator": "misterbisson",
+   "creator_url": "https://www.flickr.com/photos/41894176272@N01",
+   "license": "by-nc-sa",
+   "license_version": "2.0",
+   "license_url": "https://creativecommons.org/licenses/by-nc-sa/2.0/",
+   "provider": "flickr",
+   "source": "flickr",
+   "category": null,
+   "filesize": null,
+   "filetype": null,
+   "tags": [
+    {
+     "name": "animal",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "animals",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "cold",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "dog",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    }
+   ],
+   "attribution": "\"Sled Dog Race\" by misterbisson is licensed under CC BY-NC-SA 2.0. To view a copy of this license, visit https://creativecommons.org/licenses/by-nc-sa/2.0/.",
+   "fields_matched": [
+    "description",
+    "title",
+    "tags.name"
+   ],
+   "mature": false,
+   "height": 480,
+   "width": 480,
+   "thumbnail": "https://api.openverse.org/v1/images/3ee743f1-b689-48b0-a9ba-4f59fbfacd84/thumb/",
+   "detail_url": "https://api.openverse.org/v1/images/3ee743f1-b689-48b0-a9ba-4f59fbfacd84/",
+   "related_url": "https://api.openverse.org/v1/images/3ee743f1-b689-48b0-a9ba-4f59fbfacd84/related/",
+   "unstable__sensitivity": []
+  },
+  {
+   "id": "1c22130f-5643-45da-b418-1afab962c883",
+   "title": "Sled dog racing pictogram",
+   "indexed_on": "2024-03-24T10:35:22.017228Z",
+   "foreign_landing_url": "https://commons.wikimedia.org/w/index.php?curid=94402040",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/8/8d/Sled_dog_racing_pictogram.svg",
+   "creator": "Citius Altius Fortius",
+   "creator_url": "https://commons.wikimedia.org/wiki/User:Citius_Altius_Fortius",
+   "license": "by-sa",
+   "license_version": "4.0",
+   "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+   "provider": "wikimedia",
+   "source": "wikimedia",
+   "category": "illustration",
+   "filesize": 3686,
+   "filetype": "svg",
+   "tags": [],
+   "attribution": "\"Sled dog racing pictogram\" by Citius Altius Fortius is licensed under CC BY-SA 4.0. To view a copy of this license, visit https://creativecommons.org/licenses/by-sa/4.0/.",
+   "fields_matched": [
+    "description",
+    "title"
+   ],
+   "mature": false,
+   "height": 512,
+   "width": 512,
+   "thumbnail": "https://api.openverse.org/v1/images/1c22130f-5643-45da-b418-1afab962c883/thumb/",
+   "detail_url": "https://api.openverse.org/v1/images/1c22130f-5643-45da-b418-1afab962c883/",
+   "related_url": "https://api.openverse.org/v1/images/1c22130f-5643-45da-b418-1afab962c883/related/",
+   "unstable__sensitivity": []
+  },
+  {
+   "id": "2114246d-ab38-4708-8cda-6186f350e7a4",
+   "title": "Sportgastein (AT) - Sled Dog race",
+   "indexed_on": "2020-03-20T00:24:01.920257Z",
+   "foreign_landing_url": "https://www.flickr.com/photos/98413464@N03/33265218322",
+   "url": "https://live.staticflickr.com/3868/33265218322_af7367012a_b.jpg",
+   "creator": "ラルフ - Ralf RKLFoto",
+   "creator_url": "https://www.flickr.com/photos/98413464@N03",
+   "license": "by-nc",
+   "license_version": "2.0",
+   "license_url": "https://creativecommons.org/licenses/by-nc/2.0/",
+   "provider": "flickr",
+   "source": "flickr",
+   "category": null,
+   "filesize": null,
+   "filetype": null,
+   "tags": [
+    {
+     "name": "austria",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "dog",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "hund",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "musher",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    }
+   ],
+   "attribution": "\"Sportgastein (AT) - Sled Dog race\" by ラルフ - Ralf RKLFoto is licensed under CC BY-NC 2.0. To view a copy of this license, visit https://creativecommons.org/licenses/by-nc/2.0/.",
+   "fields_matched": [
+    "title",
+    "tags.name"
+   ],
+   "mature": false,
+   "height": 454,
+   "width": 1024,
+   "thumbnail": "https://api.openverse.org/v1/images/2114246d-ab38-4708-8cda-6186f350e7a4/thumb/",
+   "detail_url": "https://api.openverse.org/v1/images/2114246d-ab38-4708-8cda-6186f350e7a4/",
+   "related_url": "https://api.openverse.org/v1/images/2114246d-ab38-4708-8cda-6186f350e7a4/related/",
+   "unstable__sensitivity": []
+  },
+  {
+   "id": "4fbd9def-b075-4e39-9f35-93c803faa098",
+   "title": "Werfenweng Sled Dog Race",
+   "indexed_on": "2020-02-25T12:34:37.552211Z",
+   "foreign_landing_url": "https://www.flickr.com/photos/98413464@N03/31496577163",
+   "url": "https://live.staticflickr.com/450/31496577163_3f95d6b4c6_b.jpg",
+   "creator": "ラルフ - Ralf RKLFoto",
+   "creator_url": "https://www.flickr.com/photos/98413464@N03",
+   "license": "by-nc",
+   "license_version": "2.0",
+   "license_url": "https://creativecommons.org/licenses/by-nc/2.0/",
+   "provider": "flickr",
+   "source": "flickr",
+   "category": null,
+   "filesize": null,
+   "filetype": null,
+   "tags": [
+    {
+     "name": "austria",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "cold",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "dog",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    },
+    {
+     "name": "gebirge",
+     "accuracy": null,
+     "unstable__provider": "flickr"
+    }
+   ],
+   "attribution": "\"Werfenweng Sled Dog Race\" by ラルフ - Ralf RKLFoto is licensed under CC BY-NC 2.0. To view a copy of this license, visit https://creativecommons.org/licenses/by-nc/2.0/.",
+   "fields_matched": [
+    "title",
+    "tags.name"
+   ],
+   "mature": false,
+   "height": 588,
+   "width": 1024,
+   "thumbnail": "https://api.openverse.org/v1/images/4fbd9def-b075-4e39-9f35-93c803faa098/thumb/",
+   "detail_url": "https://api.openverse.org/v1/images/4fbd9def-b075-4e39-9f35-93c803faa098/",
+   "related_url": "https://api.openverse.org/v1/images/4fbd9def-b075-4e39-9f35-93c803faa098/related/",
+   "unstable__sensitivity": []
+  }
+ ]
+}

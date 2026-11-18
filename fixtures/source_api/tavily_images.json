@@ -1,0 +1,24 @@
+{
+ "_note": "Built by hand from the documented Tavily /search response shape with include_images and include_image_descriptions, not recorded live (the SEARCH_API_KEY here answers 401).",
+ "query": "harbour crane",
+ "answer": null,
+ "images": [
+  {
+   "url": "https://photos.example.org/harbour/crane-dusk.jpg",
+   "description": "A tall harbour crane silhouetted against an orange dusk sky, ships moored below."
+  },
+  {
+   "url": "https://photos.example.org/harbour/crane-day.jpg",
+   "description": "Container cranes at a busy port in daylight."
+  }
+ ],
+ "results": [
+  {
+   "title": "Port history",
+   "url": "https://photos.example.org/harbour",
+   "content": "...",
+   "score": 0.8
+  }
+ ],
+ "response_time": 1.2
+}

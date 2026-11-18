@@ -33,7 +33,9 @@ def parse_search(data: dict[str, Any], media: Media) -> list[RawResult]:
         author = d.get("photographer") or d.get("secondary_creator") or d.get("center") or "NASA"
         page = f"https://images.nasa.gov/details/{nasa_id}"
         out.append(RawResult(source="nasa", url=page, page_url=page, title=d.get("title", nasa_id), author=author,
-                             licence=LICENCE, media=media, score=0.7, extra={"nasa_id": nasa_id}))
+                             licence=LICENCE, media=media, score=0.7,
+                             extra={"nasa_id": nasa_id, "description": str(d.get("description") or "")[:600],
+                                    "date": str(d.get("date_created") or "")[:10]}))
     return out
 
 
@@ -56,13 +58,20 @@ class NasaAdapter(BaseAdapter):
     name = "nasa"
     media = {"video", "image"}
     keyword_words = 3  # the library search matches every word
+    classes = frozenset({"archive"})
+    matches_description = True  # the library matches descriptions and keywords
 
     def search(self, query: str, media: Media, n: int, settings: Settings,
                shot: Optional[Shot] = None) -> list[RawResult]:
-        q = base.keyword_query(query, self.keyword_words)
-        data = base.http_get_json(SEARCH, params={"q": q, "media_type": media, "page_size": max(n, 5)},
-                                  timeout=self.timeout(settings))
-        return parse_search(data, media)[:n]
+        """Subject and year first (base.archive_queries), the subject alone only when that finds nothing."""
+        out: list[RawResult] = []
+        for q in base.archive_queries(query, self.keyword_words):
+            data = base.http_get_json(SEARCH, params={"q": q, "media_type": media, "page_size": max(n, 5)},
+                                      timeout=self.timeout(settings))
+            out = parse_search(data, media)[:n]
+            if out:
+                break
+        return out
 
     def fetch(self, raw: RawResult, out_dir: Path, shot: Shot, settings: Settings) -> list[Candidate]:
         data = base.http_get_json(ASSET + raw.extra["nasa_id"], timeout=self.timeout(settings))
@@ -71,9 +80,10 @@ class NasaAdapter(BaseAdapter):
             return []
         raw = raw.model_copy(update={"download_url": url})
         if raw.media == "video":
-            ext, src = ".mp4", base.cached_video(url, ".mp4", settings, shot.duration)
+            ext, src = ".mp4", base.cached_video(url, ".mp4", settings, shot.duration, shot=shot, title=raw.title)
         else:
             ext, src = ".jpg", cached_download(url, ".jpg", settings, max_bytes=base.MAX_IMAGE_BYTES)
         dst = link_into(src, out_dir, f"nasa_{base.url_hash(src.name)}{ext}")
-        spans = base.cut_clips(base.detect_scenes(dst), shot.duration, max_clips=3) if raw.media == "video" else None
+        spans = base.cut_clips(base.focused_scenes(dst, shot, settings, url, raw.title), shot.duration,
+                               max_clips=3) if raw.media == "video" else None
         return make_candidates(raw, dst, shot, settings, spans=spans)

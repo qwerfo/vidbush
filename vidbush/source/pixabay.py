@@ -62,6 +62,7 @@ def parse_photos(data: dict[str, Any]) -> list[RawResult]:
 
 class PixabayAdapter(BaseAdapter):
     name = "pixabay"
+    classes = frozenset({"stock"})
     media = {"video", "image"}
     key_name = "PIXABAY_API_KEY"
 

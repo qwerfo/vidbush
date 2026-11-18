@@ -51,6 +51,7 @@ def test_every_word_engines_send_short_queries(monkeypatch, settings) -> None:
     monkeypatch.setattr(base, "http_get_json", get_json)
     for a in (WikimediaAdapter(), ArchiveAdapter(), NasaAdapter(), LocAdapter()):
         a.search("vintage photo of a red sled dog team crossing ice", "image", 4, settings)
+    sent = [q for q in sent if q != "None"]  # v2: Wikimedia asks Wikidata for the entity first (no hit here)
     assert sent[0] == "red sled dog filetype:bitmap" and sent[1].startswith("(red sled dog)")
     assert sent[2] == sent[3] == "red sled dog"
 
@@ -66,7 +67,7 @@ class _ShortAdapter:
         return True
 
     def search(self, query: str, media: str, n: int, settings: Any, shot: Any = None, **kw: Any) -> list[RawResult]:
-        self.sent.append(keyword_query(query, self.keyword_words))
+        self.sent.append(base.archive_query(query, self.keyword_words))
         return [RawResult(source=self.name, url=f"https://c.example/{len(self.sent)}", media=media,
                           title="National Atlas United States map")]
 
@@ -80,7 +81,7 @@ def test_queries_that_shorten_alike_share_one_search(make_ctx) -> None:
     a = _ShortAdapter()
     shot = Shot(id="s1", index=0, beat_id="b", start=0, end=4, duration=4, type=ShotType.image, intent="atlas")
     first = registry._search_one(a, "National Atlas of the United States map Alaska", "image", 4, shot, ctx)
-    second = registry._search_one(a, "National Atlas United States 1970 page", "image", 4, shot, ctx)
+    second = registry._search_one(a, "National Atlas United States page", "image", 4, shot, ctx)
     assert a.sent == ["National Atlas United"] and [r.url for r in first] == [r.url for r in second]
     assert throttle.spent(registry.run_id(ctx))["wikimedia"] == 1
 

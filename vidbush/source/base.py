@@ -52,8 +52,13 @@ RATE_LIMIT_MAX_WAIT_S = 60.0
 SOURCE_LABELS: dict[str, str] = {
     "youtube": "YouTube", "wikimedia": "Wikimedia Commons", "archive": "Internet Archive",
     "loc": "Library of Congress", "nara": "US National Archives", "nasa": "NASA", "pexels": "Pexels", "pixabay": "Pixabay",
-    "local": "footage library",
+    "local": "footage library", "webimage": "web image search", "openverse": "Openverse",
+    "chronam": "Chronicling America (Library of Congress)",
 }
+# Source classes a shot's queries arrive in (Shot.source_queries); each adapter serves some of them.
+SOURCE_CLASSES = ("archive", "encyclopedic", "newspaper", "web_image", "web_video", "stock")
+CLASS_ALIASES = {"web": "web_image", "video": "web_video", "image": "web_image", "images": "web_image",
+                 "newspapers": "newspaper", "commons": "encyclopedic", "wikimedia": "encyclopedic"}
 
 
 class RawResult(Model):
@@ -162,6 +167,36 @@ def keyword_query(query: str, words: int) -> str:
     return " ".join(seen) if seen else query
 
 
+YEAR_RE = re.compile(r"\b(1[5-9]\d\d|20\d\d)s?\b")
+
+
+def archive_query(query: str, words: int) -> str:
+    """The query an archive engine that needs every word gets: the subject (proper names first, then other
+    specific words, at most `words`, in the query's order) plus the first year or decade it names. Run 3
+    evidence: the first-three-words form dropped the year and often the name, and 67 to 97 percent of
+    those cached searches were empty. The query is kept when it has no specific word."""
+    year = YEAR_RE.search(query or "")
+    tokens: list[str] = []
+    for w in re.findall(r"[A-Za-z][A-Za-z'\-]*[A-Za-z]|[A-Za-z]", query or ""):
+        if len(w) >= 3 and w.lower() not in SKIP_WORDS and w.lower() not in (t.lower() for t in tokens):
+            tokens.append(w)
+    proper = [w for w in tokens if w[0].isupper()][:words]
+    rest = [w for w in tokens if w not in proper][: max(0, words - len(proper))]
+    keep = set(proper) | set(rest)
+    subject = " ".join(w for w in tokens if w in keep)
+    if not subject:
+        return query
+    return f"{subject} {year.group(0)}" if year else subject
+
+
+def archive_queries(query: str, words: int) -> list[str]:
+    """archive_query, then the same without its year: an adapter sends the second only when the first
+    finds nothing (a year in the text is a strong filter on engines that need every word)."""
+    first = archive_query(query, words)
+    plain = " ".join(YEAR_RE.sub("", first).split())
+    return [first] if not plain or plain == first else [first, plain]
+
+
 def relevance(query: str, raw: "RawResult") -> float:
     """Share of the query's specific words found in the result title, description and tags (0..1)."""
     want = content_tokens(query)
@@ -182,7 +217,7 @@ def user_agent_for(contact: str) -> str:
 
 CONTACT_USER_AGENT = DEFAULT_USER_AGENT
 # The operator contact goes only to hosts whose policy asks for it, never to every source.
-CONTACT_HOSTS = ("wikimedia.org", "wikipedia.org")
+CONTACT_HOSTS = ("wikimedia.org", "wikipedia.org", "wikidata.org", "loc.gov", "openverse.org")
 HTTP_PROXY = ""  # ffmpeg does not read proxy env vars; passed explicitly when set
 
 
@@ -237,6 +272,13 @@ def http_get_json(url: str, params: Optional[dict[str, Any]] = None, headers: Op
                   timeout: float = 20.0) -> Any:
     hdrs = {"User-Agent": user_agent_to(url), **(headers or {})}
     return _rate_limited(lambda: provider_http.get_json(url, params=params, headers=hdrs, timeout=timeout), url)
+
+
+def http_post_json(url: str, payload: dict[str, Any], headers: Optional[dict[str, str]] = None,
+                   timeout: float = 20.0) -> Any:
+    """POST JSON through the same per-host throttle and 429 handling as http_get_json."""
+    hdrs = {"User-Agent": user_agent_to(url), **(headers or {})}
+    return _rate_limited(lambda: provider_http.post_json(url, payload, headers=hdrs, timeout=timeout), url)
 
 
 def http_get_bytes(url: str, headers: Optional[dict[str, str]] = None, timeout: float = 60.0) -> bytes:
@@ -394,7 +436,8 @@ def cached_section(url: str, start: float, length: float, settings: Settings, ex
 
 
 def section_window(duration: float, shot_duration: float) -> tuple[float, float]:
-    """(start, length) of the part of a long video read as a section: skips the opening tenth."""
+    """(start, length) of the part of a long video read as a section when no frame choice is possible
+    (segment.py): skips the opening tenth."""
     length = clamp(shot_duration * 4, 40.0, 90.0)
     if duration <= 0:
         return 20.0, length
@@ -402,15 +445,42 @@ def section_window(duration: float, shot_duration: float) -> tuple[float, float]
 
 
 def cached_video(url: str, ext: str, settings: Settings, shot_duration: float, duration: float = 0.0,
-                 size: float = 0.0) -> Path:
-    """A video in the cache: whole when small, else (size known, or found while streaming) a section."""
+                 size: float = 0.0, shot: Optional[Shot] = None, title: str = "") -> Path:
+    """A video in the cache: whole when small, else (size known, or found while streaming) a section.
+    With shot, the section is centred where sampled frames show the shot's subject (segment.py; the
+    length is read from the file header when unknown), else section_window's fixed offset."""
     if size <= SECTION_OVER_BYTES:
         try:
             return cached_download(url, ext, settings, max_bytes=SECTION_OVER_BYTES)
         except DownloadTooLarge:
             pass
     start, length = section_window(duration, shot_duration)
+    if shot is not None:
+        from . import segment
+        if segment.available():
+            total = duration if duration > 0 else segment.remote_duration(url)
+            t = segment.choose_time(url, lambda: segment.sampled_frames(url, total), shot, settings, title) \
+                if total > length else None
+            if t is not None:
+                start, end = segment.centred(t, length, total)
+                length = end - start
     return cached_section(url, start, length, settings, ext=ext)
+
+
+def focused_scenes(path: Path, shot: Shot, settings: Settings, key: str, title: str = "") -> list[tuple[float, float]]:
+    """Scene spans of a local video; for a long one, only those inside the window where sampled frames
+    show the shot's subject (segment.focus_window), so its clips come from there and not from wherever
+    the even spread of cut_clips lands. All scenes when no window is chosen."""
+    scenes = detect_scenes(path)
+    total = scenes[-1][1] if scenes else 0.0
+    from . import segment
+    win = segment.focus_window(path, total, shot, settings, key, title, clamp(shot.duration * 4, 40.0, 90.0)) \
+        if segment.available() else None
+    if not win:
+        return scenes
+    a, b = win
+    inside = [(max(s, a), min(e, b)) for s, e in scenes if e > a and s < b]
+    return inside or scenes
 
 
 def link_into(src: Path, out_dir: Path, name: str) -> Path:
@@ -439,7 +509,23 @@ def write_sidecar(path: Path, raw: RawResult, attribution: str, flags: list[str]
             "attribution": attribution, "downloaded_at": round(time.time(), 3), "flags": flags}
     if raw.note:
         data["note"] = raw.note
+    data.update({k: v for k, v in provenance(raw).items() if v})
     return write_json(path.with_name(path.name + ".json"), data)
+
+
+def provenance(raw: RawResult) -> dict[str, Any]:
+    """What found a result and what is known about it, as Candidate fields (the registry stores the query,
+    rank and class in raw.extra; adapters store description or snippet and date)."""
+    ex = raw.extra or {}
+    desc = str(ex.get("description") or ex.get("snippet") or "")
+    try:
+        rank = int(ex.get("rank") or 0)
+    except (TypeError, ValueError):
+        rank = 0
+    cls = str(ex.get("query_class") or "")
+    return {"query": str(ex.get("query") or ""), "rank": rank, "description": " ".join(desc.split())[:600],
+            "date": str(ex.get("date") or "")[:40], "page_url": raw.page_url or "",
+            "found_by": f"{raw.source}:{cls}" if cls else raw.source}
 
 
 def make_candidates(raw: RawResult, path: Path, shot: Shot, settings: Settings,
@@ -453,10 +539,11 @@ def make_candidates(raw: RawResult, path: Path, shot: Shot, settings: Settings,
     write_sidecar(path, raw, attribution, flags)
     media = media or raw.media
     spans = spans or [(0.0, raw.duration if media == "video" else 0.0)]
-    return [Candidate(id=f"{shot.id}_{raw.source}_{i}", source=SourceKind(raw.source), url=raw.page_url or raw.url,
+    url = str(raw.extra.get("asset_key") or "") or raw.page_url or raw.url  # the asset, as registry.raw_key
+    return [Candidate(id=f"{shot.id}_{raw.source}_{i}", source=SourceKind(raw.source), url=url,
                       local_path=str(path), media=media, in_point=round(a, 3), out_point=round(b, 3),
                       width=raw.width, height=raw.height, licence=licence, author=raw.author,
-                      attribution=attribution, title=raw.title, flags=list(flags))
+                      attribution=attribution, title=raw.title, flags=list(flags), **provenance(raw))
             for i, (a, b) in enumerate(spans)]
 
 
@@ -504,7 +591,10 @@ class BaseAdapter:
     name: str = ""
     media: set[str] = {"video", "image"}
     key_name: str = ""
-    keyword_words: int = 0  # > 0: the engine matches every word, so searches send keyword_query(query, n)
+    keyword_words: int = 0  # > 0: the engine matches every word, so searches send archive_query(query, n)
+    classes: frozenset[str] = frozenset(SOURCE_CLASSES)  # the query classes this adapter serves
+    # True when the engine matches descriptions too: its results are never demoted on title words alone
+    matches_description: bool = False
 
     def available(self, settings: Settings) -> bool:
         if settings.offline:

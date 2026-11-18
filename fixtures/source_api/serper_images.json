@@ -1,0 +1,51 @@
+{
+ "_note": "Built by hand from the documented Serper /images response shape, not recorded live (no SERPER_API_KEY).",
+ "searchParameters": {
+  "q": "harbour crane",
+  "type": "images",
+  "num": 5
+ },
+ "images": [
+  {
+   "title": "Harbour crane at dusk - City Port Museum",
+   "imageUrl": "https://museum.example.org/img/crane_1950.jpg",
+   "imageWidth": 1600,
+   "imageHeight": 1067,
+   "thumbnailUrl": "https://encrypted-tbn0.gstatic.com/images?q=tbn:a",
+   "source": "City Port Museum",
+   "domain": "museum.example.org",
+   "link": "https://www.museum.example.org/collection/crane-1950",
+   "position": 1
+  },
+  {
+   "title": "Tiny crane icon",
+   "imageUrl": "https://icons.example.com/crane.png",
+   "imageWidth": 128,
+   "imageHeight": 128,
+   "source": "Icons",
+   "domain": "icons.example.com",
+   "link": "https://icons.example.com/crane",
+   "position": 2
+  },
+  {
+   "title": "Inline crane",
+   "imageUrl": "x-raw-image:///abc123",
+   "imageWidth": 800,
+   "imageHeight": 600,
+   "source": "News",
+   "domain": "news.example.com",
+   "link": "https://news.example.com/a",
+   "position": 3
+  },
+  {
+   "title": "Harbour cranes unloading ships, 1962",
+   "imageUrl": "https://news.example.com/photos/cranes-1962.jpg",
+   "imageWidth": 1200,
+   "imageHeight": 800,
+   "source": "Example News",
+   "domain": "news.example.com",
+   "link": "https://news.example.com/story/cranes",
+   "position": 4
+  }
+ ]
+}

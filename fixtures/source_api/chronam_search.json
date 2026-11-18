@@ -1,0 +1,112 @@
+{
+ "_note": "Shape from the LoC data-exploration notebook 'ChronAm_basic_API tasks' (first result, trimmed); results 2 and 3 are synthetic in the same shape. www.loc.gov blocked live recording (bot check).",
+ "pagination": {
+  "current": 1,
+  "next": null,
+  "of": 3,
+  "perpage": 40,
+  "total": 1
+ },
+ "results": [
+  {
+   "access_restricted": false,
+   "date": "1924-11-20",
+   "description": [
+    "6 PURPORTED LOVE AFFAIRS OF WOODROW WILSON LABELED AS BASE LIES BY NOTED EDITOR EMpORIA Kan Nov 20The flew of Woodrow Wilson Amer nN wn r f I1P president to Mrs fare Peck"
+   ],
+   "id": "http://www.loc.gov/resource/sn92070146/1924-11-20/ed-1/?sp=6",
+   "image_url": [
+    "https://tile.loc.gov/image-services/iiif/service:ndnp:curiv:batch_curiv_ocotillo_ver01:data:sn92070146:00414189696:1924112001:1270/full/pct:6.25/0/default.jpg#h=462&w=365",
+    "https://tile.loc.gov/image-services/iiif/service:ndnp:curiv:batch_curiv_ocotillo_ver01:data:sn92070146:00414189696:1924112001:1270/full/pct:12.5/0/default.jpg#h=925&w=730",
+    "https://tile.loc.gov/text-services/word-coordinates-service?segment=/service/ndnp/curiv/batch_curiv_ocotillo_ver01/data/sn92070146/00414189696/1924112001/1270.xml&format=alto_xml"
+   ],
+   "index": 1,
+   "language": [
+    "english"
+   ],
+   "location_state": [
+    "california"
+   ],
+   "number_lccn": [
+    "sn92070146"
+   ],
+   "online_format": [
+    "image",
+    "pdf",
+    "online text"
+   ],
+   "original_format": [
+    "newspaper"
+   ],
+   "partof_title": [
+    "imperial valley press (el centro, calif.) 1907-current"
+   ],
+   "title": "Image 6 of Imperial Valley press (El Centro, Calif.), November 20, 1924",
+   "url": "https://www.loc.gov/resource/sn92070146/1924-11-20/ed-1/?sp=6"
+  },
+  {
+   "access_restricted": false,
+   "date": "1924-11-21",
+   "description": "Wilson letters published",
+   "id": "http://www.loc.gov/resource/sn83045462/1924-11-21/ed-1/?sp=3",
+   "image_url": [
+    "https://tile.loc.gov/image-services/iiif/service:ndnp:dlc:batch_dlc_example_ver01:data:sn83045462:00280657232:1924112101:0584/full/pct:12.5/0/default.jpg#h=925&w=730"
+   ],
+   "index": 2,
+   "language": [
+    "english"
+   ],
+   "location_state": [
+    "california"
+   ],
+   "number_lccn": [
+    "sn83045462"
+   ],
+   "online_format": [
+    "image",
+    "pdf",
+    "online text"
+   ],
+   "original_format": [
+    "newspaper"
+   ],
+   "partof_title": [
+    "evening star (washington, d.c.) 1854-1972"
+   ],
+   "title": "Image 3 of Evening star (Washington, D.C.), November 21, 1924",
+   "url": "https://www.loc.gov/resource/sn83045462/1924-11-21/ed-1/?sp=3"
+  },
+  {
+   "access_restricted": false,
+   "date": "1924-11-20",
+   "description": [
+    "6 PURPORTED LOVE AFFAIRS OF WOODROW WILSON LABELED AS BASE LIES BY NOTED EDITOR EMpORIA Kan Nov 20The flew of Woodrow Wilson Amer nN wn r f I1P president to Mrs fare Peck"
+   ],
+   "id": "http://www.loc.gov/resource/sn00000000/1924-11-22/ed-1/?sp=1",
+   "image_url": [],
+   "index": 3,
+   "language": [
+    "english"
+   ],
+   "location_state": [
+    "california"
+   ],
+   "number_lccn": [
+    "sn92070146"
+   ],
+   "online_format": [
+    "image",
+    "pdf",
+    "online text"
+   ],
+   "original_format": [
+    "newspaper"
+   ],
+   "partof_title": [
+    "imperial valley press (el centro, calif.) 1907-current"
+   ],
+   "title": "Image 1 of No image gazette (Nowhere, Kan.), November 22, 1924",
+   "url": "https://www.loc.gov/resource/sn92070146/1924-11-20/ed-1/?sp=6"
+  }
+ ]
+}

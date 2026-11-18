@@ -492,3 +492,32 @@ One line each: the decision and why.
 - An operator review comment splits into a wish (Shot.operator_wish, shown to the judge) and a complaint (a negative); it is never written whole into must_avoid.
 - Source replay copies `keyword_words` and ignores the TTL, because the cache is the record of what a run saw.
 - Plan replay measures a stored plan without rendering: anchor inside window, cuts per minute, mix, beats without a picture.
+## V2: sources
+
+- Queries arrive per source class (archive, encyclopedic, newspaper, web_image, web_video, stock; aliases web and video) in Shot.source_queries or a {real_thing, queries} structure, and each adapter gets only the classes it serves (adapter.classes); a flat list still goes to every source, because a source asked for what it does not hold returns noise.
+- A real thing with no query for a class whose sources hold named things (archive, encyclopedic, newspaper, web_image) gets "name year" there; with only a flat list, that query leads for those sources.
+- Archive-style engines (every word must match) get the subject (proper names first, at most 3 words) plus the year, and the subject alone only when that finds nothing; the first-three-words form dropped the year and often the name, and 67 to 97 percent of those cached searches were empty.
+- The download cap counts distinct assets: fetch walks the plan until max_candidates assets gave a file, then keeps max_candidates clips, every asset's first clip before any second, so the judge compares different pictures, not neighbouring clips of one video.
+- Every result records the query that found it, its rank in the source's own answer and the query class; with the source's description or snippet, date and page URL these become Candidate fields (query, rank, description, date, page_url, found_by) and sidecar entries for the picker.
+- The title-only relevance gate is off for engines that match descriptions (adapter.matches_description: YouTube, Archive, Wikimedia, NASA, NARA, LoC, Openverse, web image search, Chronicling America); stock keeps it.
+- The era rule (drop a result whose title year is 1990 or later for a pre-1950 shot) is removed: a recent upload of old film is old film.
+- YouTube results keep YouTube's order; the reorder by boost and penalty title words is removed (only shorts, uploads under 45 s and live streams are dropped).
+- Inside a long video the segment comes from frames: YouTube storyboard sprites (no download) or ffmpeg seeks on archive films go on one numbered sheet, one cached vision call per video and subject (cheap_classifier seat) names the frame that shows the subject, and the window is centred there; the old transcript and fixed-offset rules remain only as the fallback without a real vision seat.
+- Keyframes are taken from the first shot-length seconds of a clip (the part that plays), not from 20/50/80 percent of a clip that may run twice the shot.
+- source_pool sources a stretch of shots into one shared pool: each shot searches with its own plan, assets are deduped across the stretch and each is fetched once, so an edit step can assign from the pool.
+- New source webimage (general web image search): first key set among SERPER_API_KEY, FIRECRAWL_API_KEY, then the search seat (serper, brave, tavily); licence is always "unknown (web image search)" and flagged licence_unknown, never hidden; every download must decode as an image.
+- New source openverse (openly licensed images, anonymous); public domain and CC0 score slightly above other CC results (Adam: prefer them when otherwise equal), nothing is dropped except mature content.
+- New source chronam (Chronicling America newspapers, public domain): phrase and year search on the loc.gov API, page image from the tile.loc.gov IIIF service, plus a crop around the matched words from the word coordinates; the search host is challenged from this laptop, so it is built and tested on documented shapes.
+- Wikimedia searches by entity first: the name resolves to its Wikidata item (kind, date and place break ties, so the dog Balto beats the 1995 film), then P18 and the Commons category give the media, then text search; text search found nothing for 74 percent of cached queries.
+- Any licence that is unknown gets the flag licence_unknown (Adam: unknown and standard licences are flagged, never hidden).
+- loc.gov's bot-check pause drops from 3900 s to 600 s and its requests during a pause are refused at once, so a challenged Library of Congress never stalls a stage; from this connection it answers every search with a Cloudflare challenge and is reported unusable here.
+- An adapter whose module cannot load is skipped with a one-time warning, never the stage.
+- An adapter whose search reads shot.real_thing (uses_real_thing: Wikimedia, Chronicling America) has the real thing in its search cache key, so two things with one query never share an answer.
+- One source's results interleave by rank across its queries (every query's first result before any query's second): concatenated, a vague query filled the source's slots (the Alaska proof lost the Balto unveiling photo, rank 1 of its query, behind film posters).
+- Web image search does not take encyclopedic queries: those are bare names for entity lookup, and on the open web a bare name returns its namesakes first.
+- One picture reached through two sources (Commons and a web search hit of the same file) is kept once, the openly licensed copy first (difference hash of the keyframes; flat images never count as the same).
+- Wikimedia entity lookup tries the real thing's name, then the query (an encyclopedic query is the exact name), then their proper-name runs; without a real thing only a query that is itself a name is looked up, and a people or a language is never the thing (a demonym inside a description resolved to the Britons).
+- An entity adapter's search cache and in-flight key use the whole query, because entity lookup reads it; the keyword form would let two different queries share one answer.
+- Flat queries a shot holds beyond its per-class ones go to every source; a requery list is sent as given (no real-thing query pushes one out); an override that names only a real thing keeps the shot's own queries.
+- An asset is keyed on the image for web image search (extra asset_key), not on the article page, so two images of one page stay two assets.
+- A video whose frames cannot be read is remembered as such in the segment cache, seeks stop after two failures with none read, and one video and subject is chosen once at a time.

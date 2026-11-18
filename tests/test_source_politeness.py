@@ -350,14 +350,10 @@ def test_youtube_bot_check_pauses_youtube_then_asks_again(monkeypatch) -> None:
     youtube.BOT_BLOCK.clear()
 
 
-def test_era_mismatch_drops_modern_titles_for_historical_shots() -> None:
-    from vidbush.models import Shot, ShotType
-    from vidbush.source.base import RawResult
-    from vidbush.source.registry import era_mismatch
-    shot = Shot(id="s", beat_id="b", start=0, end=4, duration=4, type=ShotType.footage,
-                intent="Archival footage of Thomas Jefferson and a canal in New York, 1810s.")
-    assert era_mismatch(shot, RawResult(source="loc", url="u", title="Thomas Jefferson Building: 2019 Book Festival"))
-    assert not era_mismatch(shot, RawResult(source="loc", url="u", title="Pilot boats in New York harbor 1903"))
+def test_no_era_rule_a_recent_upload_of_old_film_is_kept() -> None:
+    """v2: the title-year era rule is gone (a 2019 upload of 1900s film is still 1900s film)."""
+    from vidbush.source import registry
+    assert not hasattr(registry, "era_mismatch")
 
 
 def test_bot_check_pauses_only_that_host_then_asks_again(monkeypatch) -> None:
@@ -380,8 +376,9 @@ def test_bot_check_pauses_only_that_host_then_asks_again(monkeypatch) -> None:
     with pytest.raises(throttle.Throttled):  # paused: nothing is sent
         base.http_get_json("https://www.loc.gov/photos/")
     assert base.http_get_json("https://archive.org/advancedsearch.php") == {"ok": True}
-    assert throttle.challenge_cooldown("www.loc.gov") > 3600  # loc.gov restarts its hour on any request
-    assert throttle.challenge_cooldown("example.org") < throttle.challenge_cooldown("www.loc.gov")
+    # v2: loc.gov challenges every request from some connections; its pause is short so it never
+    # outlasts a sourcing stage, and requests during it are refused at once, never waited on
+    assert throttle.challenge_cooldown("www.loc.gov") <= 900
     clock[0] += throttle.challenge_cooldown("www.loc.gov") + 1
     with pytest.raises(RefusalError):  # asked again once the pause is over
         base.http_get_json("https://www.loc.gov/photos/")
