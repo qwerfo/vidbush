@@ -46,3 +46,28 @@ def test_resource_shots_follow_medium_and_real_thing():
     assert shots[0].type == ShotType.image and shots[0].queries == ["a", "b", "c"]
     assert shots[0].real_thing.name == "Some Bridge" and shots[1].real_thing is None
     assert shots[1].type == ShotType.footage
+
+
+def test_a_rerun_keeps_an_earlier_still_that_passes_its_check(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from PIL import Image
+    from vidbush.judge import ai_checks
+    from vidbush.judge import pick_stage as PS2
+    from vidbush.models import Shot, ShotType
+    (tmp_path / "ai").mkdir()
+    for n in (1, 2):
+        Image.new("RGB", (64, 36)).save(tmp_path / "ai" / f"s1_{n}.png")
+    shot = Shot(id="s1", beat_id="b", scene_id="c", start=0, end=3, duration=3, type=ShotType.ai_image, intent="x")
+    checked = []
+
+    def fake_check(sh, cand, ctx):
+        checked.append(cand.id)
+        cand.reject_reason = "framing" if cand.id.endswith("_2") else None
+
+    monkeypatch.setattr(ai_checks, "check_still", fake_check)
+    monkeypatch.setattr("vidbush.visuals.ai_images.generate_ai_candidate",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not generate")))
+    ctx = SimpleNamespace(work=tmp_path, settings=SimpleNamespace(judge=SimpleNamespace(ai_retries=2)),
+                          log=SimpleNamespace(info=lambda *a, **k: None, warn=lambda *a, **k: None))
+    got = PS2._generate_ai(shot, ctx)
+    assert got.id == "s1_ai_image_1" and checked == ["s1_ai_image_2", "s1_ai_image_1"]

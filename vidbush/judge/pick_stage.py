@@ -51,11 +51,43 @@ def scene_plans_from(plan: dict) -> list[dict]:
     return out
 
 
+def _earlier_take(shot: Shot, ctx: Any) -> Optional[Candidate]:
+    """A still this shot already has on disk from an earlier run of the stage, checked again with the fixed
+    questions (stored replies answer an unchanged check for free): a rerun never pays to make a picture it
+    already made. Newest take first; None when none passes."""
+    from ..models import SourceKind
+    from ..util import video_size
+    from .ai_checks import check_still
+    files = sorted((Path(ctx.work) / "ai").glob(f"{shot.id}_*.png"),
+                   key=lambda f: int(f.stem.rsplit("_", 1)[1]) if f.stem.rsplit("_", 1)[1].isdigit() else 0,
+                   reverse=True)
+    for f in files:
+        n = f.stem.rsplit("_", 1)[1]
+        if not n.isdigit():
+            continue
+        try:
+            w, h = video_size(f)
+        except Exception:  # noqa: BLE001 - an unreadable file is not a picture
+            continue
+        cand = Candidate(id=f"{shot.id}_ai_image_{n}", source=SourceKind.ai_image, local_path=str(f), media="image",
+                         width=w, height=h, licence="AI generated", attribution="AI generated image",
+                         title="AI generated still", keyframes=[str(f)])
+        shot.candidates = [c for c in shot.candidates if c.id != cand.id] + [cand]
+        check_still(shot, cand, ctx)
+        if not cand.reject_reason:
+            ctx.log.info("AI still kept from an earlier run", shot=shot.id, candidate=cand.id)
+            return cand
+    return None
+
+
 def _generate_ai(shot: Shot, ctx: Any) -> Optional[Candidate]:
     """One AI still, regenerated with the failed fixed-question checks as direction up to ai_retries times."""
     from ..visuals.ai_images import generate_ai_candidate
     from .ai_checks import check_still
     retries = int(getattr(ctx.settings.judge, "ai_retries", 2))
+    kept = _earlier_take(shot, ctx)
+    if kept is not None:
+        return kept
     problem = ""
     last = None
     for take in range(1 + max(0, retries)):
