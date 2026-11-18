@@ -536,6 +536,7 @@ def make_candidates(raw: RawResult, path: Path, shot: Shot, settings: Settings,
     flags = licence_flags(licence, settings)
     if raw.note == "fixture rotation":
         flags.append("fixture_rotation")
+    flags += [f for f in raw.extra.get("flags") or [] if f not in flags]  # an adapter's own flags
     write_sidecar(path, raw, attribution, flags)
     media = media or raw.media
     spans = spans or [(0.0, raw.duration if media == "video" else 0.0)]

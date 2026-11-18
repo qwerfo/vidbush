@@ -1415,3 +1415,87 @@ profile). Stages and files:
 Rerun the pick alone on the same pools: `python -m vidbush resume <id> --force judge`.
 Reuse another project's narration (no TTS paid twice): `E:\coding projects\Vidbush\scratch\make_v2_project.py
 <source id> <new id>` from the worktree, then `resume <new id> --cost-cap 5`.
+## 16. V2 picker: describe once, pick by comparison (branch v2/picker, night 2)
+
+Decisions: DECISIONS.md "V2: picker". Architecture: ARCHITECTURE.md "Clause-first planner", step 3.
+
+### 16a. What runs
+
+- `vidbush/judge/describe.py`: one describer call per asset (frames across the clip, or the still), cached
+  by content hash plus clip range in `DESCRIBE_CACHE_FOLDER` (tonight `E:\coding projects\Vidbush\describe_cache`,
+  572 records). Stills also get rapidocr words. Prefilter rejects and failed AI checks never cost a call.
+- `vidbush/plan/edit.py`: the picker seat, one call per scene, at most 40 assets (one 640 px image each),
+  start time per pick; code checks listed in DECISIONS.
+- `vidbush/judge/ladder.py`: re-source, restate as layout, hold, AI still; `filled_by` per clause.
+- `vidbush/judge/pick_stage.py`: the live judge stage for a clause-planned project (profile `planner: clause`).
+  Not yet run end to end in a live project.
+- Seats: `describer` and `picker` in config/seats.yaml. openlux Sonnet entries carry
+  `extra_body: {reasoning_effort: low}`; without it one scene's pick cost 193k tokens.
+
+### 16b. Replay commands (no render)
+
+```
+set PYTHONPATH=.  (worktree root)  SOURCE_CACHE_FOLDER=E:\coding projects\Vidbush\vidbush_tmp\data\source_cache
+DESCRIBE_CACHE_FOLDER=E:\coding projects\Vidbush\describe_cache
+python -m vidbush.judge.pick_replay "E:\coding projects\Vidbush\output\alaska_run3" "E:\coding projects\Vidbush\picker\alaska" ^
+  --env C:\projects\vidbush_tmp --direct-from "E:\coding projects\Vidbush\plan_v2\run" ^
+  --extra "E:\coding projects\Vidbush\sources_v2\results_alaska.json" "E:\coding projects\Vidbush\sources_v2\alaska_input.md" ^
+  --sheets s01,s08 --previous "E:\coding projects\Vidbush\plan_v2\run" --budget 3
+```
+
+Dunkirk: project `output\dunkirk_base`, `--scenes s01,s03 --direct-from picker\dunkirk_before` (director plans
+made tonight on v2/base), `--extra sources_v2\results_dunkirk.json sources_v2\dunkirk_input.md`,
+`--previous output\dunkirk_base` (the old judge path's shot list). `--salt X --no-ladder` repeats the picker
+call with a new cache key. `--resource` turns on ladder step 1 (live searches and downloads).
+
+A replay is free only when every prompt is unchanged: a changed restate in an early scene changes which
+assets later scenes see as used, and their picker calls are asked again.
+
+### 16c. Results (stored data, no render)
+
+Outputs: `E:\coding projects\Vidbush\picker\alaska`, `picker\dunkirk`, `picker\alaska_s01_repeat`.
+Independent judge (one AI agent, one still per clause at mid-speech, both columns judged together):
+
+| Scene | Earlier: on words / early-late / wrong / related / nothing | Tonight | Wrong document, look-alike (earlier to tonight) |
+|---|---|---|---|
+| Alaska s01 (23 clauses; earlier = last night's planner edit) | 11 / 0 / 0 / 10 / 2 | 12 / 2 / 0 / 6 / 3 | 1, 1 to 0, 0 |
+| Alaska s08 (20) | 8 / 1 / 2 / 7 / 2 | 10 / 0 / 0 / 9 / 1 | 1, 0 to 1, 0 (the same park map in both) |
+| Dunkirk s01 (19; earlier = old judge render) | 3 / 0 / 2 / 14 / 0 | 9 / 0 / 2 / 3 / 5 | 0, 2 to 0, 0 |
+| Dunkirk s03 (23) | 11 / 3 / 0 / 9 / 0 | 8 / 2 / 0 / 7 / 6 | 0, 1 to 0, 2 (real Mole, photographed in 2018) |
+
+"Nothing" tonight includes planned AI stills, which a replay does not generate (Alaska s01 3, s08 1,
+Dunkirk s03 4), and in Dunkirk s01 five clauses the ladder could not fill (a real event: no AI allowed).
+
+Alaska whole script (11 scenes, 200 clauses): 180 shots, 16.2 cuts per minute, median 3.36 s. Of 156 clauses
+that need a picture: picked 63, restated 77 (text over footage 55, number 10, date 6, route map 6), AI still 7
+(22.0 s, longest run 2), hold 1, nothing 8. 38 assets refused by their records (marks, subtitles, logos);
+461 of 901 pool assets left out by the 40-asset cap. Documents: 5 planned, no page in the pool shows the
+quoted words, none accepted (the 1958 front pages that last night's editor used were refused). Labels: 2,
+both from the record (Toksook Bay, Utqiagvik). Last night (same director plans): 6 AI stills, 15.0 s, run 2.
+
+Time and cost, whole Alaska script, cold: about 440 describe calls, 19 pick calls, 20 restate calls, about
+33 minutes wall clock with 8 describe workers, about 2.8 USD on openlux Sonnet (closerouter was down all
+night). The old judge stage: about 170 minutes. From cache: describe 0.3 s per scene, a cached pick about 3 s.
+
+Run to run (Alaska s01 picked twice, new cache key): of 16 shots, 13 identical decisions, 3 changed between a
+pick and nothing fits, none changed to a different asset.
+
+### 16d. Read before trusting
+
+- The measured runs used the code before the review fixes (6ab2fef) and before an unfound quoted document went
+  down the ladder; those fixes are unit-tested, not replayed.
+- Restating is the most used ladder step and often types the clause over loosely related stock; the judge
+  marked those related, and twice the typed line belonged to the next clause (now refused in code).
+- Ladder step 1 (re-source) and the live judge stage path were not run on real data tonight.
+- Spend: 5.94 USD booked across all runs and probes, over the 5 USD limit. 1.17 USD of that is wellflow's
+  booked estimate (0.01 USD per high image, the provider returns no cost) for 52 describe calls during the
+  closerouter outage; provider-reported spend is 4.77 USD.
+- Newspaper pages: Chronicling America was not reached through Firecrawl (loc.gov asks clients to pause on a
+  CAPTCHA). The web image route phrased for newspaper pages is tested offline only.
+
+### 16e. Adam's review
+
+Contact sheets, earlier (left) against tonight (right), one row per clause:
+`E:\coding projects\Vidbush\picker\alaska\review\review_s01_1.jpg`, `review_s01_2.jpg`,
+`review_s08_1.jpg`, `review_s08_2.jpg`.
+Read down the picks for the two Alaska scenes and say whether each picture now shows what its words say.

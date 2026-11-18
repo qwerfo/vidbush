@@ -152,6 +152,7 @@ def test_still_shot_falls_back_to_video_frames(ctx, monkeypatch, tiny_library) -
             return [] if media == "image" else super().search(query, media, n, settings, shot)
 
     monkeypatch.setattr(registry, "active_adapters", lambda c: [VideoOnly()])
+    monkeypatch.setattr(registry, "MIN_STILL_LONG_SIDE", 0)  # the tiny library is 320x180: this tests the fallback
     out = registry.source_all(_shotlist([_shot(0, ShotType.image)]), ctx)
     cands = out.shots[0].candidates
     assert cands and all(c.media == "image" and "frame_grab" in c.flags for c in cands)

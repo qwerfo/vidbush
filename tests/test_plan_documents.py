@@ -5,7 +5,7 @@ from vidbush.plan import edit as E
 from vidbush.plan import emit as M
 
 from test_plan_direct import by_id, scene, valid  # noqa: F401  (fixture)
-from test_plan_edit import jpg, picks, pool, shots  # noqa: F401  (fixtures)
+from test_plan_edit import jpg, picks, pool, recs, shots  # noqa: F401  (fixtures)
 from test_plan_emit import cands, setup  # noqa: F401  (fixtures)
 
 
@@ -59,13 +59,23 @@ def test_repair_never_leaves_a_static_full_page(scene):  # noqa: F811
     assert out[2]["presentation"] == "panel" and out[2]["layout"]["purpose"] == "period"
 
 
-def test_document_pick_must_be_real(pool):  # noqa: F811
+def test_document_pick_must_be_real(pool, recs):  # noqa: F811
     sh = shots([3.0])
     sh[0]["plan"].update(treatment="document_focus", presentation="panel", layout={"purpose": "period"})
-    p, errors = E.check(picks({"pick": 6, "document_pick": 3}), sh, pool, {}, 0)
-    assert any("document_pick 3 must be a real candidate" in e for e in errors)
-    p, errors = E.check(picks({"pick": 6, "document_pick": 1}), sh, pool, {}, 0)
+    p, errors = E.check(picks({"pick": 6, "document_pick": 3}), sh, pool, recs, {}, 0)
+    assert any("document_pick 3 must be a real asset" in e for e in errors)
+    p, errors = E.check(picks({"pick": 6, "document_pick": 1}), sh, pool, recs, {}, 0)
     assert not errors and p[0]["_doc"].id == "real1"
+    assert E.resolve(p, sh, 0, recs, {})[0]["_doc"].id == "real1"
+
+
+def test_document_pick_already_used_needs_callback(pool, recs):  # noqa: F811
+    sh = shots([3.0, 3.0])
+    sh[1]["plan"].update(treatment="document_focus", presentation="panel", layout={"purpose": "period"})
+    _, errors = E.check(picks(1, {"pick": 6, "document_pick": 1}), sh, pool, recs, {}, 0)
+    assert any("document_pick 1 is already used at c001" in e for e in errors)
+    _, errors = E.check(picks(1, {"pick": 6, "document_pick": 1, "callback": True}), sh, pool, recs, {}, 0)
+    assert errors == []
 
 
 def test_emit_document_full_is_the_picture_and_panel_sits_over_footage(setup, cands):  # noqa: F811
@@ -84,18 +94,20 @@ def test_emit_document_full_is_the_picture_and_panel_sits_over_footage(setup, ca
     assert panel.layout.presentation == "panel"
 
 
-def test_evidence_document_needs_its_passages_visible(pool):  # noqa: F811
+def test_evidence_document_needs_its_passages_found_on_the_page(pool, recs):  # noqa: F811
     sh = shots([3.0])
     sh[0]["plan"].update(treatment="document_focus", presentation="full",
-                         layout={"purpose": "evidence", "elements": [{"text": "a line"}, {"text": "b line"}]})
-    p, errors = E.check(picks({"pick": None, "document_pick": 1, "passages_visible": [True, False]}),
-                        sh, pool, {}, 0)
-    assert any("passages_visible all true" in e for e in errors)
-    out = E.resolve(p, sh, 0)
-    assert out[0]["_doc"] is None and "passages not visible" in out[0]["resolved"]
-    p, errors = E.check(picks({"pick": None, "document_pick": 1, "passages_visible": [True, True]}),
-                        sh, pool, {}, 0)
-    assert not errors and E.resolve(p, sh, 0)[0]["_doc"].id == "real1"
+                         layout={"purpose": "evidence", "elements": [{"text": "admitted to the Union"},
+                                                                     {"text": "the forty-ninth state"}]})
+    recs["real1"]["ocr_text"] = "Alaska was admitted to the Union in 1959"
+    p, errors = E.check(picks({"pick": None, "document_pick": 1}), sh, pool, recs, {}, 0)
+    assert any("did not find 'the forty-ninth state'" in e for e in errors)
+    assert p[0]["passages_found"] == [True, False]
+    out = E.resolve(p, sh, 0, recs, {})
+    assert out[0]["_doc"] is None and "quoted words not found" in out[0]["resolved"]
+    recs["real1"]["visual"]["text_in_frame"] = "as the forty-ninth state"
+    p, errors = E.check(picks({"pick": None, "document_pick": 1}), sh, pool, recs, {}, 0)
+    assert not errors and E.resolve(p, sh, 0, recs, {})[0]["_doc"].id == "real1"
 
 
 def test_full_route_map_with_a_pick_stays_a_layout(setup, cands):  # noqa: F811
@@ -103,12 +115,3 @@ def test_full_route_map_with_a_pick_stays_a_layout(setup, cands):  # noqa: F811
     picks_ = [{"_cand": cands["video"]}, {"_cand": cands["image"]}, {}, {}, {}]
     _, sl = M.emit("p1", script, nar, cl, sp, [{"scene": "s01", "picks": picks_}])
     assert sl.shots[1].type == ShotType.motion_graphic and sl.shots[1].layout.kind == "route_map"
-
-
-def test_a_map_never_stands_in_for_a_document(pool):  # noqa: F811
-    sh = shots([3.0])
-    sh[0]["plan"].update(treatment="document_focus", presentation="full",
-                         layout={"purpose": "evidence", "elements": [{"text": "a line"}]})
-    p, errors = E.check(picks({"pick": None, "fallback": "map", "map_place": "Somewhere"}), sh, pool, {}, 0)
-    assert any("cannot stand in for a document" in e for e in errors)
-    assert E.resolve(p, sh, 0)[0]["fallback"] == "text_over_footage"
