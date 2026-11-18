@@ -28,7 +28,8 @@ from .jobs import make_job
 from .panel import DOCK_S, NEVER, PanelPlan, change_time, large_rect
 from .placement import place_panel
 
-LAYOUT_RENDER_VERSION = "layouts-8"  # bump when drawing code changes pixels
+LAYOUT_RENDER_VERSION = "layouts-8"
+EMPTY_NOTE = "route_map: nothing resolved, an empty map"  # routemap.RouteMap._fit  # bump when drawing code changes pixels
 PANEL_HOLD_S = 2.5  # a panel stays this long after its last element is spoken, then leaves
 PANEL_MIN_S = 3.0
 FULL_MIN_S, FULL_MAX_S = 3.0, 7.0
@@ -271,6 +272,10 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
             comp = comp_class(spec.kind)(job, job.width, job.height, plan is not None)
             comp.close()
         shot.layout_notes += list(dict.fromkeys(job.notes))
+        if EMPTY_NOTE in job.notes and shot.selected_candidate() is not None:
+            # a graphic with nothing on it is worse than the shot's own picture
+            shot.layout_notes.append(f"{spec.kind.value} not shown: {EMPTY_NOTE.split(': ', 1)[1]}; the shot's picture stays")
+            continue
         if plan:
             shot.overlay_path = str(out)
             shot.layout_at = round(plan_start(shot, job), 3)
