@@ -679,3 +679,40 @@ One line each: the decision and why.
 - On the paid route the height floor is checked on the file itself (the service reports no formats), and the licence is the search result's (Creative Commons only when the Creative Commons filtered search found it, else Standard YouTube Licence, flagged as before), because the service returns no licence.
 - Its subtitles (0.0001 USD) are fetched only when no frame window applies, cached per video like the file, so a cached video costs nothing twice.
 - Paid jobs are charged when the service accepts them, recorded in the cost report as provider video_download_api by the sourcing stage, and capped per run by sources.youtube_api_budget_usd (default 0.50 USD, about 2500 videos).
+
+## V2: sound (parallel2, branch v2/sound)
+
+- Every layer under the narration (music, room tone, ambience, effects) is planned as data first (audio/sound_plan.py) and rendered from gain curves in numpy (audio/mixer.py), with no compressor in the chain, because a planned curve cannot pump and every change can be checked.
+- The music no longer ducks under speech: it holds one level under the voice (-18 dB, music_under_speech_db) and rises (-10 dB) only before the first word, after the last and in pauses of 3 s or more, because Adam ruled in RadioPlay that a bed holds one steady level and ducking pumps.
+- Levels are dB relative to the narration's own loudness, so they survive the final normalisation unchanged.
+- Music mood comes from the planner's stated scene purpose (work/plan_v2.json scene_purpose) by feeling words (desperation reads tense, a guess reads mysterious, scale or pride reads uplifting, everyday life reads calm), else from the script purpose, because the stated purpose says what the scene should make the viewer feel.
+- A scene boundary changes the track only when the mood changes and the section has run 20 s, so the music does not flip with every scene.
+- A change at a scene boundary is an equal power crossfade of 1 to 2 s, the length chosen by the incoming mood (tense 1.0 s, uplifting 1.5 s, calm and mysterious 2.0 s), moved up to 4 s onto the outgoing track's phrase boundary when the track has a clear pulse (bpm confidence 0.3 or more), else kept where it falls.
+- A scene boundary that falls inside a quiet moves to that quiet's return, because the music is already away there and the new track can come back in without a crossfade.
+- The music changes inside a scene only at a quiet whose note or the scene purpose turns ("then lifts into arrival"), because that is where the story turns and the music has already fallen away; such a section may be 10 s.
+- On a quiet clause (planner grammar quiet, or Shot.flags quiet) the music fades out over 1.5 s ending as the clause starts, waits 0.6 s after the clause ends and returns over 2.0 s.
+- Fades to and from silence run at a constant dB rate (0 to -48 dB, then off) instead of a raised cosine in amplitude, because the raised cosine drops 18 dB in its last 0.2 s and reads as a cut.
+- Room tone (-36 dB) plays under every quiet, under a place bed too, so the track never goes dead even where a bed has troughs (lapping water dipped to -77 dBFS).
+- When the library has no room tone (offline, no key) a soft room tone is made in code, so the floor never depends on the network.
+- Ambience is chosen from the shot description by place words (sea ice, harbour, river, forest, highway, kitchen and so on, whole words only), most specific first; a close view of an object, a document or a map is not a place.
+- A period picture (archival, black and white, a past decade) never gets a modern human bed (traffic, a street, a crowd); natural beds stay, because a 1920s photograph under traffic noise contradicts the picture.
+- A place gets a bed only when it holds 8 s or more, a gap of up to 8 s of other shots (a full frame map, say) between shots of one place keeps the bed, and different places meet in a 1.5 s crossfade, because a bed per 4 s shot flickers (the first proof had 41 beds; now 10).
+- Ambience sits at -30 dB under the narration (ambience_db): barely noticeable, unheard by Adam, so it is a ladder row.
+- A bed is used only when it is steady (99th percentile of 50 ms levels at most 12 dB over the median) and at least -62 LUFS, reviewed first, refused never, because the copied office bed carried clicks and a quiet living room take was mostly noise once lifted.
+- Each bed is levelled in the mix (1 s windows over the median by more than 3 dB are lowered, at most 12 dB, the gain smoothed over 1 s) and looped by crossfading irregular 8 to 18 s stretches of the file at seeded offsets, so a wave stays in the bed without standing out and no repeat point recurs.
+- No new bed is generated for a place that already has 4 takes in the library, so repeated runs do not keep paying for a place whose takes are all unusable.
+- A layer that reaches the last frame holds to it, because a fade there ends in dead air.
+- Effects are one paper family (pencil line, wooden tap, card on paper, marker sweep) on what the house style animates: route lines, number landings, cards settling (callouts, lower thirds, name and date cards), document marks; charts, timelines and lists get none, for restraint.
+- Effects are timed to the same word timings the graphic uses (mg/layouts/timing.cue_times for designed layouts, the overlay's start_at for older overlays), spaced at least 3 s apart and off within 1 s of a quiet clause.
+- An effect plays at -20 dB under the narration (effects_db) and at least 12 dB under the words it overlaps, lowered further when needed, so it is felt and never sits on a word.
+- The library is a Vidbush copy on E: (settings.sound_library, SOUND_LIBRARY, default E:/coding projects/Vidbush/sound_library in config/vidbush.yaml) seeded by copying RadioPlay files, never by reference, because Vidbush must not depend on another repo's paths.
+- RadioPlay copies are converted to 48 kHz only, never treated, so they stay as Adam heard them; generated sounds get a 60 Hz high pass and a 6 dB high shelf cut above 7 kHz for older ears.
+- Sound generation is the ElevenLabs sound effects endpoint ported from RadioPlay (audio/elevenlabs_sfx.py); every generated sound is saved and labelled "not yet reviewed by Adam" with its prompt and credits.
+- Coast and quiet room prompts dropped gulls and a building hum, because events and hum read as faults (Adam on hum in RadioPlay).
+- tracks.json is measured automatically (tempo by onset autocorrelation, phrase of 4 bars, energy, brightness, loopable, a mood rule) and Adam corrects a field by adding its name to that track's checked list, which a re-run never overwrites.
+- The bundled tracks keep their composer's moods as checked, because the measured mood rule agrees on 1 of 4: the bundled pads are all dark (313 to 733 Hz centroid) and a brightness rule cannot tell calm from mysterious on them; the measured tempo matches compose.py exactly on all 4.
+- Track fingerprints are name, size and a hash of the first MB, not mtime, so a fresh checkout does not rewrite tracks.json.
+- The music folder for the proof is the bundled fixtures/music (MUSIC_FOLDER and the brand both point there); no operator folder is set.
+- The sound QA reports a cut as a 400 ms level step over 15 dB within 0.2 s at an audible level, because an eased change moves under 10 dB in 0.2 s and a real cut 30 dB or more, while sounds inside a bed are judged by the bed rule.
+- qa_report.md gains a Sound section from work/sound_qa.md through one helper in judge/qa.py (with_sound), the only line outside vidbush/audio.
+- The older single ducked bed stays behind profile.sound.planned = false, so a project can go back to it.

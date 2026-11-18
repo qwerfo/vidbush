@@ -1383,7 +1383,7 @@ document focus needs a real document whose page carries the quote.
 
 v2/base = v2/audit + v2/sources + v2/layouts + v2/planner. Decisions: DECISIONS.md "V2: integration".
 
-### 15a. The layout contract
+### 16a. The layout contract
 
 The planner (`vidbush/plan/emit.py`) emits the layouts lane's `models.LayoutSpec`: roles from `LAYOUT_ROLES`,
 pictures as candidate ids on elements, a found document as a `document` element (plus `source`), background
@@ -1391,7 +1391,7 @@ elements for number_over_footage and date_title from the clause's own pick, time
 timeline_id, `purpose` only on document_focus. A full layout's cut is moved to its first anchored word
 (`start_full_layouts_on_words`); panels get `layout_at` from the renderer. Tests: `tests/test_plan_contract.py`.
 
-### 15b. YouTube's paid second route
+### 16b. YouTube's paid second route
 
 `vidbush/source/youtube_api.py` (provider notes: PROVIDER_NOTES.md "video-download-api.com"). Free yt-dlp first;
 the first bot check sets `youtube.ROUTE.name = "api"` for the rest of the process and the same video is fetched
@@ -1399,3 +1399,89 @@ again on the paid route. Without a key the old 30 minute pause stays. Config: `s
 `sources.youtube_api_budget_usd` (0.50 per run). Downloads per route this process: `youtube.ROUTE.counts`;
 paid jobs: `youtube_api.LEDGER` (spent, jobs), written into cost_report.json at each sourcing usage note.
 Live proof: `E:\coding projects\Vidbush\scratch\vda_live_test.py` (two videos, 1280x720, licence kept).
+
+## 16. Sound that follows the story (V2, branch v2/sound)
+
+### 16a. What it does
+
+The mix stage plans four layers under the narration and writes the plan to `work/sound_plan.json`, every item
+with its time, file, level and reason:
+
+- **Music, per scene.** The mood of each scene comes from its stated purpose in `work/plan_v2.json` (the
+  planner's `scene_purpose`), else the script purpose. The track changes only when the mood changes, as a 1 to
+  2 s equal power crossfade placed on the outgoing track's phrase boundary when the track has a clear pulse.
+  Under speech the music holds one level; it never ducks or pumps.
+- **Quiet.** On a clause the planner labelled quiet, the music fades out over 1.5 s before the clause and comes
+  back 0.6 s after the line ends, over 2 s. Room tone holds underneath. A scene change that falls inside a quiet
+  happens at its return, and a quiet whose note turns ("then lifts into arrival") can change the music inside a
+  scene.
+- **Ambience.** A very low bed under real footage and stills of a place, read from the shot description, held
+  across the shots of one place (and through a short full frame map between them), eased over 1.5 s at a change
+  of place. Close views of objects, documents and maps get none, and period pictures never get traffic or crowds.
+- **Effects.** One soft paper family on route lines, number landings, settling cards and document marks, timed
+  to the graphic's own word timings, at least 12 dB under the words they overlap, none near a quiet clause.
+
+The mix is normalised once to the render target. `work/stems/{narration,music,ambience,effects}.wav` are kept
+for measurement and the levels page. `qa_report.md` gains a Sound section: speech level, music and ambience
+under speech, loudness, true peak, shortest ramps, and every fault with its time (a gap over 0.2 s, a cut, a ramp
+faster than 1 s, a bed over its level, an effect on a word).
+
+### 16b. Levels and switches (style profile `sound`)
+
+| field | default | meaning |
+|---|---|---|
+| `planned` | true | false goes back to the single ducked bed |
+| `music_under_speech_db` | -18 | music under the voice, dB relative to the narration loudness |
+| `music_open_db` | -10 | before the first word, after the last, in pauses of 3 s or more |
+| `ambience_db` | -30 | place beds |
+| `room_tone_db` | -36 | the floor under quiet moments |
+| `effects_db` | -20 | graphic effects (also always 12 dB under the words they overlap) |
+| `ambience`, `effects` | true | switch either layer off |
+
+None of these has been heard by Adam. `E:\coding projects\Vidbush\sound\levels.html` has one row per layer
+(music, ambience, effects), four clips 5 dB apart, a comment box and Export; put his picks here.
+
+### 16c. Music folder and tracks.json
+
+`MUSIC_FOLDER` (or the brand's music folder) is used when it holds audio, else the bundled `fixtures/music`
+(four code-generated pads, never listened to). `tracks.json` is measured automatically on first use (tempo,
+phrase length, energy, brightness, loopable, mood) and rewritten only when a track changes. To correct a value,
+edit it and add the field name to that track's `checked` list, for example `"checked": ["mood"]`; a re-run never
+overwrites a checked field. Run it by hand with `python -m vidbush.audio.tracks <folder>`.
+
+### 16d. The sound library
+
+`settings.sound_library` (`SOUND_LIBRARY`, default `E:/coding projects/Vidbush/sound_library` in
+`config/vidbush.yaml`) holds `catalogue.json`, `beds/<place>/` and `effects/paper/`, each sound with a json
+sidecar: what it depicts, where it came from, loudness, prompt, credits and `review_status`. Reviewed sounds
+are used first, refused ones never. Seeded by `scripts/sound_library_seed.py` from RadioPlay's library (files
+copied, statuses kept); any place or effect still missing is generated with ElevenLabs
+(`ELEVENLABS_API_KEY`, about 10 credits a second, 300 credits for a 30 s bed) and saved unreviewed. Places:
+open_ground, snow_wind, coast, river, forest, city_street, town_street, road, interior_quiet, interior_public,
+rain, room_tone. A bed must be steady and loud enough to use (see DECISIONS, V2: sound); a place with four
+unusable takes is left without a bed rather than generated again.
+
+To mark a sound as heard, set its sidecar and catalogue `review_status` to "approved by Adam" or
+"refused by Adam" (and `review_words`).
+
+### 16e. Proving it without a pipeline run
+
+`python scripts/sound_proof.py build` rebuilds the mix of Alaska run 3 with the plan v2 replay's purposes and
+quiet labels into `E:\coding projects\Vidbush\sound\work_new` (and the old mix into `work_old`, for
+timing); `python scripts/sound_proof.py cut` writes `opening_{old,new}.mp4` (0 to 180 s) and
+`story_{old,new}.mp4` (300 to 390 s, quiets c100 and c108) onto the existing picture, plus `numbers.json`.
+`python scripts/sound_levels_page.py` writes `levels.html` and its clips from `work_new`'s stems.
+
+### 16f. Cost and time
+
+The planned mix took 46 to 60 s on the laptop for the 11 minute Alaska film against 14 to 16 s for the old
+ducked bed (about 45 s more per render). The library seed spent 990
+ElevenLabs credits and the proof runs 900 more on three coast retakes: 1,890 credits, about 0.34 USD.
+
+### 16g. Known limits
+
+- The moods of the bundled tracks are the composer's, not measured: the measured mood rule cannot tell the
+  dark bundled pads apart. With a real music folder check the measured moods once and mark corrections checked.
+- Place words are English and literal; a description that never names its place gets no bed.
+- Most library beds and every generated sound are unheard by Adam (see the catalogue's `review_status`).
+- Footage audio is still discarded.
