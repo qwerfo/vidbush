@@ -213,8 +213,15 @@ def _run_jobs(todo: list[tuple[MotionSpec, Path, bool]], ctx: Any) -> dict[Path,
     if workers == 1 or len(args) == 1:
         results = [_job(*a) for a in args]
     else:
-        with ProcessPoolExecutor(max_workers=min(workers, len(args)), mp_context=get_context("spawn")) as pool:
-            results = list(pool.map(_job, *zip(*args)))
+        from concurrent.futures.process import BrokenProcessPool
+        try:
+            with ProcessPoolExecutor(max_workers=min(workers, len(args)), mp_context=get_context("spawn")) as pool:
+                results = list(pool.map(_job, *zip(*args)))
+        except BrokenProcessPool as e:
+            # a worker died (memory or a native crash): a slower serial render beats a failed stage;
+            # finished clips are on disk and reused, so only the rest is drawn again
+            ctx.log.warn("motion worker pool broke, rendering one at a time", error=str(e)[:200])
+            results = [_job(*a) for a in args]
     written: dict[Path, Path] = {}
     for (_, planned, _), (out, warn) in zip(todo, results):
         written[planned] = Path(out)
