@@ -92,3 +92,28 @@ def test_fill_uses_only_clean_described_pictures_ranked_by_the_words(tmp_path):
     L.fill_empty_shots(sl, lambda a, b: "men waited on the beach", pool, lambda c: recs[c.id])
     assert s.selected == "beach"
     assert not L.clean_record(None) and not L.clean_record(recs["slate"])
+
+
+def test_pick_warns_with_the_folder_when_the_fill_finds_no_describe_records(tmp_path, monkeypatch):
+    """A lookup that finds nothing must say so: a wrong describe folder would leave the fill silently empty."""
+    from types import SimpleNamespace
+    from vidbush.judge import pick_stage
+    from vidbush.models import Candidate, SourceKind
+    f = tmp_path / "a.mp4"
+    f.write_bytes(b"x")
+    c = Candidate(id="k", source=SourceKind.archive, media="video", in_point=0.0, out_point=8.0,
+                  local_path=str(f), url="k", score=50)
+    s = _shot(0, ShotType.footage)
+    pool = ShotList(project_id="p", duration=3.0, shots=[s.model_copy(update={"candidates": [c]})])
+    for name in (L.CLAUSES_FILE, L.PLAN_FILE):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    empty = tmp_path / "no_records"
+    monkeypatch.setenv("DESCRIBE_CACHE_FOLDER", str(empty))
+    monkeypatch.setattr(pick_stage, "pick_shotlist", lambda sourced, ctx: ShotList(project_id="p", duration=3.0,
+                                                                                   shots=[s]))
+    warns = []
+    log = SimpleNamespace(info=lambda *a, **k: None, warn=lambda msg, **k: warns.append((msg, k)))
+    ctx = SimpleNamespace(work=str(tmp_path), settings=None, log=log,
+                          load=lambda name, model: SimpleNamespace(words=[]))
+    L.pick_clause(pool, ctx)
+    assert [(m, k["folder"]) for m, k in warns] == [("no describe records found for the fill", str(empty))]

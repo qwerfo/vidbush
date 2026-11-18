@@ -74,8 +74,11 @@ def pick_clause(sourced: ShotList, ctx: Any) -> ShotList:
     for n in drop_pictureless_layouts(sl):
         ctx.log.info("document without its page", note=n)
     nar = ctx.load("narration", Narration)
-    for n in fill_empty_shots(sl, lambda a, b: spoken(nar, a, b), sourced, describe_records(ctx.settings)):
+    record = describe_records(ctx.settings)
+    for n in fill_empty_shots(sl, lambda a, b: spoken(nar, a, b), sourced, record):
         ctx.log.info("empty shot filled", note=n)
+    if record.looked and not record.found:  # a wrong folder makes every lookup miss: say so
+        ctx.log.warn("no describe records found for the fill", folder=str(record.folder), looked=record.looked)
     rulings = check_ai_rulings(sl)
     plan = json.loads((work / PLAN_FILE).read_text(encoding="utf-8"))
     plan["ai_rulings"] = rulings
@@ -148,16 +151,21 @@ def clean_record(rec: Optional[dict]) -> bool:
 
 
 def describe_records(settings: Any) -> Any:
-    """record(candidate) -> its cached describe record, or None; never calls a model."""
+    """record(candidate) -> its cached describe record, or None; never calls a model. record.looked and
+    record.found count the lookups and the hits, record.folder is where it looked."""
     from ..judge import describe as D
     root = D.cache_dir(settings)
 
     def record(c: Any) -> Optional[dict]:
+        record.looked += 1
         try:
             f = root / f"{D.record_key(c)}.json"
-            return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+            rec = json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
         except (OSError, ValueError):
-            return None
+            rec = None
+        record.found += rec is not None
+        return rec
+    record.looked, record.found, record.folder = 0, 0, root
     return record
 
 

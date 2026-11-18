@@ -30,3 +30,16 @@ def test_use_dotenv_false_reads_neither_file(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.delenv("VB_TEST_B", raising=False)
     s = load_settings(root, use_dotenv=False)
     assert s.key("VB_TEST_A") == "" and s.key("VB_TEST_B") == ""
+
+
+def test_describe_cache_dir_prefers_env_then_settings_then_the_source_cache(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+    from vidbush.judge.describe import cache_dir
+    monkeypatch.delenv("DESCRIBE_CACHE_FOLDER", raising=False)
+    st = SimpleNamespace(source_cache_folder=str(tmp_path / "sc"), describe_cache_folder="", repo_root=".")
+    assert cache_dir(st) == tmp_path / "sc" / "describe"
+    st.describe_cache_folder = str(tmp_path / "set")
+    assert cache_dir(st) == tmp_path / "set"
+    monkeypatch.setenv("DESCRIBE_CACHE_FOLDER", str(tmp_path / "env"))
+    assert cache_dir(st) == tmp_path / "env"
+    assert load_settings(_root(tmp_path)).describe_cache_folder == str(tmp_path / "env")

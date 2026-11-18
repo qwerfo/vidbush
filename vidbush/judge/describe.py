@@ -79,8 +79,9 @@ def is_ai(c: Candidate) -> bool:
 
 
 def cache_dir(settings: Any = None) -> Path:
-    """DESCRIBE_CACHE_FOLDER, else <source cache>/describe (on E: through the data/source_cache link)."""
-    env = os.environ.get("DESCRIBE_CACHE_FOLDER", "")
+    """env DESCRIBE_CACHE_FOLDER, else settings.describe_cache_folder, else <source cache>/describe (on E:
+    through the data/source_cache link)."""
+    env = os.environ.get("DESCRIBE_CACHE_FOLDER", "") or getattr(settings, "describe_cache_folder", "") or ""
     if env:
         return Path(env)
     base = getattr(settings, "source_cache_folder", "") or "data/source_cache"
