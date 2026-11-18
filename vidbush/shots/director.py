@@ -37,6 +37,9 @@ def build_shotlist(project: Project, script: Script, narration: Narration, resea
                    rng: random.Random) -> tuple[ShotList, DirectorPlan]:
     """Ideas per beat (seat plus heuristics), pacing slots, rules; returns the ShotList and the merged plan."""
     from .rules import apply_rules, cards_on_cue, demote_repeating_cards, screen_guard, space_cards, time_overlays
+    if getattr(profile, "planner", "") == "clause":  # clause-first planner (vidbush/plan); default stays here
+        from ..plan.planner import plan_shotlist
+        return plan_shotlist(project, script, narration, research, profile, brand, seats, rng)
     log = getattr(seats, "log", None) or NullLogger()
     total = round(narration.duration + 1.0, 3)
     spans = beat_spans(script, narration)

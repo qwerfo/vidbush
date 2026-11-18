@@ -1378,3 +1378,24 @@ OCR of a large scan takes 20 to 60 s on first use (cached per file after).
 "twenty-nine people"). Role names per kind: `models.LAYOUT_ROLES`. Start a full layout near its first anchored
 word and hold it 3 to 7 s (the notes flag anything else). A name card needs a real portrait candidate; a
 document focus needs a real document whose page carries the quote.
+
+## 15. V2 integration (branch v2/base, night 2)
+
+v2/base = v2/audit + v2/sources + v2/layouts + v2/planner. Decisions: DECISIONS.md "V2: integration".
+
+### 15a. The layout contract
+
+The planner (`vidbush/plan/emit.py`) emits the layouts lane's `models.LayoutSpec`: roles from `LAYOUT_ROLES`,
+pictures as candidate ids on elements, a found document as a `document` element (plus `source`), background
+elements for number_over_footage and date_title from the clause's own pick, timeline `id` from the planner's
+timeline_id, `purpose` only on document_focus. A full layout's cut is moved to its first anchored word
+(`start_full_layouts_on_words`); panels get `layout_at` from the renderer. Tests: `tests/test_plan_contract.py`.
+
+### 15b. YouTube's paid second route
+
+`vidbush/source/youtube_api.py` (provider notes: PROVIDER_NOTES.md "video-download-api.com"). Free yt-dlp first;
+the first bot check sets `youtube.ROUTE.name = "api"` for the rest of the process and the same video is fetched
+again on the paid route. Without a key the old 30 minute pause stays. Config: `sources.youtube_api` (on),
+`sources.youtube_api_budget_usd` (0.50 per run). Downloads per route this process: `youtube.ROUTE.counts`;
+paid jobs: `youtube_api.LEDGER` (spent, jobs), written into cost_report.json at each sourcing usage note.
+Live proof: `E:\coding projects\Vidbush\scratch\vda_live_test.py` (two videos, 1280x720, licence kept).

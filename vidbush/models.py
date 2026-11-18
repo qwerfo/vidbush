@@ -799,6 +799,7 @@ class StyleProfile(Model):
     art: ArtProfile = Field(default_factory=ArtProfile)
     palette: str = "documentary_warm"
     top10: bool = False  # number cards, item lower thirds, recap grid
+    planner: str = ""  # "clause" routes build_shotlist to vidbush/plan (clause-first); empty keeps the slot planner
     provenance: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

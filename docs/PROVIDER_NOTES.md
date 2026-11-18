@@ -325,3 +325,22 @@ Video models (`POST /v2/media {type: video, model, prompt, operation, source_ima
 - In the proving run veo moved the camera (3 to 5 percent zoom or drift) on all 5 painted map clips and added objects or morphing to 4 of 8 photo-style AI stills; 6 of 10 illustration clips passed every check. Throughput was about one clip every 6 to 8 minutes on the one-at-a-time lane.
 - Images with references for the art layer: `vidbush/art/elevate.py` (RadioPlay's `reference_images` shape),
   through the image seat's own client, envelope and polling.
+
+## video-download-api.com (paid YouTube route, night 2 integration)
+
+- Host `https://p.savenow.to`. Key `VIDEO_DOWNLOAD_API_KEY` (also read as `VDA_API_KEY`), sent as the query
+  parameter `apikey` (download) or `api` (info, subtitles); never a header. Client: `vidbush/source/youtube_api.py`.
+- `GET /ajax/download.php?url=&format=720&apikey=&add_info=1&allow_extended_duration=0` returns `{success, id,
+  info}`; poll `GET /ajax/progress.php?id=` until `progress` reaches 1000, then use `download_url` only when
+  `success` is 1 or true. `success` 0 below 1000 is normal (still running).
+- `GET /ajax/api.php?function=i&api=&u=` answers title, duration, thumbnail directly (no job). Not used for
+  licence: the service reports none.
+- `GET /ajax/subtitles?url=&api=&lang=en&format=vtt` returns `{id, progress_url}`; poll progress_url the same way.
+- Prices (pricing page, 2026-11-18): MP4 360p, 720p, 1080p 0.0002 USD per job (180 minute base duration), 1440p
+  0.0003, 4K 0.00035; VTT or SRT 0.0001. Charged when a job is accepted and returns an id, before the file is
+  ready; a request rejected first (bad key: HTTP 401 invalid_api_key, no balance, too long) is not charged.
+- Whole videos only, no time sections: Vidbush fetches 720p whole and cuts windows locally.
+- Measured here (2 live videos, sled dog footage): a 4 minute video took about 100 s from request to file
+  (queue plus download); two of five Creative Commons results were 480p at best and are rejected after download
+  (the 0.0002 USD is spent: the service shows no formats beforehand); one file link was cut off mid download
+  ("Response ended prematurely"), now fetched once more on the same paid job.
