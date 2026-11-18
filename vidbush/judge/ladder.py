@@ -30,9 +30,23 @@ RESTATE_RETRIES = 1
 MAX_TEXT_WORDS = 6
 
 
+def missing_document(p: dict, plan: dict) -> bool:
+    """A document quoted as evidence or subject whose page is not in the pool: its words go over footage."""
+    return (E.needs_document(plan) and p.get("_doc") is None
+            and (plan.get("layout") or {}).get("purpose") in V.MARKED_PURPOSES)
+
+
+def is_open(p: dict, plan: dict) -> bool:
+    """Still needs the ladder: a picture is needed and none was picked, or a quoted document was not found;
+    and no ladder step has filled it yet (resolve marks a clause needing no picture as filled by pick)."""
+    unfilled = p.get("filled_by") in ("", None) or (p.get("filled_by") == "pick" and not p.get("fallback")
+                                                    and missing_document(p, plan))
+    needs = (E.needs_pick(plan) and p.get("_cand") is None) or missing_document(p, plan)
+    return unfilled and needs
+
+
 def open_clauses(e: dict) -> list[int]:
-    return [i for i, (p, s) in enumerate(zip(e["picks"], e["shots"]))
-            if E.needs_pick(s["plan"]) and p.get("_cand") is None and not p.get("filled_by")]
+    return [i for i, (p, s) in enumerate(zip(e["picks"], e["shots"])) if is_open(p, s["plan"])]
 
 
 def _ai_run_around(e: dict, i: int, ai_tail: int) -> int:
@@ -82,8 +96,10 @@ class Ladder:
         for i in open_clauses(e):
             self.step_hold_or_ai(e, i, ai_tail)
         for p, s in zip(e["picks"], e["shots"]):
-            if not p.get("filled_by"):
-                p["filled_by"] = "none" if E.needs_pick(s["plan"]) else "pick"
+            if is_open(p, s["plan"]):
+                p["filled_by"] = "none"
+            elif not p.get("filled_by"):
+                p["filled_by"] = "pick"
             self.stats[p["filled_by"]] = self.stats.get(p["filled_by"], 0) + 1
 
     # ------------------------------------------------------------ 1. re-source once

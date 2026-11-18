@@ -266,6 +266,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--salt", default="")
     ap.add_argument("--budget", type=float, default=4.0)
     ap.add_argument("--resource", action="store_true")
+    ap.add_argument("--no-ladder", action="store_true", help="picks only (run-to-run variation)")
     ap.add_argument("--sheets", default="")
     ap.add_argument("--previous", default="")
     a = ap.parse_args(argv)
@@ -298,7 +299,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if a.resource:
         from . import resource as RS
         resource = RS.Resourcer(project, out, settings, log).search
-    ladder = L.Ladder(seats, settings, out / "sheets", log, resource)
+    ladder = None if a.no_ladder else L.Ladder(seats, settings, out / "sheets", log, resource)
     t_edit = time.time()
     edits = E.edit_all(seats, scenes, clauses, narration, old, out / "sheets", log=log, settings=settings,
                        extra=extra, ladder=ladder)
@@ -323,7 +324,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         prev = None
         if a.previous:
             pp = Path(a.previous)
-            pplan = json.loads((pp / "work" / "plan_v2.json").read_text(encoding="utf-8"))
+            pv = pp / "work" / "plan_v2.json"  # absent for an old slot-planner run: its shot list alone
+            pplan = json.loads(pv.read_text(encoding="utf-8")) if pv.exists() else {"scenes": []}
             psl = json.loads((pp / "work" / "shotlist.json").read_text(encoding="utf-8"))
             prev = sheet_rows(pplan, psl, clauses, out / "review" / "frames")
         cur = sheet_rows(plan, json.loads(sl.model_dump_json()), clauses, out / "review" / "frames")
@@ -335,6 +337,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 def picker_metrics(edits: list[dict], seats: SaltedSeats, ladder, edit_minutes: float) -> dict:
+    """Calls, cost and seconds per task, what filled each clause, and what code removed."""
     filled: dict[str, int] = {}
     nothing = []
     for e in edits:

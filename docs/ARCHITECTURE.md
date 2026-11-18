@@ -141,11 +141,24 @@ Selected when the style profile sets `planner: clause`; `shots/director.py build
    hold, or one of the eleven layout kinds in `vocab.py`), presentation for route_map, chart, table, timeline and document_focus (plus a document purpose: evidence, period or subject, and the passages to mark),
    real_thing, medium, anchor, queries per source class, layout elements, grammar labels (sequence, callback,
    hero, quiet). `validate` checks timing, reading time and hold limits only; problems go back to the model.
-3. `edit.py` (vision seat, one call per scene, after sourcing): numbered contact sheets (`sheets.py`) of the
-   scene's pool; the model picks per shot by comparison, names the in-point frame, answers nothing fits with a
-   fallback, labels only real pictures. `check` and `resolve` enforce the AI still rulings (never for a real person,
-   event or document; at most 2 in a row; at most 4 s), asset repeats and labels. Not yet wired into the judge
-   stage: a live run still picks per shot with the judge; the replay runs the edit on stored candidates.
+3. Describe and pick (after sourcing; the live judge stage hands a clause-planned project to
+   `judge/pick_stage.py` instead of scoring candidates):
+   - `judge/describe.py` (describer seat, one call per uncached asset): frames spread across the clip, or the
+     still itself, at 640 px; returns what is visible (shows, people, place, period and look, text in frame,
+     quality problems, usable time ranges) and, apart, what sourcing knows (source_facts). Stills also get the
+     local text reader's words (ocr_text). Records are cached by content hash plus clip range under
+     DESCRIBE_CACHE_FOLDER (default `<source cache>/describe`); the prefilter runs first.
+   - `plan/edit.py` (picker seat, one call per scene): the scene's clauses, at most 40 records (shortlisted by
+     sourcing text before description) and one numbered image per asset (`sheets.asset_card`), plus the
+     previous scene's last two picks. The model picks per clause an asset and a start time, or answers nothing
+     fits with queries to search again. `check` and `resolve` enforce the AI still rulings, asset repeats, hold
+     limits, the time range inside the clip, no record with a mark or subtitles, identity of a named real thing
+     from record words, a document's quoted words found on the page, labels from the record.
+   - `judge/ladder.py` for clauses with no pick: re-source once with the picker's queries
+     (`judge/resource.py` over `source.registry.source_pool`), the director restates the clause as a layout
+     (`judge/pick_prompts.py`), hold the previous real picture for a short clause, an AI still where the rulings
+     allow. Each clause records `filled_by`.
+   The old per-shot judge (`judge/director_loop.py`, 0 to 100 score) stays for the slot planner.
 4. `emit.py`: one Shot per clause or held clause group, in the existing ShotList contract; layouts in
    `Shot.layout` (models.LayoutSpec), full-frame layouts as motion_graphic with a title_card placeholder.
    `work/plan_v2.json` keeps everything the models decided.
@@ -155,6 +168,13 @@ Replay on a stored project with no sourcing and no render: `python -m vidbush.pl
 anchor inside window and lead, treatments, AI runs, nothing fits, old against new); replies are cached under
 `<out>/cache`. `python -m vidbush.plan.compare <project> <out> <scene> <dir>` draws the old against new review
 sheet.
+
+`python -m vidbush.judge.pick_replay <project> <out> [--scenes] [--env] [--direct-from <replay>] [--extra
+<results.json> <input.md>]... [--salt] [--budget] [--resource] [--sheets s01,s08] [--previous <replay or
+project>]` replays describe and pick on stored candidates (plus a v2 sources proof's assets placed where their
+sentence is spoken), with the director plans of an earlier replay, and writes picks.json, metrics.json (with a
+`picker` block: calls, cost and seconds per task, filled_by counts, removed picks) and review sheets of the
+earlier against tonight's pick at the frame that plays.
 
 ## Contracts
 

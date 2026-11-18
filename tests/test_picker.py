@@ -314,3 +314,14 @@ def test_every_clause_ends_with_a_filled_by(pool, recs):
     assert [p["filled_by"] for p in e["picks"]] == ["pick", "hold", "pick", "none", "none"]
     assert all(p["filled_by"] in FILLED for p in e["picks"])
     assert sum(lad.stats.values()) == 5
+
+
+def test_unfound_evidence_document_is_open_for_the_ladder():
+    from vidbush.judge import ladder as L
+    plan = {"treatment": "document_focus", "presentation": "full",
+            "layout": {"purpose": "evidence", "elements": [{"text": "words on the page"}]}}
+    assert L.is_open({"filled_by": "pick", "_doc": None, "_cand": None}, plan)
+    assert not L.is_open({"filled_by": "restate", "_doc": None, "_cand": None, "fallback": "text_over_footage"}, plan)
+    assert not L.is_open({"filled_by": "pick", "_doc": object(), "_cand": None}, plan)
+    period = dict(plan, layout={"purpose": "period", "elements": []})
+    assert not L.is_open({"filled_by": "pick", "_doc": None, "_cand": None}, period)

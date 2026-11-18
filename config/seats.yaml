@@ -82,11 +82,11 @@ roles:
     - {provider: wellflow, model: "gemini-3.8-flash"}
   # Picker (v2, vidbush/plan/edit.py): one call per scene compares the described pool and picks per clause.
   # The director's model (the strongest vision model the policy already uses), then the cheap vision model.
-  # Medium reasoning effort on openlux: at its default one scene's pick spent 193k tokens (2026-11-18).
+  # Low reasoning effort on openlux: one scene's pick spent 193k tokens at the default and 157k at medium (2026-11-18).
   picker:
     - {provider: closerouter, model_env: LLM_DIRECTOR_MODEL, model_match: {family: sonnet, version: "5.5"}}
     - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824},
-                                                             extra_body: {reasoning_effort: medium}}}
+                                                             extra_body: {reasoning_effort: low}}}
     - {provider: anthropic_direct, model: "claude-sonnet-5-5"}
     - {provider: closerouter, model: "google/gemini-3.8-flash"}
     - {provider: wellflow, model: "gemini-3.8-flash"}
