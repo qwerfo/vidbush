@@ -132,7 +132,7 @@ def stage_judge(ctx: StageContext) -> list[str]:
     from ..judge.director_loop import judge_and_select
     from ..plan.live import is_clause, pick_clause
     shotlist = ctx.load("shotlist", ShotList)
-    if is_clause(ctx.profile):  # the planner's comparative edit over the scene pools picks, not the judge
+    if is_clause(ctx.profile):  # the picker: describe once, pick by comparison, the ladder (judge/pick_stage)
         return [str(ctx.save("shotlist", pick_clause(shotlist, ctx)))]
     if "judge" in ctx.extra.get("forced", ()) and not ctx.snapshot_used():
         clear_verdicts(shotlist)  # a project from before snapshots: its working copy holds old verdicts

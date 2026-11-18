@@ -6,46 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from vidbush.models import Candidate, SourceKind
+from vidbush.models import Shot, ShotList, ShotType
 from vidbush.plan import live as L
-from vidbush.plan.clauses import Clause
 
 
-def _clause(cid, start, end):
-    return Clause(id=cid, scene="s01", beat="b1", start=start, end=end, words=(0, 1), text="x")
+def _shot(i, typ, dur=3.0):
+    return Shot(id=f"s{i}", beat_id="b", scene_id="c", start=i * 3.0, end=i * 3.0 + dur, duration=dur, type=typ,
+                intent="x")
 
 
-def _cand(cid, src=SourceKind.youtube):
-    return Candidate(id=cid, source=src, media="video")
-
-
-def test_ladder_order_map_then_text_then_ai_and_never_three_ai_in_a_row():
-    cl = [_clause(f"c{i}", i * 3.0, i * 3.0 + 3.0) for i in range(5)]
-    plans = [{"treatment": "picture", "real_thing": {"name": "Juneau", "kind": "place"}},  # map
-             {"treatment": "picture"},  # text over related footage
-             {"treatment": "picture"},  # AI still
-             {"treatment": "picture"},  # AI still
-             {"treatment": "picture"}]  # a third AI in a row is refused: words alone
-    picks = [{"clause": "c0", "_cand": None, "fallback": "ai_still"},
-             {"clause": "c1", "_cand": None, "fallback": "ai_still", "_fallback_cand": _cand("rel")},
-             {"clause": "c2", "_cand": None, "fallback": "text_over_footage"},
-             {"clause": "c3", "_cand": None, "fallback": "ai_still"},
-             {"clause": "c4", "_cand": None, "fallback": "ai_still"}]
-    edits = [{"scene": "s01", "picks": picks}]
-    L.ladder(edits, [{"scene": "s01", "clauses": plans}], cl)
-    assert [p["fallback"] for p in picks] == ["map", "text_over_footage", "ai_still", "ai_still",
-                                              "text_over_footage"]
-    assert picks[0]["map_place"] == "Juneau" and "ladder" in picks[0]["resolved"]
-
-
-def test_ladder_never_ai_for_a_real_person_or_over_four_seconds():
-    cl = [_clause("c0", 0.0, 3.0), _clause("c1", 3.0, 9.0)]
-    plans = [{"treatment": "picture", "real_thing": {"name": "A Person", "kind": "person"}},
-             {"treatment": "picture"}]
-    picks = [{"clause": "c0", "_cand": None, "fallback": "ai_still"},
-             {"clause": "c1", "_cand": None, "fallback": "ai_still"}]
-    L.ladder([{"scene": "s01", "picks": picks}], [{"scene": "s01", "clauses": plans}], cl)
-    assert [p["fallback"] for p in picks] == ["text_over_footage", "text_over_footage"]
+def test_ai_rulings_are_measured_and_flagged_on_the_picked_list():
+    ai, ft = ShotType.ai_image, ShotType.footage
+    shots = [_shot(0, ai), _shot(1, ai), _shot(2, ai), _shot(3, ft), _shot(4, ai, 5.0)]
+    sl = ShotList(project_id="p", duration=17.0, shots=shots)
+    got = L.check_ai_rulings(sl)
+    assert got["run_over_two"] == ["s2"] and got["over_4s"] == ["s4"] and got["real_thing"] == []
+    assert "ai_ruling:run_over_two" in shots[2].flags
 
 
 @pytest.mark.slow
@@ -64,31 +40,3 @@ def test_demo_end_to_end_with_the_clause_planner(settings):
     assert (root / "final.mp4").exists()
     for name in ("clauses.json", "direct.json", "plan_v2.json", "sourcing.shotlist.json", "judge.shotlist.json"):
         assert (root / "work" / name).exists(), name
-
-
-def test_a_hold_is_not_a_new_picture_and_never_resets_the_ai_run():
-    cl = [_clause(f"c{i}", i * 2.0, i * 2.0 + 2.0) for i in range(4)]
-    plans = [{"treatment": "picture"}] * 4
-    picks = [{"clause": "c0", "_cand": None, "fallback": "ai_still"},
-             {"clause": "c1", "_cand": None, "fallback": "hold_previous"},  # 4 s with c0: inside the AI limit
-             {"clause": "c2", "_cand": None, "fallback": "ai_still"},
-             {"clause": "c3", "_cand": None, "fallback": "ai_still"}]  # third AI picture in a row: refused
-    L.ladder([{"scene": "s01", "picks": picks}], [{"scene": "s01", "clauses": plans}], cl)
-    assert [p["fallback"] for p in picks] == ["ai_still", "hold_previous", "ai_still", "text_over_footage"]
-
-
-def test_a_document_never_falls_back_to_an_ai_still():
-    cl = [_clause("c0", 0.0, 3.0)]
-    plans = [{"treatment": "document_focus", "presentation": "panel", "real_thing": {"name": "x", "kind": "object"}}]
-    picks = [{"clause": "c0", "_cand": None, "fallback": "ai_still"}]
-    L.ladder([{"scene": "s01", "picks": picks}], [{"scene": "s01", "clauses": plans}], cl)
-    assert picks[0]["fallback"] == "text_over_footage"
-
-
-def test_a_hold_past_the_previous_pictures_limit_climbs_the_ladder():
-    cl = [_clause("c0", 0.0, 3.0), _clause("c1", 3.0, 8.0)]
-    plans = [{"treatment": "picture"}, {"treatment": "picture"}]
-    picks = [{"clause": "c0", "_cand": None, "fallback": "ai_still"},
-             {"clause": "c1", "_cand": None, "fallback": "hold_previous", "_fallback_cand": _cand("rel")}]
-    L.ladder([{"scene": "s01", "picks": picks}], [{"scene": "s01", "clauses": plans}], cl)
-    assert picks[1]["fallback"] == "text_over_footage"
