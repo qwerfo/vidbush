@@ -120,6 +120,7 @@ class Settings(BaseModel):
     data_folder: str
     source_cache_folder: str
     music_folder: str
+    sound_library: str = "data/sound_library"  # labelled ambience beds and effects (vidbush/audio/library.py)
     config_folder: str
     env: dict[str, str] = Field(default_factory=dict)
     seats: dict[str, Any] = Field(default_factory=dict)
@@ -164,6 +165,7 @@ def load_settings(root: Optional[Path] = None, overrides: Optional[dict[str, Any
         data_folder=app.get("data_folder", "data"),
         source_cache_folder=env.get("SOURCE_CACHE_FOLDER") or app.get("source_cache_folder", "data/source_cache"),
         music_folder=env.get("MUSIC_FOLDER") or app.get("music_folder", "fixtures/music"),
+        sound_library=env.get("SOUND_LIBRARY") or app.get("sound_library", "data/sound_library"),
         config_folder=str(root / "config"),
         env=env,
         seats=seats,

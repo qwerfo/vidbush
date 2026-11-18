@@ -106,6 +106,7 @@ def load_library(folder: Path) -> tuple[list[Track], bool]:
     """Tracks in folder with tracks.json metadata. Returns (tracks, has_metadata)."""
     meta_path = folder / "tracks.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    meta = {k: v for k, v in meta.items() if not k.startswith("_")}  # "_help" and other notes
     tracks = []
     for f in sorted(folder.iterdir()):
         if f.suffix.lower() not in AUDIO_EXT:
@@ -430,8 +431,15 @@ def _choose(script: Script, narration: Narration, duration: float, brand: Brand,
 
 def build_mix(narration: Narration, script: Script, shotlist: ShotList, brand: Brand, profile: StyleProfile,
               settings: Settings, work_dir: Path, log: JsonLogger, rng: random.Random) -> Path:
-    """Write work_dir/mix.wav (48 kHz stereo, exactly shotlist.duration s) and work_dir/mix.json."""
+    """Write work_dir/mix.wav (48 kHz stereo, exactly shotlist.duration s) and work_dir/mix.json.
+    With profile.sound.planned (the default) the planned mix in mixer.py builds it (music per scene, quiet,
+    ambience, effects, work/sound_plan.json); otherwise the single ducked bed below."""
+    if profile.sound.planned:
+        from .mixer import build_sound
+        return build_sound(narration, script, shotlist, brand, profile, settings, work_dir, log)
     work_dir = Path(work_dir)
+    for stale in ("sound_plan.json", "sound_qa.md"):  # from an earlier planned mix: qa_report must not show it
+        (work_dir / stale).unlink(missing_ok=True)
     duration = float(shotlist.duration)
     n = int(round(duration * SR))
     sections, tracks, mode, folder = _choose(script, narration, duration, brand, profile, settings, work_dir,

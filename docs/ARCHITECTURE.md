@@ -85,6 +85,9 @@ output/<id>/
     script_summary.json     director's one paragraph summary of the script (keyed by script hash)
     fallbacks.json          heuristic fallbacks per stage while a real provider was configured
     shotlist.json captions.json mix.wav mix.json
+    sound_plan.json         every music section, change, quiet, bed and effect with time, file, level, reason, plus qa
+    sound_qa.md             the Sound section of qa_report.md
+    stems/                  narration, music, ambience, effects wav (the planned mix's layers)
     <stage>.shotlist.json   snapshot written by each shot list stage (shotlist, sourcing, judge, visuals,
                             motion, assembly); the next stage reads it
     snapshots.json          {"last": stage, "sha": hash of the working copy it wrote, "stages": {...}}
@@ -206,7 +209,13 @@ helpers `ctx.work`, `ctx.root`, `ctx.work_path(key)`, `ctx.out_path(name)`,
 | mg/renderer.py | `render_spec(spec, out_path, alpha, settings) -> Path`, `render_all_motion(shotlist, ctx) -> (ShotList, list[Path])` | python or remotion, cached by spec hash |
 | mg/routes.py | `route_points(a, b, via) -> list[[lat, lon]] or None`, `infer_via(*texts) -> str`, `path_miles(points) -> float` | rail, road, river: snap within 10 km and Dijkstra over the bundled line layer; sea, air: dashed great circle; line (no mode named): rail, then road (`modes(via)`); trail: none |
 | render/captions.py | `group_words(words, style) -> list[CaptionLine]`, `build_captions(narration, profile, out_root, settings) -> list[Path]`, `write_ass_window(lines, profile, t0, t1, path, w, h) -> Path`, `caption_geometry(profile, w, h) -> dict` | one line, 3 to 5 words, fixed band height |
-| audio/music.py | `build_mix(narration, script, shotlist, brand, profile, settings, work_dir, log, rng) -> Path` | writes work/mix.wav at -14 LUFS, ducked bed |
+| audio/music.py | `build_mix(narration, script, shotlist, brand, profile, settings, work_dir, log, rng) -> Path` | writes work/mix.wav at -14 LUFS: the planned mix (audio/mixer.py) by default, the single ducked bed when profile.sound.planned is false |
+| audio/sound_plan.py | `scene_infos`, `quiet_spans`, `plan_music`, `music_gain_points`, `quiet_gain_points`, `place_of`, `plan_ambience`, `room_tone_spans`, `plan_effects` | the sound plan as data: music per scene purpose (crossfade on a phrase, changes at quiets), quiet fades, ambience from shot descriptions, word-timed graphic effects |
+| audio/mixer.py | `build_sound(narration, script, shotlist, brand, profile, settings, work_dir, log) -> Path` | renders the plan from eased gain curves (no compressor), beds levelled and de-looped, writes mix.wav, mix.json, sound_plan.json, sound_qa.md, stems/ |
+| audio/sound_qa.py | `measure_mix(work_dir, plan, speech, quiets, words)`, `qa_markdown(plan)`, `qa_section(work_dir)` | levels against the narration and faults: gap, cut, fast ramp, loud bed, effect on a word, loudness |
+| audio/library.py | `ensure(settings, category, key, log, variant) -> Sound or None`, `pick`, `candidates`, `load_catalogue` | labelled ambience beds and effects at settings.sound_library; reviewed first, refused never; generates and labels what is missing |
+| audio/elevenlabs_sfx.py | `generate(text, seconds, prompt_influence, settings) -> (mp3 bytes, credits)` | ElevenLabs sound effects (ported from RadioPlay) |
+| audio/tracks.py | `analyse_track(path)`, `build_tracks_json(folder, write)`, `needs_refresh(folder)` | measures tempo, phrase, energy, brightness, mood for tracks.json; checked fields survive |
 | render/assemble.py | `assemble(shotlist, ctx) -> (Path, ShotList)` | per-shot segments with cache, concat, intro/outro, mux |
 | render/package.py | `package(shotlist, ctx) -> list[Path]` | chapters, description, thumbnails |
 | judge/qa.py | `build_qa(shotlist, ctx) -> list[Path]`, `judge_rendered(shotlist, frames, ctx, words)`, `local_checks(...)`, `overlay_text_stats(shotlist, words)`, `screen_time(shotlist)` | post-render frame check: frames from each shot's own window (`shot_times`), judged against the narration spoken during the shot with named checks plus code checks (text timing, repeats, filler, same picture); screen time by what is on screen (selected candidate, not planned type); every on-screen text item measured; qa_report.md opens with the tile audit's six numbers (`load_audit`, `audit_lines`, from audit/audit_summary.json, or a line saying how to run it), then a five-line summary; `pct_above_threshold` is the pre-render judge, kept as bookkeeping |

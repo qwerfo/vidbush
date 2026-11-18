@@ -85,7 +85,7 @@ def test_speech_envelope_merges_short_gaps() -> None:
 
 def test_ducking_reduces_bed_under_speech(tmp_path: Path, library: Path) -> None:
     nar, script, sl = _case(tmp_path)
-    profile = StyleProfile(id="p")
+    profile = StyleProfile(id="p", sound={"planned": False})
     tracks = {t.file: t for t in music.load_library(library)[0]}
     sections = [music.Section(track="calm.wav", start=0.0, end=sl.duration, purpose="hook")]
     env = music.speech_envelope([(0.5, 3.0), (3.2, 5.0), (9.0, 11.0)], sl.duration, 0.8, 0.08)
@@ -109,7 +109,7 @@ def test_build_mix_length_loudness_and_report(tmp_path: Path, library: Path, set
     nar, script, sl = _case(tmp_path)
     brand = Brand(id="b", music_folder=str(library))
     work = tmp_path / "work"
-    out = music.build_mix(nar, script, sl, brand, StyleProfile(id="p"), settings, work, NullLogger(), random.Random(3))
+    out = music.build_mix(nar, script, sl, brand, StyleProfile(id="p", sound={"planned": False}), settings, work, NullLogger(), random.Random(3))
     assert out == work / "mix.wav"
     x = read_audio(out, SR, 2)
     assert len(x) == int(round(sl.duration * SR))
@@ -127,19 +127,19 @@ def test_build_mix_override_random_and_empty(tmp_path: Path, library: Path, sett
     work.mkdir()
     (work / "music_override.json").write_text(json.dumps({"track": "calm.wav"}))
     brand = Brand(id="b", music_folder=str(library))
-    music.build_mix(nar, script, sl, brand, StyleProfile(id="p"), settings, work, NullLogger(), random.Random(1))
+    music.build_mix(nar, script, sl, brand, StyleProfile(id="p", sound={"planned": False}), settings, work, NullLogger(), random.Random(1))
     info = json.loads((work / "mix.json").read_text())
     assert info["selection"] == "override" and {t["track"] for t in info["tracks"]} == {"calm.wav"}
 
     (library / "tracks.json").unlink()
     (work / "music_override.json").unlink()
-    music.build_mix(nar, script, sl, brand, StyleProfile(id="p"), settings, work, NullLogger(), random.Random(1))
+    music.build_mix(nar, script, sl, brand, StyleProfile(id="p", sound={"planned": False}), settings, work, NullLogger(), random.Random(1))
     assert json.loads((work / "mix.json").read_text())["selection"] == "random"
 
     empty = tmp_path / "empty"
     empty.mkdir()
     settings.music_folder = str(empty)
-    out = music.build_mix(nar, script, sl, Brand(id="b", music_folder=str(empty)), StyleProfile(id="p"), settings,
+    out = music.build_mix(nar, script, sl, Brand(id="b", music_folder=str(empty)), StyleProfile(id="p", sound={"planned": False}), settings,
                           work, NullLogger(), random.Random(1))
     info = json.loads((work / "mix.json").read_text())
     assert info["narration_only"] and info["tracks"] == []

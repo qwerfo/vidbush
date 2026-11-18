@@ -1499,3 +1499,91 @@ Contact sheets, earlier (left) against tonight (right), one row per clause:
 `E:\coding projects\Vidbush\picker\alaska\review\review_s01_1.jpg`, `review_s01_2.jpg`,
 `review_s08_1.jpg`, `review_s08_2.jpg`.
 Read down the picks for the two Alaska scenes and say whether each picture now shows what its words say.
+## 17. Sound that follows the story (V2, branch v2/sound)
+
+### 17a. What it does
+
+The mix stage plans four layers under the narration and writes the plan to `work/sound_plan.json`, every item
+with its time, file, level and reason:
+
+- **Music, per scene.** The mood of each scene comes from its stated purpose in `work/plan_v2.json` (the
+  planner's `scene_purpose`), else the script purpose. The track changes only when the mood changes, as a 1 to
+  2 s equal power crossfade placed on the outgoing track's phrase boundary when the track has a clear pulse.
+  Under speech the music holds one level; it never ducks or pumps.
+- **Quiet.** On a clause the planner labelled quiet, the music fades out over 1.5 s before the clause and comes
+  back 0.6 s after the line ends, over 2 s. Room tone holds underneath. A scene change that falls inside a quiet
+  happens at its return, and a quiet whose note turns ("then lifts into arrival") can change the music inside a
+  scene.
+- **Ambience.** A very low bed under real footage and stills of a place, read from the shot description, held
+  across the shots of one place (and through a short full frame map between them), eased over 1.5 s at a change
+  of place. Close views of objects, documents and maps get none, and period pictures never get traffic or crowds.
+- **Effects.** One soft paper family on route lines, number landings, settling cards and document marks, timed
+  to the graphic's own word timings, at least 12 dB under the words they overlap, none near a quiet clause.
+
+The mix is normalised once to the render target. `work/stems/{narration,music,ambience,effects}.wav` are kept
+for measurement and the levels page. `qa_report.md` gains a Sound section: speech level, music and ambience
+under speech, loudness, true peak, shortest ramps, and every fault with its time (a gap over 0.2 s, a cut, a ramp
+faster than 1 s, a bed over its level, an effect on a word).
+
+### 17b. Levels and switches (style profile `sound`)
+
+| field | default | meaning |
+|---|---|---|
+| `planned` | true | false goes back to the single ducked bed |
+| `music_under_speech_db` | -18 | music under the voice, dB relative to the narration loudness |
+| `music_open_db` | -10 | before the first word, after the last, in pauses of 3 s or more |
+| `ambience_db` | -30 | place beds |
+| `room_tone_db` | -36 | the floor under quiet moments |
+| `effects_db` | -20 | graphic effects (also always 12 dB under the words they overlap) |
+| `ambience`, `effects` | true | switch either layer off |
+
+None of these has been heard by Adam. `E:\coding projects\Vidbush\sound\levels.html` has one row per layer
+(music, ambience, effects), four clips 5 dB apart, a comment box and Export; put his picks here.
+
+### 17c. Music folder and tracks.json
+
+`MUSIC_FOLDER` (or the brand's music folder) is used when it holds audio, else the bundled `fixtures/music`
+(four code-generated pads, never listened to). `tracks.json` is measured automatically on first use (tempo,
+phrase length, energy, brightness, loopable, mood) and rewritten only when a track changes. To correct a value,
+edit it and add the field name to that track's `checked` list, for example `"checked": ["mood"]`; a re-run never
+overwrites a checked field. Run it by hand with `python -m vidbush.audio.tracks <folder>`.
+
+### 17d. The sound library
+
+`settings.sound_library` (`SOUND_LIBRARY`, default `E:/coding projects/Vidbush/sound_library` in
+`config/vidbush.yaml`) holds `catalogue.json`, `beds/<place>/` and `effects/paper/`, each sound with a json
+sidecar: what it depicts, where it came from, loudness, prompt, credits and `review_status`. Reviewed sounds
+are used first, refused ones never. Seeded by `scripts/sound_library_seed.py` from RadioPlay's library (files
+copied, statuses kept); any place or effect still missing is generated with ElevenLabs
+(`ELEVENLABS_API_KEY`, about 10 credits a second, 300 credits for a 30 s bed) and saved unreviewed. Places:
+open_ground, snow_wind, coast, river, forest, city_street, town_street, road, interior_quiet, interior_public,
+rain, room_tone. A bed must be steady and loud enough to use (see DECISIONS, V2: sound); a place with four
+unusable takes is left without a bed rather than generated again.
+
+To mark a sound as heard, set its sidecar and catalogue `review_status` to "approved by Adam" or
+"refused by Adam" (and `review_words`).
+
+### 17e. Proving it without a pipeline run
+
+`python scripts/sound_proof.py build` rebuilds the mix of Alaska run 3 with the plan v2 replay's purposes and
+quiet labels into `E:\coding projects\Vidbush\sound\work_new` (and the old mix into `work_old`, for
+timing); `python scripts/sound_proof.py cut` writes `opening_{old,new}.mp4` (0 to 180 s) and
+`story_{old,new}.mp4` (300 to 390 s, quiets c100 and c108) onto the existing picture, plus `numbers.json`.
+`python scripts/sound_levels_page.py` writes `levels.html` and its clips from `work_new`'s stems.
+
+### 17f. Cost and time
+
+The planned mix took 46 to 60 s (final run 55.9 s) on the laptop for the 11 minute Alaska film against 14 to 16 s for the old
+ducked bed (about 45 s more per render). The library seed spent 990
+ElevenLabs credits and the proof runs 900 more on three coast retakes: 1,890 credits, about 0.34 USD.
+
+### 17g. Known limits
+
+- The moods of the bundled tracks are the composer's, not measured: the measured mood rule cannot tell the
+  dark bundled pads apart. With a real music folder check the measured moods once and mark corrections checked.
+- Place words are English and literal; a description that never names its place gets no bed.
+- Most library beds and every generated sound are unheard by Adam (see the catalogue's `review_status`).
+- Footage audio is still discarded.
+- Memory: the mix holds the narration and each layer as 48 kHz stereo float arrays, about 250 MB each for the
+  11 minute film (an estimated 5 to 6 GB peak for 30 minutes, not measured). `work/stems/` is about 500 MB for
+  11 minutes; delete it after review if disk is short.

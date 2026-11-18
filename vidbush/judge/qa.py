@@ -52,6 +52,16 @@ AUDIT_ROWS = (("real_share", "Real footage, stills, documents", 55.0, None),
               ("overlay_noticeable", "Overlay tiles noticeable", 21.0, ("<", 15.0)))
 
 
+def with_sound(md: str, ctx: Any, offset: float = 0.0) -> str:
+    """qa_report.md plus the sound section the mix stage wrote (vidbush/audio/sound_qa.py), when there is one."""
+    from ..audio.sound_qa import qa_section
+    sound = qa_section(ctx.work)
+    if not sound:
+        return md
+    note = f"Sound times are mix times; final.mp4 time is {offset:.2f} s later (intro).\n\n" if offset else ""
+    return md.rstrip("\n") + "\n\n" + sound.replace("## Sound\n\n", "## Sound\n\n" + note, 1)
+
+
 def build_qa(shotlist: ShotList, ctx: Any) -> list[Path]:
     """Write qa_report.json (models.QAReport) and qa_report.md in the project root."""
     threshold = float(ctx.settings.judge.threshold)
@@ -72,7 +82,7 @@ def build_qa(shotlist: ShotList, ctx: Any) -> list[Path]:
     report.summary = summary_lines(report, offset)  # final.mp4 time, as in the markdown
     json_path = write_json(ctx.root / "qa_report.json", report)
     md_path = ctx.root / "qa_report.md"
-    md_path.write_text(render_markdown(report, offset), encoding="utf-8")
+    md_path.write_text(with_sound(render_markdown(report, offset), ctx, offset), encoding="utf-8")
     ctx.log.info("qa report written", audit=report.audit, no_match=report.pct_no_match_accepted,
                  fail_rendered=report.pct_fail_rendered, screen_time=report.screen_time,
                  caption_coverage=report.caption_coverage)
@@ -797,7 +807,8 @@ def refresh_mock_used(ctx: Any) -> None:
         return
     report.mock_used = mocks
     write_json(path, report)
-    (ctx.root / "qa_report.md").write_text(render_markdown(report, intro_offset(ctx)), encoding="utf-8")
+    (ctx.root / "qa_report.md").write_text(with_sound(render_markdown(report, intro_offset(ctx)), ctx,
+                                                 intro_offset(ctx)), encoding="utf-8")
 
 
 def _verdict(p: Any) -> Optional[dict[str, Any]]:

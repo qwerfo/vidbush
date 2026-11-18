@@ -3,6 +3,7 @@ output_folder: output
 data_folder: data
 source_cache_folder: data/source_cache
 music_folder: fixtures/music
+sound_library: "E:/coding projects/Vidbush/sound_library"  # ambience beds and effects; SOUND_LIBRARY overrides. Kept off C: (disk space)
 offline: false          # true = never touch the network, every seat runs mock
 allow_mock_fallback: false  # true = if every real provider for a role fails, use mock instead of failing the stage
 

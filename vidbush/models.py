@@ -743,6 +743,20 @@ class MusicStyle(Model):
     scene_crossfade_s: float = 1.5
 
 
+class SoundStyle(Model):
+    """Levels of the layers under the narration (vidbush/audio/mixer.py), dB relative to the narration loudness.
+    Unheard defaults: Adam picks from the 5 dB ladders on sound/levels.html."""
+
+    planned: bool = True  # False: the older single bed ducked under the voice (vidbush/audio/music.py)
+    music_under_speech_db: float = -18.0  # one steady level under speech
+    music_open_db: float = -10.0  # before the first word, after the last, in pauses of 3 s or more
+    ambience_db: float = -30.0  # barely noticeable under the voice
+    room_tone_db: float = -36.0  # under a quiet moment when no place bed is playing
+    effects_db: float = -20.0  # graphic effects: felt more than heard
+    ambience: bool = True
+    effects: bool = True
+
+
 class MotionStyle(Model):
     ken_burns_intensity: float = 0.12  # max zoom delta fraction
     depthflow: bool = False
@@ -795,6 +809,7 @@ class StyleProfile(Model):
     transitions: Transitions = Field(default_factory=Transitions)
     colour: ColourGrade = Field(default_factory=ColourGrade)
     music: MusicStyle = Field(default_factory=MusicStyle)
+    sound: SoundStyle = Field(default_factory=SoundStyle)
     motion: MotionStyle = Field(default_factory=MotionStyle)
     art: ArtProfile = Field(default_factory=ArtProfile)
     palette: str = "documentary_warm"
