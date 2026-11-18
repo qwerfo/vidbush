@@ -12,6 +12,7 @@ pick (pick_clause, the judge stage's place): the picker lane's stage (judge/pick
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -70,10 +71,10 @@ def pick_clause(sourced: ShotList, ctx: Any) -> ShotList:
         if not (work / name).exists():
             raise RuntimeError(f"{work / name} is missing: rerun the shotlist stage (resume --force shotlist)")
     sl = pick_shotlist(sourced, ctx)
-    for n in drop_pageless_documents(sl):
+    for n in drop_pictureless_layouts(sl):
         ctx.log.info("document without its page", note=n)
     nar = ctx.load("narration", Narration)
-    for n in fill_empty_shots(sl, lambda a, b: spoken(nar, a, b), sourced):
+    for n in fill_empty_shots(sl, lambda a, b: spoken(nar, a, b), sourced, describe_records(ctx.settings)):
         ctx.log.info("empty shot filled", note=n)
     rulings = check_ai_rulings(sl)
     plan = json.loads((work / PLAN_FILE).read_text(encoding="utf-8"))
@@ -101,25 +102,67 @@ def _limit(c: Any) -> float:
     return V.HOLD_MAX_S
 
 
-def drop_pageless_documents(sl: ShotList) -> list[str]:
-    """A document layout with no real document picture is not drawn (the renderer would show an empty ground:
-    its marks need a page). Adam's ruling: the quoted words go over related real footage instead, so the layout
-    and its placeholder clip go and fill_empty_shots gives the shot a related picture with its spoken words."""
+# full layouts made of real pictures: without any of them they draw empty boxes or a black frame
+PICTURE_ROLES = {LayoutKind.document_focus: ("document",), LayoutKind.name_card: ("portrait",),
+                 LayoutKind.list_slideshow: ("item",), LayoutKind.split_comparison: ("left", "right")}
+
+
+def drop_pictureless_layouts(sl: ShotList) -> list[str]:
+    """A picture layout with none of its real pictures is not drawn (the renderer shows empty boxes, an empty
+    ground or black: a document's marks need a page, a name card a face). Adam's ruling for a missing
+    document holds for all of them: the words go over related real footage, so the layout goes and
+    fill_empty_shots gives the shot a related picture with its spoken words."""
     notes = []
     for s in sl.shots:
         lay = s.layout
-        if lay is None or lay.kind != LayoutKind.document_focus:
-            continue
-        if any(e.role == "document" and e.picture for e in lay.elements):
+        roles = PICTURE_ROLES.get(lay.kind) if lay is not None else None
+        if not roles or any(e.role in roles and e.picture for e in lay.elements):
             continue
         s.layout, s.motion, s.selected = None, None, None
         s.type = ShotType.footage
-        s.flags.append("document_page_not_found")
-        notes.append(f"{s.id}: no page carries the quote; its words over related footage")
+        s.flags.append(f"{lay.kind.value}_without_pictures")
+        notes.append(f"{s.id}: {lay.kind.value} has none of its real pictures; its words over related footage")
     return notes
 
 
-def fill_empty_shots(sl: ShotList, words_at: Any = None, pool: Optional[ShotList] = None) -> list[str]:
+drop_pageless_documents = drop_pictureless_layouts  # earlier name
+
+
+_WORD = re.compile(r"[a-z]{4,}")
+
+
+def _words(text: str) -> set[str]:
+    return set(_WORD.findall((text or "").lower()))
+
+
+def clean_record(rec: Optional[dict]) -> bool:
+    """A picture words may go over: described, usable, nothing blocking, not a talking head or a screen,
+    not a document, and no words of its own (slates, leaders, title cards, burned captions clash with ours)."""
+    if not rec:
+        return False
+    v = rec.get("visual") or {}
+    bad = {"burned_in_subtitles", "watermark", "stock_preview_mark", "channel_logo", "presenter_to_camera",
+           "screen_recording"}
+    return (bool(v.get("usable", True)) and not bad & set(v.get("quality") or []) and v.get("look") != "document"
+            and not str(v.get("text_in_frame") or "").strip())
+
+
+def describe_records(settings: Any) -> Any:
+    """record(candidate) -> its cached describe record, or None; never calls a model."""
+    from ..judge import describe as D
+    root = D.cache_dir(settings)
+
+    def record(c: Any) -> Optional[dict]:
+        try:
+            f = root / f"{D.record_key(c)}.json"
+            return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+        except (OSError, ValueError):
+            return None
+    return record
+
+
+def fill_empty_shots(sl: ShotList, words_at: Any = None, pool: Optional[ShotList] = None,
+                     record: Any = None) -> list[str]:
     """No shot leaves the pick with nothing on screen (the renderer would show a plain slate). In order:
     the previous shot's real picture holds on when the two together stay inside its hold limit; else the
     shot's own best unused real candidate, or the scene's, with the clause's words over it; else it stays
@@ -139,12 +182,24 @@ def fill_empty_shots(sl: ShotList, words_at: Any = None, pool: Optional[ShotList
             s.flags.append("filled:hold_previous")
             notes.append(f"{s.id}: holds {prev.id}'s picture")
             continue
-        own = [c for c in s.candidates if _real(c) and (c.url or c.local_path) not in shown]
+        said = words_at(s.start, s.end) if words_at else ""
+        want = _words(said) | _words(s.intent)
+
+        def fits(c: Any) -> bool:
+            return _real(c) and (c.url or c.local_path) not in shown and (record is None or clean_record(record(c)))
+
+        def rank(c: Any) -> tuple[int, float]:
+            rec = record(c) if record is not None else None
+            v = (rec or {}).get("visual") or {}
+            seen = _words(" ".join(str(v.get(k) or "") for k in ("shows", "place", "period")) + " " + (c.title or ""))
+            return (len(want & seen), c.score or 0.0)
+
+        own = [c for c in s.candidates if fits(c)]
         # the scene's whole sourced pool (the pick keeps only what it chose), else the picked list's
         src = pool.shots if pool is not None else sl.shots
         scene = [c for t in src if t.scene_id == s.scene_id and t.start < s.end + 30 and t.end > s.start - 30
-                 for c in t.candidates if _real(c) and (c.url or c.local_path) not in shown]
-        pick = next(iter(sorted(own or scene, key=lambda c: -(c.score or 0))), None)
+                 for c in t.candidates if fits(c)]
+        pick = max(own or scene, key=rank, default=None)
         if pick is None:
             s.flags.append("filled:nothing")
             notes.append(f"{s.id}: nothing real in the shot or scene, left empty")
@@ -153,7 +208,7 @@ def fill_empty_shots(sl: ShotList, words_at: Any = None, pool: Optional[ShotList
             s.candidates.append(pick)
         s.selected = pick.id
         shown.add(pick.url or pick.local_path)
-        words = " ".join((words_at(s.start, s.end) if words_at else "").split()[:6])
+        words = " ".join(said.split()[:6])
         video = pick.media == "video"
         if words:
             s.type = ShotType.footage_overlay if video else ShotType.image_overlay

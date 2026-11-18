@@ -74,3 +74,21 @@ def test_a_document_without_its_page_becomes_its_words_over_related_footage(tmp_
     assert L.drop_pageless_documents(sl)
     L.fill_empty_shots(sl, lambda a, b: "printed an apology", pool)
     assert doc.layout is None and doc.selected == "r" and doc.overlay.payload["title"] == "printed an apology"
+
+
+def test_fill_uses_only_clean_described_pictures_ranked_by_the_words(tmp_path):
+    from vidbush.models import Candidate, SourceKind
+    f = tmp_path / "a.mp4"
+    f.write_bytes(b"x")
+    mk = lambda cid, sc: Candidate(id=cid, source=SourceKind.archive, media="video", in_point=0.0, out_point=8.0,
+                                   local_path=str(f), url=cid, score=sc)
+    slate, beach, plain = mk("slate", 90), mk("beach", 40), mk("plain", 70)
+    recs = {"slate": {"visual": {"shows": "film leader", "text_in_frame": "END 1", "usable": True}},
+            "beach": {"visual": {"shows": "soldiers waiting on the beach", "text_in_frame": "", "usable": True}},
+            "plain": {"visual": {"shows": "a field of grass", "text_in_frame": "", "usable": True}}}
+    s = _shot(0, ShotType.footage)
+    pool = ShotList(project_id="p", duration=3.0, shots=[s.model_copy(update={"candidates": [slate, plain, beach]})])
+    sl = ShotList(project_id="p", duration=3.0, shots=[s])
+    L.fill_empty_shots(sl, lambda a, b: "men waited on the beach", pool, lambda c: recs[c.id])
+    assert s.selected == "beach"
+    assert not L.clean_record(None) and not L.clean_record(recs["slate"])
