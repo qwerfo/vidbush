@@ -58,3 +58,19 @@ def test_an_empty_shot_holds_the_previous_picture_or_takes_a_related_one_with_it
     assert b.selected == "v" and "filled:hold_previous" in b.flags  # 3 + 3 s inside the 8 s clip
     assert c.selected == "o" and c.type == ShotType.image_overlay and c.overlay.payload["title"] == "the town was small"
     assert len(notes) == 2
+
+
+def test_a_document_without_its_page_becomes_its_words_over_related_footage(tmp_path):
+    from vidbush.models import Candidate, LayoutElement, LayoutKind, LayoutSpec, SourceKind
+    f = tmp_path / "a.mp4"
+    f.write_bytes(b"x")
+    rel = Candidate(id="r", source=SourceKind.youtube, media="video", in_point=0.0, out_point=8.0,
+                    local_path=str(f), url="u", score=60)
+    doc = _shot(0, ShotType.motion_graphic)
+    doc.layout = LayoutSpec(kind=LayoutKind.document_focus, presentation="full",
+                            elements=[LayoutElement(role="mark", text="an apology", anchor="an apology")])
+    sl = ShotList(project_id="p", duration=3.0, shots=[doc])
+    pool = ShotList(project_id="p", duration=3.0, shots=[doc.model_copy(update={"candidates": [rel], "layout": None})])
+    assert L.drop_pageless_documents(sl)
+    L.fill_empty_shots(sl, lambda a, b: "printed an apology", pool)
+    assert doc.layout is None and doc.selected == "r" and doc.overlay.payload["title"] == "printed an apology"

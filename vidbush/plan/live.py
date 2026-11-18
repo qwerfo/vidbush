@@ -70,6 +70,8 @@ def pick_clause(sourced: ShotList, ctx: Any) -> ShotList:
         if not (work / name).exists():
             raise RuntimeError(f"{work / name} is missing: rerun the shotlist stage (resume --force shotlist)")
     sl = pick_shotlist(sourced, ctx)
+    for n in drop_pageless_documents(sl):
+        ctx.log.info("document without its page", note=n)
     nar = ctx.load("narration", Narration)
     for n in fill_empty_shots(sl, lambda a, b: spoken(nar, a, b), sourced):
         ctx.log.info("empty shot filled", note=n)
@@ -97,6 +99,24 @@ def _limit(c: Any) -> float:
     if c.media == "video":
         return max(0.0, min(V.HOLD_MAX_S, (c.out_point or 0) - (c.in_point or 0)))
     return V.HOLD_MAX_S
+
+
+def drop_pageless_documents(sl: ShotList) -> list[str]:
+    """A document layout with no real document picture is not drawn (the renderer would show an empty ground:
+    its marks need a page). Adam's ruling: the quoted words go over related real footage instead, so the layout
+    and its placeholder clip go and fill_empty_shots gives the shot a related picture with its spoken words."""
+    notes = []
+    for s in sl.shots:
+        lay = s.layout
+        if lay is None or lay.kind != LayoutKind.document_focus:
+            continue
+        if any(e.role == "document" and e.picture for e in lay.elements):
+            continue
+        s.layout, s.motion, s.selected = None, None, None
+        s.type = ShotType.footage
+        s.flags.append("document_page_not_found")
+        notes.append(f"{s.id}: no page carries the quote; its words over related footage")
+    return notes
 
 
 def fill_empty_shots(sl: ShotList, words_at: Any = None, pool: Optional[ShotList] = None) -> list[str]:
