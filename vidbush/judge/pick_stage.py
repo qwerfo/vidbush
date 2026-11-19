@@ -157,13 +157,25 @@ def pick_shotlist(shotlist: ShotList, ctx: Any) -> ShotList:
     from concurrent.futures import ThreadPoolExecutor
     todo = [s for s in sl.shots if s.type == ShotType.ai_image and s.selected_candidate() is None]
     # shots in parallel (each touches only its own shot and files); takes within a shot stay serial
+    from ..providers.base import CostCapReached
+    capped: list[str] = []
+
+    def one(s: Shot) -> Optional[Candidate]:
+        try:
+            return _generate_ai(s, ctx)
+        except CostCapReached as e:  # the cap stops spending; the clause takes its loose real picture instead
+            capped.append(str(e)[:160])
+            return None
     with ThreadPoolExecutor(max_workers=AI_WORKERS) as pool:
-        results = list(pool.map(lambda s: _generate_ai(s, ctx), todo))
+        results = list(pool.map(one, todo))
     for s, cand in zip(todo, results):
         if cand is not None:
             s.selected = cand.id
         else:
             s.flags.append("ai_still_failed")
+    if capped:
+        ctx.log.warn("AI stills skipped at the cost cap; their clauses take their loose pictures",
+                     skipped=len(capped), first=capped[0])
     (work / "plan_v2.json").write_text(json.dumps(new_plan, indent=1, ensure_ascii=False), encoding="utf-8")
     ctx.log.info("pick done", shots=len(sl.shots), ladder=ladder.stats)
     return sl
