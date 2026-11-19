@@ -37,6 +37,8 @@ PICK_RULES = [
     "the specific thing. Example (invented): for 'in the winter of 1890 the miners slept in tents on the ice' "
     "a black and white photograph of a tent camp in snow fits; a modern summer campsite does not. Null when "
     "nothing fits.",
+    "fitting and loose are always a photograph or film of the real world: never a page, newspaper, letter, "
+    "map, drawing, cartoon or graphic, because a viewer reads a page as the very document the line names.",
     "Never pick, as pick, fitting or loose, a clip from a feature film or television drama (recognisable "
     "actors, a film's staging), a picture whose main content is a small sign, plaque or page the viewer cannot "
     "read full screen, or a picture with a burned-in title, channel name or caption.",

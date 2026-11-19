@@ -287,6 +287,11 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
                 lead = None
             typ = _shot_type(plan, cand, fallback)
             lay = _layout(plan, pk, cand, doc)
+            if (lay is not None and lay.kind == LayoutKind.date_title and not pk.get("identity")
+                    and any(e.role == "label" for e in lay.elements)):
+                # a place named on screen only over a picture confirmed to show it (Adam's ruling A)
+                lay.elements = [e for e in lay.elements if e.role != "label"]
+                pk["resolved"] = (pk.get("resolved", "") + "; label dropped, picture not confirmed").strip("; ")
             if lay is not None and lay.kind == LayoutKind.document_focus and doc is None:
                 lay = None  # no page carries it: a document is never drawn without its page; the shot keeps a picture
             shot = Shot(id="", beat_id=gc[0].beat, scene_id=sp["scene"], start=start, end=end, duration=dur,

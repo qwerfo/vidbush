@@ -291,3 +291,10 @@ def test_an_alternate_used_elsewhere_is_still_offered_and_layout_clauses_hold_it
     sh[0]["plan"]["treatment"] = "document_focus"
     p = E.resolve(picks({"pick": None, "loose": 1})["picks"], sh, 0, recs, {"https://x/real1.jpg": "c050"}, pool)
     assert p[0]["_loose"][0].id == "real1"
+
+
+@pytest.mark.parametrize("look, quality", [("document", []), ("illustration", []), ("black_and_white", ["low_resolution"])])
+def test_a_page_a_drawing_or_a_small_picture_never_stands_in(pool, recs, look, quality):
+    recs["real1"]["visual"].update(look=look, quality=quality)
+    p = E.resolve(picks({"pick": None, "loose": 1})["picks"], shots([3.0], None, AFTER_OPENING), 0, recs, {}, pool)
+    assert p[0]["_loose"] is None

@@ -55,9 +55,12 @@ def test_a_rerun_keeps_an_earlier_still_that_passes_its_check(tmp_path, monkeypa
     from vidbush.judge import pick_stage as PS2
     from vidbush.models import Shot, ShotType
     (tmp_path / "ai").mkdir()
-    for n in (1, 2):
+    for n in (1, 2, 3):
         Image.new("RGB", (64, 36)).save(tmp_path / "ai" / f"s1_{n}.png")
-    shot = Shot(id="s1", beat_id="b", scene_id="c", start=0, end=3, duration=3, type=ShotType.ai_image, intent="x")
+        brief = "a different clause" if n == 3 else "a man at a jukebox (Anchorage, 1958, summer)"
+        (tmp_path / "ai" / f"s1_{n}.brief.txt").write_text(brief, encoding="utf-8")
+    shot = Shot(id="s1", beat_id="b", scene_id="c", start=0, end=3, duration=3, type=ShotType.ai_image, intent="x",
+                ai_prompt="a man at a jukebox (Anchorage, 1958, summer)")
     checked = []
 
     def fake_check(sh, cand, ctx):
@@ -70,4 +73,5 @@ def test_a_rerun_keeps_an_earlier_still_that_passes_its_check(tmp_path, monkeypa
     ctx = SimpleNamespace(work=tmp_path, settings=SimpleNamespace(judge=SimpleNamespace(ai_retries=2)),
                           log=SimpleNamespace(info=lambda *a, **k: None, warn=lambda *a, **k: None))
     got = PS2._generate_ai(shot, ctx)
+    # take 3 was made for another clause that once had this shot id: never reused (night 3)
     assert got.id == "s1_ai_image_1" and checked == ["s1_ai_image_2", "s1_ai_image_1"]

@@ -65,6 +65,9 @@ def _earlier_take(shot: Shot, ctx: Any) -> Optional[Candidate]:
         n = f.stem.rsplit("_", 1)[1]
         if not n.isdigit():
             continue
+        brief = f.with_suffix(".brief.txt")  # shot ids change between runs: a take is reused only for its brief
+        if not brief.exists() or brief.read_text(encoding="utf-8") != (shot.ai_prompt or ""):
+            continue
         try:
             w, h = video_size(f)
         except Exception:  # noqa: BLE001 - an unreadable file is not a picture
@@ -97,6 +100,8 @@ def _generate_ai(shot: Shot, ctx: Any) -> Optional[Candidate]:
             ctx.log.warn("AI still failed", shot=shot.id, take=take + 1, error=str(e)[:300])
             break
         shot.candidates.append(cand)
+        if cand.local_path:
+            Path(cand.local_path).with_suffix(".brief.txt").write_text(shot.ai_prompt or "", encoding="utf-8")
         check_still(shot, cand, ctx)
         last = cand
         if not cand.reject_reason:

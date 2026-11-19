@@ -281,6 +281,9 @@ def time_problem(c: Candidate, rec: dict, start: Any, seconds: float) -> tuple[O
     return round(max(c.in_point, t), 3), None
 
 
+STAND_IN_REFUSED_LOOKS = ("document", "illustration")
+
+
 def ai_allowed_at(start: float) -> bool:
     return start >= V.AI_OPENING_S - 1e-6
 
@@ -299,6 +302,11 @@ def alternate(p: dict, field: str, pool: list[Candidate], recs: dict[str, dict],
     on the final shot list (live.enforce_repeats and the fill), where every shot's time is known."""
     c = _cand_at(pool, p.get(field)) if p.get(field) is not None else None
     if c is None or is_ai(c) or DS.blocked(recs.get(c.id, {})) or taken(asset_key(c)):
+        return None
+    vis = recs.get(c.id, {}).get("visual", {})
+    # a stand-in is a plain photograph or film: a page reads as the document the line names, a drawing
+    # clashes with the archive around it, and a small picture sits tiny on its fill (night 3 viewer check)
+    if vis.get("look") in STAND_IN_REFUSED_LOOKS or "low_resolution" in vis.get("quality", []):
         return None
     t, why = time_problem(c, recs.get(c.id, {}), p.get(f"{field}_start"), seconds)
     if why or (c.media != "video" and seconds > still_max + 1e-6):
