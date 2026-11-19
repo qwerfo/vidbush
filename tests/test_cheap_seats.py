@@ -170,3 +170,23 @@ def test_audit_command_returns_1_and_keeps_its_cost_file(tmp_path, monkeypatch) 
     args = Namespace(target=str(root), script=None, out=None, every=2.0, limit=0, workers=1)
     assert cli.cmd_audit(settings, args) == 1
     assert (root / "audit" / cli.COST_FILE).exists()
+
+
+def test_describe_stops_on_a_cheap_seat_down_and_keeps_cached_records(tmp_path, monkeypatch) -> None:
+    """Adam: the describe step stops rather than pay a dear provider; already described assets still serve."""
+    from vidbush.judge import describe as DS
+    from vidbush.models import Candidate, SourceKind
+    a, b = tmp_path / "a.jpg", tmp_path / "b.jpg"
+    for f in (a, b):
+        f.write_bytes(f.name.encode() * 10)
+    ca = Candidate(id="a", source=SourceKind.wikimedia, local_path=str(a))
+    cb = Candidate(id="b", source=SourceKind.wikimedia, local_path=str(b))
+
+    def fake(seats, c, root):
+        if c.id == "a":
+            return {"visual": {"shows": "x"}, "cached": True}
+        raise CheapSeatDown("describer", "judge", ["closerouter"], ["openlux"])
+    monkeypatch.setattr(DS, "describe_one", fake)
+    notes = []
+    out = DS.describe_pool(object(), [ca, cb], None, notes.append, root=tmp_path / "d")
+    assert set(out) == {"a"} and any("describe stopped" in n for n in notes)
