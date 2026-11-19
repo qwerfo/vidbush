@@ -318,7 +318,7 @@ def describe_pool(seats, pool: list[Candidate], settings: Any = None, log: Optio
     if settings is not None and fresh:
         apply_prefilter(fresh, settings)
     todo = [c for c in pool if not rejected(c)]
-    from ..providers.base import CheapSeatDown
+    from ..providers.base import CheapSeatDown, CostCapReached
     out: dict[str, dict[str, Any]] = {}
     lock = threading.Lock()
     stopped: list[str] = []  # the describe step stopped (Adam: never on a provider over 5x the cheapest)
@@ -326,7 +326,7 @@ def describe_pool(seats, pool: list[Candidate], settings: Any = None, log: Optio
     def one(c: Candidate) -> None:
         try:
             r = describe_one(seats, c, root)
-        except CheapSeatDown as e:  # cached records still serve; an undescribed asset is not offered
+        except (CheapSeatDown, CostCapReached) as e:  # stored records still serve; a new asset is not offered
             with lock:
                 stopped.append(str(e)[:200])
             return
@@ -357,6 +357,6 @@ def describe_pool(seats, pool: list[Candidate], settings: Any = None, log: Optio
         log(f"described {len(out)} of {len(pool)} assets ({len(pool) - len(todo)} prefilter rejects, "
             f"{sum(1 for r in out.values() if not r['cached'])} new calls)")
         if stopped:
-            log(f"describe stopped, cheap seat down: {len(stopped)} assets not described and not offered "
+            log(f"describe stopped (cheap seat down or cost cap): {len(stopped)} assets not described and not offered "
                 f"({stopped[0]})")
     return out
