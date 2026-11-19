@@ -37,6 +37,9 @@ def _map_spec(shot: Shot) -> tuple[Optional[MotionSpec], str]:
 
 
 def enabled(ctx: Any) -> bool:
+    from ..plan.live import is_clause
+    if is_clause(ctx.profile):  # the picker's ladder places every AI picture under Adam's rulings; a second
+        return False            # AI pass after it made a third AI picture in a row (night 3)
     a = ctx.profile.art
     return (a.illustrated_maps > 0 or a.illustrations > 0 or a.clip_every_s > 0) and common.elevate_spec(ctx) is not None
 
