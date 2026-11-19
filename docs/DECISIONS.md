@@ -809,3 +809,14 @@ One line each: the decision and why.
 - shutil.rmtree in Python 3.11 on Windows removes a directory junction without following it, so --fresh on a fork leaves the source pools intact.
 - The describe step is one of the cheap steps: when its seat is down it stops, its already described assets still serve the pick, and an undescribed asset is not offered, rather than the whole stage stopping.
 - Night 3 started with closerouter refusing every call for lack of balance (http 402), so describe, classify and audit could only use stored records tonight; the describe records of night 2 are in E:\coding projects\Vidbush\describe_cache (DESCRIBE_CACHE_FOLDER), not under the source cache, which is why the first pick found none.
+- Night 3 spend: closerouter had no balance all night and openlux was down for long spells, so the picker and director fell to anthropic_direct at about 0.11 USD per picker call (about 7 times openlux for the same model); dunkirk_v3 therefore ran with a cost cap of 3.3 (stricter than 5) so the night stays under 12 USD.
+- At the cost cap the AI still step stops and its clauses take their loose real pictures, so a capped run finishes with a picture on every shot.
+- Thumbnail frames: at most 12 scored by the judge, and a judge outage never fails packaging (pass 4's packaging failed on it and held the project lock).
+- Earlier AI takes are reused only for the brief they were made for (shot ids move between runs).
+- Stand-in pictures (fitting, loose) are photographs or film of the real world: never a page, drawing or low-resolution picture; a date title names a place only over a picture confirmed to show it.
+- Every clause without a pick names a loose picture, because whether an AI still may fill it is only known after the ladder.
+- The picker refuses feature film clips, unreadable signs and pictures with burned-in titles; a positive chart value always draws a visible bar; the AI prompt rewrite keeps the season and year.
+- An empty shot no neighbour alone can cover is split between both neighbours; a panel with no picture beneath is shown full screen; a next clip with no earlier frames plays longer from its start.
+- A video clip up to 15 percent shorter than its shot is slowed by the renderer instead of refused; 'Town, ST' resolves the US state.
+- Last resort before a shot stays empty: a clean real photograph or film from the whole film's described pool whose recorded place names the clause's place and whose recorded period is within 10 years of the clause's (or both present day), shown plain and never within a minute of its last showing; it compares the describe record with the director's setting (ruling C), never narration words.
+- The art layer (illustrations, painted maps, art clips) is off for clause-planner projects: the picker's ladder places every AI picture under Adam's rulings, and the art pass after it made a third AI picture in a row and waited 45 min on a video provider.
