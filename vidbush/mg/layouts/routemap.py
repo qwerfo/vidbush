@@ -2,9 +2,10 @@
 
 The map is the existing documentary map (vidbush/mg/mapdraw.MapComp, documentary_warm land and water) with
 the house style on top: ink chips with paper type, an amber route and accent. Every place goes through the
-same check as a director map (vidbush/shots/seat.verify_map: geocoded, unresolved places dropped, a route
-is real geometry over the bundled road, rail or river lines, a distance in its label within 25 percent of
-the drawn line). A trail has no bundled line, so it is drawn as a dashed great circle with a note, and a
+same check as a director map (vidbush/shots/seat.verify_map: geocoded, a route is real geometry over the
+bundled road, rail or river lines, a distance in its label within 25 percent of the drawn line). A place
+that does not resolve or a route with no line makes the map incomplete (job.missing), so it is not shown at
+all. A trail has no bundled line, so it is drawn as a dashed great circle with a note, and a
 distance claimed for it is only checked to be no shorter than the straight line.
 
 Timing: a place marker and chip settle on the place's cue (nothing before). A route draws from the from
@@ -257,7 +258,7 @@ class RouteMap(LayoutComp):
     # ------------------------------------------------------------ checks (seat.verify_map's, through its functions)
 
     def _verified(self) -> MapPayload:
-        """Places geocoded (unresolved dropped), routes traced on real lines, distances checked.
+        """Places geocoded, routes traced on real lines, distances checked; what cannot be drawn goes in job.missing.
 
         The checks of seat.verify_map, made here because a layout knows each place's own cue and may qualify a
         name ('Santa Monica, California': geocoded with the qualifier, labelled 'Santa Monica')."""
@@ -278,7 +279,7 @@ class RouteMap(LayoutComp):
                 continue
             hit = first.get(e.text) or resolve(name, qual, near)
             if hit is None:
-                job.notes.append(f"place '{e.text}' did not resolve (unknown or two homonyms on this map): dropped")
+                job.missing.append(f"place '{e.text}' did not resolve (unknown or two homonyms on this map)")
                 continue
             hits[e.text] = (hit, c)
             mp.markers.append(MapMarker(lat=hit.lat, lon=hit.lon, label=name, appear_at=round(c.appear, 3)))
@@ -287,7 +288,7 @@ class RouteMap(LayoutComp):
         for _, e, c in job.els("route"):
             parsed = parse_route(e.text)
             if parsed is None:
-                job.notes.append(f"route '{e.text}' is not '<from> to <to>': not drawn")
+                job.missing.append(f"route '{e.text}' is not '<from> to <to>'")
                 continue
             a, b, via = parsed
             ends = []
@@ -296,7 +297,7 @@ class RouteMap(LayoutComp):
                 ends.append(own or (resolve(*split_place(x), near), None))
             (ha, fc), (hb, tc) = ends
             if ha is None or hb is None or (abs(ha.lat - hb.lat) + abs(ha.lon - hb.lon)) < 0.01:
-                job.notes.append(f"route '{e.text}': an end did not resolve, no line")
+                job.missing.append(f"route '{e.text}': an end did not resolve, no line")
                 continue
             rs, re_ = route_window(fc, tc, c)
             via = via if via in R.VIAS else R.infer_via(e.text)
@@ -319,7 +320,7 @@ class RouteMap(LayoutComp):
                                  f"({straight:.0f} mi straight)" + ("" if ok else f"; distance '{label}' implausible, dropped"))
                 label = label if ok else ""
             else:
-                job.notes.append(f"route '{e.text}': no {via} line joins the two places, markers only")
+                job.missing.append(f"route '{e.text}': no {via} line joins the two places")
                 continue
             mp.routes.append(MapRoute(points=pts, reveal_start=round(rs, 3), reveal_end=round(re_, 3), label=label,
                                       dashed=dashed, via=mode, from_place=ha.name, to_place=hb.name))
@@ -334,7 +335,7 @@ class RouteMap(LayoutComp):
     def _fit(self, mp: MapPayload) -> None:
         pts = [(m.lat, m.lon) for m in mp.markers] + [(q[0], q[1]) for r in mp.routes for q in r.points]
         if not pts:
-            self.job.notes.append("route_map: nothing resolved, an empty map")
+            self.job.missing.append("route_map: nothing resolved, an empty map")
             mp.center, mp.zoom, mp.zoom_end = [20.0, 0.0], 1.0, 1.0 + PUSH
             return
         center, z_end = fit_view(pts, self.W, self.H, self.box)

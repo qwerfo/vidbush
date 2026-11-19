@@ -11,6 +11,10 @@ outro concatenated and trimmed. captions.srt and captions.ass are rewritten on
 the final timeline (shifted by the intro). Writes work/render_stats.json,
 work/assembly.json and ctx.root/final.mp4; verify() raises when picture and
 sound disagree by more than MAX_AV_DRIFT_FRAMES or the frame count is off.
+
+The sound gate (check_sound) runs on the muxed file before it replaces final.mp4:
+the stage fails unless its audio carries the narration, in sync within 2 frames,
+over the whole spoken runtime; its numbers go to work/sound_check.json.
 """
 from __future__ import annotations
 
@@ -20,9 +24,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
+
 from ..config import Settings
-from ..models import Shot, ShotList
-from ..audio.loudness import normalize
+from ..models import Narration, Shot, ShotList
+from ..audio.loudness import normalize, read_audio
 from ..models import ShotType
 from ..util import ToolError, ffprobe, media_duration, read_json, run, stable_hash, write_json
 from . import ffmpeg_cmds as fc
@@ -31,6 +37,20 @@ from .segment import HOLD_WARN_S, footage_plan, render_segment
 
 MAX_AV_DRIFT_FRAMES = 3
 BUMPER_VERSION = "bumper-2"
+SOUND_FILE = "sound_check.json"
+TRIM_FILE = "trim.json"  # an excerpt render (jobs/stages.apply_trim): the mix cut the narration on purpose
+SOUND_SR = 8000  # the gate decodes at this rate: the voice band fits and eleven minutes decode in seconds
+SOUND_FPS = 100  # energy envelope frames per second (10 ms)
+SOUND_BAND_HZ = (100.0, 4000.0)  # rumble and music bass below the voice are left out
+SOUND_WINDOW_S = 8.0
+SOUND_SEARCH_S = 0.5  # lags searched each way
+SPEECH_DB = -45.0  # a narration envelope frame above this has speech energy
+SILENT_DB = -50.0  # a final envelope frame below this carries no sound
+MIN_COVERAGE = 0.9  # share of a window's speech frames on which the final must carry sound
+MIN_SPEECH_SHARE = 0.2  # windows with less speech are not correlated (pauses)
+# calibrated 2026-11-19 on alaska_v2b, dunkirk_v2 and alaska_run3: every render window correlates 0.995 or more,
+# the music stem alone at most 0.35
+MIN_CORR = 0.6
 
 
 @dataclass
@@ -65,10 +85,12 @@ def assemble(shotlist: ShotList, ctx: Any) -> tuple[Path, ShotList]:
     audio = _final_audio(ctx.work, intro, outro, video_dur, settings)
     videos = ([intro[0]] if intro else []) + [j.path for j in jobs] + ([outro[0]] if outro else [])
     final = ctx.root / "final.mp4"
-    _mux(videos, audio, final, ctx.work)
+    tmp = _mux(videos, audio, final, ctx.work)
+    intro_s = intro[2] / fps if intro else 0.0
+    check_sound(tmp, ctx, shotlist, intro_s)  # a file without the narration never becomes final.mp4
+    tmp.replace(final)
     total_frames = body_frames + (intro[2] if intro else 0) + (outro[2] if outro else 0)
     report = verify(final, fps, ctx.log, total_frames)
-    intro_s = intro[2] / fps if intro else 0.0
     report.update({"intro_duration": intro_s, "outro_duration": outro[2] / fps if outro else 0.0})
     write_json(ctx.work / "assembly.json", report)
     _write_caption_sidecars(lines, ctx, intro_s)
@@ -231,14 +253,120 @@ def _final_audio(work: Path, intro: Optional[tuple[Path, Path, int]], outro: Opt
     return out
 
 
-def _mux(videos: list[Path], audio: Path, final: Path, work: Path) -> None:
-    """Concat video with stream copy and mux AAC 192 kbps 48 kHz stereo with +faststart."""
+def _mux(videos: list[Path], audio: Path, final: Path, work: Path) -> Path:
+    """Concat video with stream copy and mux AAC 192 kbps 48 kHz stereo with +faststart into final.part.mp4
+    (the caller moves it onto final after the sound gate)."""
     lst = fc.write_concat_list(videos, work / "concat.txt")
     tmp = final.with_suffix(".part.mp4")
     run(["ffmpeg", "-y", "-v", "error", "-nostdin", "-f", "concat", "-safe", "0", "-i", str(lst),
          "-i", str(audio), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
          "-ar", str(fc.AUDIO_RATE), "-ac", "2", "-movflags", "+faststart", str(tmp)], timeout=3600)
-    tmp.replace(final)
+    return tmp
+
+
+def check_sound(path: Path, ctx: Any, shotlist: ShotList, intro_s: float) -> dict[str, Any]:
+    """The sound gate: raise ToolError unless the audio of path carries the narration in sync over the whole
+    spoken runtime, min(last word end, shot list duration). The reference is Narration.audio_path, which the
+    mixer reads, else work/stems/narration.wav. Narration speaking past the shot list fails too (the mixer cut
+    it), unless work/trim.json asked for an excerpt. Writes work/sound_check.json either way."""
+    narration = ctx.maybe_load("narration", Narration)
+    ref = Path(narration.audio_path) if narration else None
+    if ref is None or not ref.is_file():
+        ref = ctx.work / "stems" / "narration.wav"
+    if not ref.is_file():
+        raise ToolError("sound check: no narration audio to check the final file against "
+                        "(work/narration.json audio_path, work/stems/narration.wav)")
+    fps = ctx.settings.render.fps
+    spoken = (narration.words[-1].end if narration.words else narration.duration) if narration else shotlist.duration
+    faults = []
+    if spoken > shotlist.duration + 1.0 / fps and not (ctx.work / TRIM_FILE).exists():
+        faults.append(f"narration speaks until {spoken:.2f} s but the shot list ends at {shotlist.duration:.2f} s, "
+                      "so the mix cut it")
+    runtime = min(spoken, shotlist.duration)
+    final = read_audio(path, SOUND_SR, 1)[int(round(intro_s * SOUND_SR)):, 0]
+    res = speech_sync(read_audio(ref, SOUND_SR, 1)[:, 0], final, runtime, 2.0 / fps)
+    faults += res["faults"]
+    report = {"ok": not faults, "file": str(path), "reference": str(ref), "intro_s": round(intro_s, 4),
+              "runtime_s": round(runtime, 3), "max_lag_s": round(2.0 / fps, 4), "min_corr": MIN_CORR,
+              "min_coverage": MIN_COVERAGE, "faults": faults, "windows": res["windows"]}
+    write_json(ctx.work / SOUND_FILE, report)
+    if faults:
+        raise ToolError(f"sound check failed, {path.name} did not become final.mp4 ({len(faults)} faults, see "
+                        f"{ctx.work / SOUND_FILE}): " + "; ".join(faults[:3]))
+    corr = [w["corr"] for w in res["windows"] if "corr" in w]
+    ctx.log.info("sound check passed", runtime_s=round(runtime, 3), windows=len(res["windows"]),
+                 min_corr=min(corr) if corr else None)
+    return report
+
+
+def _envelope(x: np.ndarray) -> np.ndarray:
+    """RMS per 1 / SOUND_FPS s frame of x (mono at SOUND_SR) after an FFT band pass to SOUND_BAND_HZ."""
+    spec = np.fft.rfft(x.astype(np.float64))
+    hz = np.fft.rfftfreq(len(x), 1.0 / SOUND_SR)
+    spec[(hz < SOUND_BAND_HZ[0]) | (hz > SOUND_BAND_HZ[1])] = 0
+    y = np.fft.irfft(spec, len(x))
+    hop = SOUND_SR // SOUND_FPS
+    n = len(y) // hop
+    return np.sqrt(np.mean(np.square(y[:n * hop].reshape(n, hop)), axis=1))
+
+
+def _db(v: np.ndarray) -> np.ndarray:
+    return 20 * np.log10(np.maximum(v, 1e-6))
+
+
+def _best_lag(ref: np.ndarray, out: np.ndarray, s: int, e: int, search: int) -> tuple[float, int]:
+    """Peak Pearson correlation of ref[s:e] with out shifted by -search..search frames (positive: out late)."""
+    a = ref[s:e] - ref[s:e].mean()
+    best, at = -1.0, 0
+    for k in range(-search, search + 1):
+        if s + k < 0 or e + k > len(out):
+            continue
+        b = out[s + k:e + k] - out[s + k:e + k].mean()
+        den = float(np.sqrt(np.sum(a * a) * np.sum(b * b)))
+        c = float(np.sum(a * b)) / den if den > 1e-12 else -1.0
+        if c > best:
+            best, at = c, k
+    return best, at
+
+
+def speech_sync(ref: np.ndarray, out: np.ndarray, runtime: float, max_lag_s: float) -> dict[str, Any]:
+    """Compare narration (ref) with final audio (out), both mono at SOUND_SR from narration time 0, over
+    SOUND_WINDOW_S windows of [0, runtime): wherever the narration has speech energy the final must carry
+    sound on MIN_COVERAGE of those frames, and a window with enough speech must find the narration's energy
+    envelope in the final's at a correlation of MIN_CORR or more and a lag of at most max_lag_s.
+    Returns {"windows": [numbers per window with speech], "faults": [one line per failure]}."""
+    n = int(round(runtime * SOUND_FPS))
+    win, search = int(SOUND_WINDOW_S * SOUND_FPS), int(SOUND_SEARCH_S * SOUND_FPS)
+    max_lag = int(max_lag_s * SOUND_FPS + 1e-9)
+    en, ef = _envelope(ref), _envelope(out)
+    en = np.pad(en, (0, max(0, n - len(en))))[:n]
+    ef = np.pad(ef, (0, max(0, n + search - len(ef))))  # a final shorter than the runtime is silent there
+    windows: list[dict[str, Any]] = []
+    faults: list[str] = []
+    spoken = 0
+    for s in range(0, n, win):
+        e = min(n, s + win)
+        speech = _db(en[s:e]) > SPEECH_DB
+        if not speech.any():
+            continue
+        spoken += int(speech.sum())
+        cover = float(np.mean(_db(ef[s:e][speech]) > SILENT_DB))
+        row: dict[str, Any] = {"start": s / SOUND_FPS, "end": e / SOUND_FPS,
+                               "speech": round(float(speech.mean()), 3), "coverage": round(cover, 3)}
+        where = f"{s / SOUND_FPS:.0f} to {e / SOUND_FPS:.0f} s"
+        if cover < MIN_COVERAGE:
+            faults.append(f"{where}: no sound on {1 - cover:.0%} of the narration's speech")
+        if speech.mean() >= MIN_SPEECH_SHARE and e - s >= 2 * search:
+            corr, lag = _best_lag(en, ef, s, e, search)
+            row.update(corr=round(corr, 4), lag_s=lag / SOUND_FPS)
+            if corr < MIN_CORR:
+                faults.append(f"{where}: the narration is not in the final audio (correlation {corr:.2f})")
+            elif abs(lag) > max_lag:
+                faults.append(f"{where}: the narration is {lag / SOUND_FPS:+.2f} s off (at most {max_lag_s:.3f} s)")
+        windows.append(row)
+    if n > 0 and not spoken:
+        faults.append(f"the narration has no speech energy in 0 to {runtime:.0f} s")
+    return {"windows": windows, "faults": faults}
 
 
 def verify(final: Path, fps: int, log: Any, expected_frames: Optional[int] = None) -> dict[str, Any]:

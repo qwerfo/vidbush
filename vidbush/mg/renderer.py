@@ -9,9 +9,11 @@ motion_graphic shot's spec to work/mg/<key>.mp4 and every overlay to
 work/mg/<key>.mov (alpha), reusing files that already exist, in a process pool
 of settings.render.workers. key = mg_key(spec, settings) hashes the spec, the
 configured renderer and MG_RENDER_VERSION (bump it when drawing code changes
-output). A degraded render (remotion fell back to python, or a text card after a
-renderer error) is written to <key>.fallback.<ext> instead, so the next motion
-run retries the real render; an existing fallback is reused when it fails again.
+output). A degraded render (remotion fell back to python) is written to
+<key>.fallback.<ext> instead, so the next motion run retries the real render; an
+existing fallback is reused when it fails again. A spec that cannot be drawn (an
+invalid payload or a renderer error) renders nothing: the shot shows its picture
+with no text, never a text card made from its title or intent.
 """
 from __future__ import annotations
 
@@ -28,7 +30,7 @@ from ..util import ToolError, run, stable_hash, write_json
 
 OVERLAY_SHOT_TYPES = {ShotType.footage_overlay, ShotType.image_overlay, ShotType.ai_image, ShotType.ai_video}
 REMOTION_DIR = "renderer"
-MG_RENDER_VERSION = "mg-7"  # mg-7: label boxes reveal with their text, no centre callouts, chips kept inside the frame
+MG_RENDER_VERSION = "mg-8"  # mg-8: a failed or invalid spec renders nothing, never a text overlay of its title
 # Bare full-frame text cards (title card, text card, callout) are not rendered (V2 layouts): run 1's beige text
 # cards restating the caption were the most noticed fault. A shot planned as one shows its best real picture.
 BARE_TEXT_KINDS = {MotionKind.title_card, MotionKind.text_overlay, MotionKind.callout}
@@ -102,14 +104,13 @@ def _render_real(spec: MotionSpec, out: Path, alpha: bool, settings: Any) -> Pat
 
 
 def _job(spec_json: str, out: str, alpha: bool, settings_json: str) -> tuple[str, Optional[str]]:
-    """Process pool worker: render one spec. Returns (path written, warning or None).
+    """Process pool worker: render one spec. Returns (path written or "" when nothing was, warning or None).
 
     Degraded output goes to fallback_path(out). When a fallback already exists only
     the real render is retried; on another failure the old fallback is kept as is,
     so its bytes (and the segment cache keyed on them) stay stable.
     """
     from ..config import Settings
-    from ..render.mg_python import fallback_spec, render_spec_python
     settings = Settings.model_validate_json(settings_json)
     spec = MotionSpec.model_validate_json(spec_json)
     target, degraded = Path(out), fallback_path(Path(out))
@@ -123,30 +124,25 @@ def _job(spec_json: str, out: str, alpha: bool, settings_json: str) -> tuple[str
     notes: list[str] = []
     try:
         written = render_spec(spec, target, alpha, settings, notes, degraded_path=degraded)
-    except Exception as e:  # noqa: BLE001  a broken spec still renders as text
-        title = spec.payload.get("title", "") if isinstance(spec.payload, dict) else ""
-        render_spec_python(fallback_spec(spec, str(title)), degraded, alpha, settings)
-        return str(degraded), f"motion render failed ({type(e).__name__}: {str(e)[-200:]}), rendered as text overlay"
+    except Exception as e:  # noqa: BLE001  a broken spec renders nothing: the shot keeps its picture
+        return "", f"motion render failed ({type(e).__name__}: {str(e)[-200:]}), nothing rendered"
     return str(written), notes[0] if notes else None
 
 
-def prepare_spec(spec: MotionSpec, duration: float, shotlist: ShotList, intent: str,
-                 overlay: bool) -> tuple[MotionSpec, Optional[str]]:
-    """Spec retimed to the shot, sized to the shot list; invalid payloads become a text_overlay of the intent."""
-    from ..render.mg_python import fallback_spec
+def prepare_spec(spec: MotionSpec, duration: float, shotlist: ShotList,
+                 overlay: bool) -> tuple[Optional[MotionSpec], Optional[str]]:
+    """Spec retimed to the shot, sized to the shot list; (None, warning) for an invalid payload."""
     from .builders import retime_spec
-    warn = None
     try:
         spec.typed_payload()
         spec = retime_spec(spec, duration)
     except (ValidationError, TypeError, ValueError) as e:
-        warn = f"invalid {spec.kind.value} payload, using text overlay: {str(e)[:160]}"
-        spec = fallback_spec(spec, intent)
+        return None, f"invalid {spec.kind.value} payload, not rendered: {str(e)[:160]}"
     upd: dict[str, Any] = {"duration": round(duration, 3), "width": shotlist.width, "height": shotlist.height,
                            "fps": shotlist.fps}
     if overlay and spec.background == "solid":
         upd["background"] = "transparent"
-    return spec.model_copy(update=upd), warn
+    return spec.model_copy(update=upd), None
 
 
 def _plan(shotlist: ShotList, ctx: Any, mg_dir: Path) -> list[tuple[Any, MotionSpec, Path, bool]]:
@@ -164,17 +160,21 @@ def _plan(shotlist: ShotList, ctx: Any, mg_dir: Path) -> list[tuple[Any, MotionS
                 continue
             shot.layout_notes.append(f"bare {shot.motion.kind.value} card kept: the shot has no picture to show")
         if shot.type == ShotType.motion_graphic and shot.motion is not None:
-            spec, warn = prepare_spec(shot.motion, shot.duration, shotlist, shot.intent, False)
-            if warn:
+            spec, warn = prepare_spec(shot.motion, shot.duration, shotlist, False)
+            if spec is None:
                 ctx.log.warn(warn, shot=shot.id)
-            jobs.append((shot, spec, mg_dir / f"{mg_key(spec, ctx.settings)}.mp4", False))
+                show_picture(shot, ctx)
+            else:
+                jobs.append((shot, spec, mg_dir / f"{mg_key(spec, ctx.settings)}.mp4", False))
+        spec = None
         if shot.overlay is not None and shot.type in OVERLAY_SHOT_TYPES:
             # a text overlay starts at its anchor (start_at), so it renders only the rest of the shot
-            spec, warn = prepare_spec(shot.overlay, shot.duration - shot.overlay.start_at, shotlist, shot.intent, True)
-            if warn:
+            spec, warn = prepare_spec(shot.overlay, shot.duration - shot.overlay.start_at, shotlist, True)
+            if spec is None:
                 ctx.log.warn(warn, shot=shot.id)
-            jobs.append((shot, spec, mg_dir / f"{mg_key(spec, ctx.settings)}.mov", True))
-        elif shot.overlay_path:
+            else:
+                jobs.append((shot, spec, mg_dir / f"{mg_key(spec, ctx.settings)}.mov", True))
+        if spec is None and shot.overlay_path:
             shot.overlay_path = ""
     return jobs
 
@@ -197,16 +197,31 @@ def _still_notes_and_grades(shotlist: ShotList, ctx: Any) -> None:
         ctx.log.info("matched look", graded=graded, brand_grade=ctx.profile.colour.brand_grade or None)
 
 
-def picture_instead(shot):  # noqa: ANN001, ANN201
-    """The shot's best usable picture: real before generated, not rejected, highest judge score."""
-    cands = [c for c in shot.candidates if c.source != SourceKind.motion and not c.reject_reason and c.local_path]
+def picture_instead(shot, real: bool = False):  # noqa: ANN001, ANN201
+    """The shot's best usable picture: real before generated (real=True: real only), the planner's fitting
+    alternate before its loose one, not rejected, highest judge score."""
+    cands = [c for c in shot.candidates if c.source != SourceKind.motion and not c.reject_reason and c.local_path
+             and not (real and c.source in GENERATED_SOURCES)]
     if not cands:
         return None
-    return max(cands, key=lambda c: (c.source not in GENERATED_SOURCES, c.score or 0.0))
+    return max(cands, key=lambda c: (c.source not in GENERATED_SOURCES, "alt:fitting" in c.flags,
+                                     "alt:loose" in c.flags, c.score or 0.0))
 
 
-def _run_jobs(todo: list[tuple[MotionSpec, Path, bool]], ctx: Any) -> dict[Path, Path]:
-    """Render todo; returns {planned path: path actually written} (a fallback path when degraded)."""
+def show_picture(shot, ctx: Any) -> None:  # noqa: ANN001
+    """A motion shot whose spec draws nothing shows its best picture instead (never a text card)."""
+    real = picture_instead(shot)
+    if real is not None:
+        shot.selected = real.id
+        shot.layout_notes.append(f"motion spec not drawn; shows {real.id} instead")
+    else:
+        shot.selected = None
+        ctx.log.warn("motion spec not drawn and the shot has no picture", shot=shot.id)
+
+
+def _run_jobs(todo: list[tuple[MotionSpec, Path, bool]], ctx: Any) -> dict[Path, Optional[Path]]:
+    """Render todo; returns {planned path: path actually written} (a fallback path when degraded, None when
+    nothing was written)."""
     settings_json = ctx.settings.model_dump_json()
     args = [(s.model_dump_json(), str(p), a, settings_json) for s, p, a in todo]
     workers = max(1, int(getattr(ctx.settings.render, "workers", 1) or 1))
@@ -222,9 +237,9 @@ def _run_jobs(todo: list[tuple[MotionSpec, Path, bool]], ctx: Any) -> dict[Path,
             # finished clips are on disk and reused, so only the rest is drawn again
             ctx.log.warn("motion worker pool broke, rendering one at a time", error=str(e)[:200])
             results = [_job(*a) for a in args]
-    written: dict[Path, Path] = {}
+    written: dict[Path, Optional[Path]] = {}
     for (_, planned, _), (out, warn) in zip(todo, results):
-        written[planned] = Path(out)
+        written[planned] = Path(out) if out else None
         if warn:
             ctx.log.warn(warn, path=Path(out).name)
     return written
@@ -248,10 +263,17 @@ def render_all_motion(shotlist: ShotList, ctx: Any) -> tuple[ShotList, list[Path
         seen.add(out)
     written = _run_jobs(todo, ctx) if todo else {}
     ctx.log.info("motion graphics", rendered=len(todo), cached=len(seen) - len(todo),
-                 degraded=sum(1 for k, v in written.items() if k != v))
+                 degraded=sum(1 for k, v in written.items() if v is not None and k != v),
+                 failed=sum(1 for v in written.values() if v is None))
     outs: list[Path] = []
     for shot, spec, planned, alpha in jobs:
         out = written.get(planned, planned)
+        if out is None:  # nothing drawn: no overlay, and a motion shot shows its picture
+            if alpha:
+                shot.overlay_path = ""
+            else:
+                show_picture(shot, ctx)
+            continue
         outs.append(out)
         if alpha:
             shot.overlay_path = str(out)

@@ -9,10 +9,10 @@ from vidbush.judge import ladder as L
 from vidbush.models import Candidate, Narration, SourceKind, Word
 from vidbush.plan import edit as E
 
-from test_plan_edit import jpg, picks, pool, recs, shots  # noqa: F401  (fixtures)
+from test_plan_edit import AFTER_OPENING, jpg, picks, pool, recs, shots  # noqa: F401  (fixtures)
 from test_plan_helpers import FakeSeats
 
-FILLED = {"pick", "resource", "restate", "hold", "ai_still", "none"}
+FILLED = {"pick", "resource", "fitting", "restate", "hold", "ai_still", "loose", "pick_no_document", "none"}
 
 
 def ids(out):
@@ -243,7 +243,7 @@ def narration(sh, word="river"):
 def run_ladder(sh, pool, recs, raw, llm=(), used_before=None, ai_tail=0):
     used_before = used_before or {}
     p, _ = E.check(raw, sh, pool, recs, used_before, ai_tail)
-    e = {"scene": "s01", "pool": pool, "picks": E.resolve(p, sh, ai_tail, recs, used_before), "shots": sh,
+    e = {"scene": "s01", "pool": pool, "picks": E.resolve(p, sh, ai_tail, recs, used_before, pool), "shots": sh,
          "records": recs, "attempts": []}
     seats = FakeSeats(llm=list(llm))
     lad = L.Ladder(seats, None, None)
@@ -251,17 +251,36 @@ def run_ladder(sh, pool, recs, raw, llm=(), used_before=None, ai_tail=0):
     return e, seats, lad
 
 
-def restated(beneath, clause="c001", kind="text_over_footage", text="river", anchor="river"):
+def restated(beneath, clause="c001", kind="number_over_footage", text="40 km of river", anchor="river"):
     return {"restated": [{"clause": clause, "kind": kind, "text": text, "anchor": anchor, "beneath": beneath,
                           "reason": "no picture of it"}]}
 
 
-def test_restate_as_text_over_footage(pool, recs):
+NO_RESTATE = [{"restated": []}]
+
+
+def no_text(p):
+    """Nothing the ladder set types words over the picture."""
+    return not {"overlay_text", "_fallback_cand"} & set(p) and p.get("fallback") != "text_over_footage"
+
+
+def test_restate_as_a_number_over_footage(pool, recs):
     e, seats, _ = run_ladder(shots([3.0]), pool, recs, picks(None), llm=[restated(6)])
-    p = e["picks"][0]
+    p, plan = e["picks"][0], e["shots"][0]["plan"]
     assert len(seats.llm_calls) == 1 and seats.llm_calls[0]["role"] == L.RESTATE_SEAT
-    assert p["filled_by"] == "restate" and p["fallback"] == "text_over_footage"
-    assert p["_fallback_cand"].id == "vid6" and p["overlay_text"] == "river" and p["frame"] == 12.0
+    assert p["filled_by"] == "restate" and p["_cand"].id == "vid6" and p["frame"] == 12.0
+    assert plan["treatment"] == "number_over_footage" and plan["layout"]["elements"][0]["text"] == "40 km of river"
+    assert no_text(p)
+
+
+def test_text_over_footage_is_no_longer_a_restate_kind_and_the_loose_picture_fills(pool, recs):
+    raw = picks({"pick": None, "loose": 1})
+    e, seats, _ = run_ladder(shots([3.0]), pool, recs, raw,
+                             llm=[restated(6, kind="text_over_footage", text="river")] * 2)
+    assert any("kind must be one of" in x for a in e["restate_attempts"] for x in a["errors"])
+    p = e["picks"][0]
+    assert p["filled_by"] == "loose" and p["_cand"].id == "real1" and p["label"] == "" and no_text(p)
+    assert e["shots"][0]["plan"]["treatment"] == "picture"
 
 
 @pytest.mark.parametrize("beneath, problem", [(3, "beneath must be a real asset"), (1, "already used at c009")])
@@ -271,46 +290,134 @@ def test_restate_naming_an_ai_or_used_asset_is_rejected(pool, recs, beneath, pro
     assert len(seats.llm_calls) == 2  # one retry with the problems
     assert any(problem in x for x in e["restate_attempts"][0]["errors"])
     p = e["picks"][0]
-    assert p["filled_by"] != "restate" and p.get("_fallback_cand") is None
+    assert p["filled_by"] != "restate" and p.get("_cand") is None
 
 
-def test_short_open_clause_after_a_real_pick_holds_it(pool, recs):
-    e, _, _ = run_ladder(shots([3.0, 2.0]), pool, recs, picks(1, None), llm=[{"restated": []}])
+def test_the_fitting_picture_fills_before_any_restate(pool, recs):
+    e, seats, lad = run_ladder(shots([3.0]), pool, recs, picks({"pick": None, "fitting": 6, "fitting_start": 14.0}),
+                               llm=[restated(1)])
+    p = e["picks"][0]
+    assert p["filled_by"] == "fitting" and p["_cand"].id == "vid6" and p["start"] == 14.0 and no_text(p)
+    assert seats.llm_calls == [] and lad.stats == {"fitting": 1}
+
+
+def test_a_fitting_ai_still_is_an_error_and_never_fills(pool, recs):
+    sh = shots([3.0], None, AFTER_OPENING)
+    _, errors = E.check(picks({"pick": None, "fitting": 3}), sh, pool, recs, {}, 0)
+    assert any("fitting 3 is an AI still" in x for x in errors)
+    e, _, _ = run_ladder(sh, pool, recs, picks({"pick": None, "fitting": 3}), llm=NO_RESTATE)
+    assert e["picks"][0]["filled_by"] == "ai_still"  # the AI step, never the fitting step, with an AI asset
+
+
+def test_a_fitting_picture_already_shown_is_not_used(pool, recs):
+    e, _, _ = run_ladder(shots([3.0, 3.0]), pool, recs, picks(1, {"pick": None, "fitting": 1}), llm=NO_RESTATE)
+    assert e["picks"][1]["filled_by"] == "none"
+
+
+def test_short_open_clause_holds_the_previous_pick_when_the_picker_said_so(pool, recs):
+    e, _, _ = run_ladder(shots([3.0, 2.0]), pool, recs, picks(1, {"pick": None, "hold": "previous"}), llm=NO_RESTATE)
     p = e["picks"][1]
-    assert p["filled_by"] == "hold" and p["fallback"] == "hold_previous"
+    assert p["filled_by"] == "hold" and p["fallback"] == "hold_previous" and no_text(p)
+
+
+def test_hold_needs_the_pickers_hold_answer(pool, recs):
+    e, _, _ = run_ladder(shots([3.0, 2.0]), pool, recs, picks(1, None), llm=NO_RESTATE)
+    assert e["picks"][1]["filled_by"] == "none"  # no hold answer, and no AI in the opening
+
+
+@pytest.mark.parametrize("first, held", [(4.0, True), (5.0, False)])
+def test_hold_stays_within_7_s_in_total(pool, recs, first, held):
+    e, _, _ = run_ladder(shots([first, 3.0]), pool, recs, picks(1, {"pick": None, "hold": "previous"}),
+                         llm=NO_RESTATE)
+    assert (e["picks"][1]["filled_by"] == "hold") is held
 
 
 def test_hold_never_passes_the_hold_limit(pool, recs):
-    e, _, _ = run_ladder(shots([8.0, 2.0]), pool, recs, picks(1, None), llm=[{"restated": []}])
-    assert e["picks"][1]["filled_by"] == "ai_still"  # 10 s of one picture is over 9 s; an AI still may fill 2 s
+    e, _, _ = run_ladder(shots([8.0, 2.0], None, AFTER_OPENING), pool, recs,
+                         picks(1, {"pick": None, "hold": "previous"}), llm=NO_RESTATE)
+    assert e["picks"][1]["filled_by"] == "ai_still"  # 10 s of one picture is over 7 s; an AI still may fill 2 s
 
 
-def test_open_clause_naming_a_real_event_never_gets_an_ai_still(pool, recs):
-    e, _, _ = run_ladder(shots([3.0], ["event"]), pool, recs, picks(None),
+def test_hold_next_starts_the_next_video_early(pool, recs):
+    e, _, _ = run_ladder(shots([2.0, 3.0]), pool, recs,
+                         picks({"pick": None, "hold": "next"}, {"pick": 6, "start": 16.0}), llm=NO_RESTATE)
+    p, n = e["picks"]
+    assert p["filled_by"] == "hold" and p["fallback"] == "extend_next"
+    assert n["start"] == n["frame"] == 14.0  # 2 s earlier, so the next shot plays on from where it was cut
+
+
+def test_hold_next_never_moves_a_layouts_cut(pool, recs):
+    sh = shots([2.0, 3.0])
+    sh[1]["plan"].update(treatment="number_over_footage")
+    e, _, _ = run_ladder(sh, pool, recs, picks({"pick": None, "hold": "next"}, 1), llm=NO_RESTATE)
+    assert e["picks"][0]["filled_by"] == "none"
+
+
+@pytest.mark.parametrize("kind", ["person", "document"])
+def test_open_clause_naming_a_real_person_or_document_never_gets_an_ai_still(pool, recs, kind):
+    e, _, _ = run_ladder(shots([3.0], [kind], AFTER_OPENING), pool, recs, picks(None),
                          llm=[{"restated": [{"clause": "c001", "kind": None, "reason": "nothing honest"}]}])
     p = e["picks"][0]
     assert p.get("fallback") != "ai_still" and p["filled_by"] == "none"
 
 
+def test_open_clause_naming_a_real_event_may_get_an_ai_still(pool, recs):
+    e, _, _ = run_ladder(shots([3.0], ["event"], AFTER_OPENING), pool, recs, picks(None), llm=NO_RESTATE)
+    assert e["picks"][0]["filled_by"] == "ai_still"
+
+
 def test_open_clause_without_a_real_thing_gets_an_ai_still(pool, recs):
-    e, _, _ = run_ladder(shots([3.5]), pool, recs, picks(None), llm=[{"restated": []}])
+    e, _, _ = run_ladder(shots([3.5], None, AFTER_OPENING), pool, recs, picks(None), llm=NO_RESTATE)
     p = e["picks"][0]
     assert p["filled_by"] == "ai_still" and p["fallback"] == "ai_still"
 
 
-def test_no_ai_still_over_4_s_or_next_to_two_ai_stills(pool, recs):
-    e, _, _ = run_ladder(shots([4.5]), pool, recs, picks(None), llm=[{"restated": []}])
+def test_no_ai_still_in_the_first_15_s(pool, recs):
+    e, _, _ = run_ladder(shots([3.0], None, 11.0), pool, recs, picks(None), llm=NO_RESTATE)
     assert e["picks"][0]["filled_by"] == "none"
-    e, _, _ = run_ladder(shots([3.0, 3.0, 3.0]), pool, recs, picks(3, 4, None), llm=[{"restated": []}])
+    e, _, _ = run_ladder(shots([3.0], None, 15.0), pool, recs, picks(None), llm=NO_RESTATE)
+    assert e["picks"][0]["filled_by"] == "ai_still"
+
+
+def test_the_loose_picture_fills_after_the_ai_still_is_refused(pool, recs):
+    e, _, _ = run_ladder(shots([3.0]), pool, recs, picks({"pick": None, "loose": 2}), llm=NO_RESTATE)  # opening
+    p = e["picks"][0]
+    assert p["filled_by"] == "loose" and p["_cand"].id == "real2" and no_text(p)
+    e, _, _ = run_ladder(shots([3.0], ["person"], AFTER_OPENING), pool, recs, picks({"pick": None, "loose": 2}),
+                         llm=NO_RESTATE)
+    assert e["picks"][0]["filled_by"] == "loose"
+    e, _, _ = run_ladder(shots([3.0], None, AFTER_OPENING), pool, recs, picks({"pick": None, "loose": 2}),
+                         llm=NO_RESTATE)
+    assert e["picks"][0]["filled_by"] == "ai_still"  # an allowed AI still comes before the loose picture
+
+
+def test_no_ai_still_over_4_s_or_next_to_two_ai_stills(pool, recs):
+    e, _, _ = run_ladder(shots([4.5], None, AFTER_OPENING), pool, recs, picks(None), llm=NO_RESTATE)
+    assert e["picks"][0]["filled_by"] == "none"
+    e, _, _ = run_ladder(shots([3.0, 3.0, 3.0], None, AFTER_OPENING), pool, recs, picks(3, 4, None), llm=NO_RESTATE)
     assert e["picks"][2]["filled_by"] == "none"
-    e, _, _ = run_ladder(shots([3.0, 3.0]), pool, recs, picks(3, None), llm=[{"restated": []}], ai_tail=1)
+    e, _, _ = run_ladder(shots([3.0, 3.0], None, AFTER_OPENING), pool, recs, picks(3, None), llm=NO_RESTATE,
+                         ai_tail=1)
     assert e["picks"][1]["filled_by"] == "none"  # the previous scene ended on an AI still
+
+
+def test_a_missing_document_is_never_restated_and_keeps_its_picture(pool, recs):
+    sh = shots([3.0], None, AFTER_OPENING)
+    sh[0]["plan"].update(treatment="document_focus", presentation="panel",
+                         layout={"purpose": "evidence", "elements": [{"text": "statehood vote passed"}]})
+    e, seats, _ = run_ladder(sh, pool, recs, picks({"pick": 6, "document_pick": None}), llm=[])
+    p = e["picks"][0]
+    assert seats.llm_calls == [] and p["_cand"].id == "vid6" and p["filled_by"] == "pick_no_document"
+    assert no_text(p)
+    e, _, _ = run_ladder(sh, pool, recs, picks({"pick": None, "document_pick": None}), llm=[])
+    assert e["picks"][0]["filled_by"] == "none"  # never an AI still in place of a document
 
 
 def test_every_clause_ends_with_a_filled_by(pool, recs):
     sh = shots([3.0, 2.0, 3.0, 3.0, 5.0], [None, None, None, "person", None])
     sh[2]["plan"].update(treatment="chart", presentation="full")
-    e, _, lad = run_ladder(sh, pool, recs, picks(1, None, None, None, None), llm=[{"restated": []}])
+    e, _, lad = run_ladder(sh, pool, recs, picks(1, {"pick": None, "hold": "previous"}, None, None, None),
+                           llm=NO_RESTATE)
     assert [p["filled_by"] for p in e["picks"]] == ["pick", "hold", "pick", "none", "none"]
     assert all(p["filled_by"] in FILLED for p in e["picks"])
     assert sum(lad.stats.values()) == 5
@@ -321,7 +428,7 @@ def test_unfound_evidence_document_is_open_for_the_ladder():
     plan = {"treatment": "document_focus", "presentation": "full",
             "layout": {"purpose": "evidence", "elements": [{"text": "words on the page"}]}}
     assert L.is_open({"filled_by": "pick", "_doc": None, "_cand": None}, plan)
-    assert not L.is_open({"filled_by": "restate", "_doc": None, "_cand": None, "fallback": "text_over_footage"}, plan)
+    assert not L.is_open({"filled_by": "loose", "_doc": None, "_cand": object()}, plan)
     assert not L.is_open({"filled_by": "pick", "_doc": object(), "_cand": None}, plan)
     period = dict(plan, layout={"purpose": "period", "elements": []})
     assert not L.is_open({"filled_by": "pick", "_doc": None, "_cand": None}, period)
@@ -366,13 +473,6 @@ def test_late_first_usable_range_is_clamped_inside_the_clip(pool, recs):
     assert why is None and t == 25.0
 
 
-def test_restated_text_must_be_the_clauses_own_words(pool, recs):
-    e, _, _ = run_ladder(shots([3.0]), pool, recs, picks(None),
-                         llm=[restated(6, text="other clause line"), restated(6, text="other clause line")])
-    assert e["picks"][0].get("filled_by") != "restate"
-    assert any("not this clause's own words" in x for a in e["restate_attempts"] for x in a["errors"])
-
-
 def test_restated_footage_under_a_named_thing_must_name_it(pool, recs):
     sh = named(shots([3.0]))
     e, _, _ = run_ladder(sh, pool, recs, picks(None), llm=[restated(6), restated(6)])
@@ -380,6 +480,18 @@ def test_restated_footage_under_a_named_thing_must_name_it(pool, recs):
     recs["vid6"]["source_facts"]["title"] = "Juneau Harbour river"
     e, _, _ = run_ladder(named(shots([3.0])), pool, recs, picks(None), llm=[restated(6)])
     assert e["picks"][0]["filled_by"] == "restate"
+
+
+def test_route_map_restate_needs_every_place_on_the_map(pool, recs, monkeypatch):
+    monkeypatch.setattr(L, "place_resolves", lambda name: name != "Atlantis")
+    reply = {"restated": [{"clause": "c001", "kind": "route_map", "places": ["Juneau, Alaska", "Atlantis"],
+                           "reason": "a journey"}]}
+    e, _, _ = run_ladder(shots([3.0]), pool, recs, picks(None), llm=[reply, reply])
+    assert e["picks"][0]["filled_by"] == "none"
+    assert any("Atlantis are not on our map" in x for a in e["restate_attempts"] for x in a["errors"])
+    reply["restated"][0]["places"] = ["Juneau, Alaska", "Nome, Alaska"]
+    e, _, _ = run_ladder(shots([3.0]), pool, recs, picks(None), llm=[reply])
+    assert e["picks"][0]["filled_by"] == "restate" and e["shots"][0]["plan"]["treatment"] == "route_map"
 
 
 def test_a_re_sourced_ai_pick_is_checked_against_its_real_neighbours(pool, recs):

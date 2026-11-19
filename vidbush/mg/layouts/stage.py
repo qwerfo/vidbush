@@ -2,37 +2,40 @@
 
 For every shot carrying a LayoutSpec (Shot.layout, written by the planner):
 - the elements are timed from the narration words (timing.cue_times);
-- a full layout (every non-panel kind, or presentation "full"/None) renders to an opaque clip for the whole
-  shot and becomes the shot's selected candidate (source motion, so it is never credited to a third party);
+- a layout is shown whole or not at all: every anchored element must be spoken inside the shot, every
+  picture, place and route it names must be real and drawable (job.missing), and it must stay at least
+  3 s from its first word. Otherwise it is dropped (a render decision: the spec stays) and the shot shows a
+  real picture of its own, the planner's fitting alternate before its loose one;
+- a full layout (every non-panel kind, or presentation "full"/None) whose first words come within
+  FULL_LATE_S of the cut renders to an opaque clip for the whole shot and becomes the shot's selected
+  candidate (source motion, so it is never credited to a third party); one whose words come later is an
+  alpha overlay entering on its first words over the shot's own picture, so no bare ground is ever held;
 - a panel presentation is placed from the shot's own picture (placement.py) and renders to an alpha
   overlay that starts when its first element is spoken (Shot.layout_at) and ends when its content stops
-  being relevant (last element plus PANEL_HOLD_S), not at the cut. With no clear position the content is
-  shown full instead, and the shot's notes say why.
+  being relevant (last element plus PANEL_HOLD_S), not at the cut. With no clear position it is dropped.
 Every decision goes into Shot.layout_notes. Clips are cached by a hash of everything that changes pixels.
 """
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 
-from ...models import (PANEL_LAYOUT_KINDS, Candidate, LayoutKind, Narration, Shot, ShotList, SourceKind,
-                       StyleProfile)
+from ...models import (GENERATED_SOURCES, PANEL_LAYOUT_KINDS, Candidate, LayoutKind, Narration, Shot, ShotList,
+                       SourceKind, StyleProfile)
 from ...util import stable_hash
 from ..house import house_style
 from . import comp_class, render_full, render_panel
 from .base import FrameProfile, LayoutJob
 from .jobs import make_job
 from .panel import DOCK_S, NEVER, PanelPlan, change_time, large_rect
-from .placement import place_panel
 
-LAYOUT_RENDER_VERSION = "layouts-8"
-EMPTY_NOTE = "route_map: nothing resolved, an empty map"  # routemap.RouteMap._fit  # bump when drawing code changes pixels
+LAYOUT_RENDER_VERSION = "layouts-9"  # bump when drawing code changes pixels
 PANEL_HOLD_S = 2.5  # a panel stays this long after its last element is spoken, then leaves
-PANEL_MIN_S = 3.0
-FULL_MIN_S, FULL_MAX_S = 3.0, 7.0
+PANEL_MIN_S = 3.0  # a panel is on screen at least this long from its first word, else it is not shown
+FULL_MIN_S, FULL_MAX_S = 3.0, 7.0  # a full layout lasts at least FULL_MIN_S from its first word to the cut
+FULL_LATE_S = 0.75  # first words later than this after the cut: the layout enters on them, over the picture
 DOC_MAX_S = 14.0  # a document read in two or three marked passages needs longer than a card
 SAMPLES = 4  # frames of the underlying picture read for placement
 PANEL_SHRINK = (0.85, 0.72)  # smaller sizes tried when no position clears the picture at the preferred size
@@ -73,15 +76,65 @@ def panel_share(spec: Any, extra: Optional[dict] = None) -> tuple[float, float]:
         return tuple(share(spec))  # type: ignore[return-value]
 
 
-def _panel_window(job: LayoutJob, presentation: str, shot_dur: float) -> tuple[float, float]:
-    """(start, end) of a panel inside the shot: first element (lead included) to last element + hold."""
+def first_word(job: LayoutJob) -> float:
+    """Seconds into the clip of the layout's first spoken word (0 when nothing is anchored)."""
+    return max(0.0, min((c.word for c in job.cues if c.found), default=0.0))
+
+
+def _panel_window(job: LayoutJob, presentation: str, shot_dur: float) -> Optional[tuple[float, float]]:
+    """(start, end) of a panel inside the shot: first element (lead included) to last element + hold, and at
+    least PANEL_MIN_S from the first word; None when the cut comes sooner (never clipped short)."""
     found = [c for c in job.cues if c.found]
-    start = min((c.appear for c in found), default=0.0)
+    start = max(0.0, min((c.appear for c in found), default=0.0))
+    first = first_word(job)
+    if shot_dur - first < PANEL_MIN_S - 1e-6:
+        return None
     end = max((c.word_end for c in found), default=start) + PANEL_HOLD_S
     if presentation in ("full_then_dock", "panel_then_expand"):
         end = max(end, start + 2 * DOCK_S + 4.0)
-    end = min(shot_dur, max(end, start + PANEL_MIN_S))
-    return max(0.0, start), end
+    return start, min(shot_dur, max(end, first + PANEL_MIN_S))
+
+
+def incomplete(job: LayoutJob, shot_dur: float) -> str:
+    """Why the layout cannot be shown whole in this shot ('' when it can): a picture or element it cannot draw
+    (job.missing), or an anchored element spoken outside the shot."""
+    if job.missing:
+        return job.missing[0]
+    for c in job.cues:
+        el = job.spec.elements[c.index]
+        if el.anchor and c.found and not -1.0 <= c.word < shot_dur:
+            return f"element {c.index} ({el.role}): its words are spoken outside the shot"
+    return ""
+
+
+def real_picture(shot: Shot) -> Optional[Candidate]:
+    """The shot's selected picture when it is a real one (not generated, not motion), else None."""
+    c = shot.selected_candidate()
+    if c is None or c.source == SourceKind.motion or c.source in GENERATED_SOURCES or not c.local_path:
+        return None
+    return c
+
+
+def keep_real_picture(shot: Shot, ctx: Any) -> bool:
+    """Make sure the shot shows a real picture of its own: its selection, else its best real candidate (the
+    planner's fitting alternate before its loose one). False, with a warning, when it has none."""
+    if real_picture(shot) is not None:
+        return True
+    from ..renderer import picture_instead
+    pick = picture_instead(shot, real=True)
+    if pick is None:
+        ctx.log.warn("shot has no real picture to show", shot=shot.id)
+        return False
+    shot.selected = pick.id
+    shot.layout_notes.append(f"shows {pick.id}")
+    return True
+
+
+def _drop(shot: Shot, spec: Any, why: str, ctx: Any) -> None:
+    """The layout is not shown: a render decision only (the spec stays, so a rerun with other timings or
+    pictures can show it). The shot shows a real picture of its own."""
+    shot.layout_notes.append(f"{spec.kind.value} not shown: {why}; the shot's picture stays")
+    keep_real_picture(shot, ctx)
 
 
 def _shift(job: LayoutJob, by: float) -> None:
@@ -201,8 +254,10 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
     if not shots:
         return {}
     nar = ctx.maybe_load("narration", Narration)
-    if nar is None or not nar.words:  # no word timings: render nothing and change nothing (specs are kept)
+    if nar is None or not nar.words:  # no word timings: render nothing (specs are kept), shots show pictures
         ctx.log.warn("layouts skipped: no narration word timings")
+        for s in shots:
+            keep_real_picture(s, ctx)
         return {}
     words = nar.words
     frame = frame_profile(ctx.profile)
@@ -229,54 +284,58 @@ def render_shot_layouts(shotlist: ShotList, ctx: Any) -> dict[str, float]:
                 extra["art_fp"] = sorted((f.name, int(f.stat().st_mtime)) for f in art.glob("*_base.*"))
         pres = presentation_of(shot)
         job = make_job(spec, words, shot.start, shot.duration, pool, frame, house, r.width, r.height, r.fps, extra)
-        plan = None
-        if not any(c.found and -1.0 <= c.word <= shot.duration for c in job.cues) and any(e.anchor for e in spec.elements):
-            # nothing it shows is spoken during the shot: a graphic at the wrong moment is worse than none
-            # a render decision only: the spec stays, so a rerun with other timings can show it
-            shot.layout_notes.append(f"{spec.kind.value} not shown: none of its words are spoken during the shot")
+        why = incomplete(job, shot.duration)
+        if why:  # a graphic missing a part, or at the wrong moment, is worse than the shot's own picture
+            _drop(shot, spec, why, ctx)
             continue
+        first = first_word(job)
+        plan, overlay = None, False
         if pres != "full":
+            if shot.selected_candidate() is None and not keep_real_picture(shot, ctx):
+                _drop(shot, spec, "a panel needs the shot's own picture beneath it", ctx)
+                continue
             plan, why = _plan_panel(shot, job, pres, previous, ctx)
             if plan is None:
-                # full frame instead, still entering on its first words over the shot's own picture
-                full = large_rect(job, True)
-                plan = PanelPlan("panel", full, full, NEVER, "full")
-                shot.layout_notes.append(f"panel not placed ({why}); shown full frame from its first words instead")
-            else:
-                previous = plan.position
-                shot.layout_notes.append(f"panel {pres} at {why}")
-        if pres == "full":
-            job = make_job(spec, words, shot.start, shot.duration, pool, frame, house, r.width, r.height, r.fps,
-                           extra)
-            first = min((c.word for c in job.cues if c.found), default=0.0)
-            if first > 1.5 and spec.kind != LayoutKind.document_focus:  # a document is first seen whole
-                shot.layout_notes.append(f"full layout's first words come {first:.1f} s after the cut: start the "
-                                         "layout nearer its words")
-            top = DOC_MAX_S if spec.kind == LayoutKind.document_focus else FULL_MAX_S
-            if not FULL_MIN_S <= shot.duration <= top:
-                shot.layout_notes.append(f"full layout held {shot.duration:.1f} s, outside {FULL_MIN_S:g} to "
-                                         f"{top:g} s")
-        if spec.kind == LayoutKind.name_card and pres == "full":
-            from .pictures import NameCard
-            if NameCard.fallback_needed(job):
-                _name_lower_third(shot, job, out_dir, ctx, seconds)
+                _drop(shot, spec, f"panel not placed ({why})", ctx)
                 continue
+            previous = plan.position
+            shot.layout_notes.append(f"panel {pres} at {why}")
+        else:
+            if shot.duration - first < FULL_MIN_S:
+                _drop(shot, spec, f"{shot.duration - first:.1f} s from its first words to the cut, under "
+                                  f"{FULL_MIN_S:g} s", ctx)
+                continue
+            if first > FULL_LATE_S:  # never seconds of bare ground: the picture shows until the words
+                if not keep_real_picture(shot, ctx):
+                    _drop(shot, spec, f"its first words come {first:.1f} s after the cut and the shot has no "
+                                      "real picture to show until then", ctx)
+                    continue
+                start = min(c.appear for c in job.cues if c.found)
+                _shift(job, start)
+                job.duration = shot.duration - start
+                job.extra["_start"] = start
+                overlay = True
+                shot.layout_notes.append(f"full layout enters on its first words, {start:.1f} s after the cut, "
+                                         "over the shot's picture")
+            top = DOC_MAX_S if spec.kind == LayoutKind.document_focus else FULL_MAX_S
+            if shot.duration > top:
+                shot.layout_notes.append(f"full layout held {shot.duration:.1f} s, over {top:g} s")
         key = _key(job, plan)
-        out = out_dir / f"layout_{key}.{'mov' if plan else 'mp4'}"
+        out = out_dir / f"layout_{key}.{'mov' if plan or overlay else 'mp4'}"
         if not out.exists():
-            secs = render_panel(job, plan, out) if plan else render_full(job, out)
+            secs = render_panel(job, plan, out) if plan else render_full(job, out, overlay)
             seconds[spec.kind.value] = seconds.get(spec.kind.value, 0.0) + secs
-            ctx.log.info("layout rendered", shot=shot.id, kind=spec.kind.value, presentation=pres,
-                         seconds=round(secs, 2), clip_s=round(job.duration, 2))
+            if out.exists():
+                ctx.log.info("layout rendered", shot=shot.id, kind=spec.kind.value, presentation=pres,
+                             seconds=round(secs, 2), clip_s=round(job.duration, 2))
         else:  # cached clip: build the composition once so its notes (base used, fallbacks) are still recorded
             comp = comp_class(spec.kind)(job, job.width, job.height, plan is not None)
             comp.close()
         shot.layout_notes += list(dict.fromkeys(job.notes))
-        if EMPTY_NOTE in job.notes and shot.selected_candidate() is not None:
-            # a graphic with nothing on it is worse than the shot's own picture
-            shot.layout_notes.append(f"{spec.kind.value} not shown: {EMPTY_NOTE.split(': ', 1)[1]}; the shot's picture stays")
+        if job.missing or not out.exists():  # the composition found a part it cannot draw: nothing was written
+            _drop(shot, spec, job.missing[0] if job.missing else "no clip was written", ctx)
             continue
-        if plan:
+        if plan or overlay:
             shot.overlay_path = str(out)
             shot.layout_at = round(plan_start(shot, job), 3)
         else:
@@ -302,33 +361,6 @@ def _reset(shot: Shot) -> None:
             shot.selected = prev if any(c.id == prev for c in shot.candidates) else None
 
 
-def _name_lower_third(shot: Shot, job: LayoutJob, out_dir: Path, ctx: Any, seconds: dict[str, float]) -> None:
-    """No real portrait: the name goes on a lower third over the shot's own picture, from its words to the cut.
-    Never over a generated picture: a name on an AI portrait would give a made-up face a real identity."""
-    from ...models import GENERATED_SOURCES
-    from ...render.mg_python import FrameSink
-    from .pictures import NameLowerThird
-    shot.layout_notes += job.notes
-    pic = shot.selected_candidate()
-    if pic is None or pic.source in GENERATED_SOURCES or pic.source == SourceKind.motion:
-        shot.layout_notes.append("name card: no real portrait and the shot's picture is not a real one; no name shown")
-        shot.overlay_path, shot.layout_at = "", 0.0
-        return
-    start = min((c.appear for c in job.cues if c.found), default=0.0)
-    _shift(job, start)
-    job.duration = max(0.5, shot.duration - start)
-    out = out_dir / f"layout_{_key(job, None)}_lt.mov"
-    if not out.exists():
-        t0 = time.perf_counter()
-        comp = NameLowerThird(job, job.width, job.height, False)
-        with FrameSink(out, job.width, job.height, job.fps, True, "veryfast") as sink:
-            for i in range(max(1, round(job.duration * job.fps))):
-                sink.write(comp.render_rgba(i))
-        seconds["name_lower_third"] = seconds.get("name_lower_third", 0.0) + time.perf_counter() - t0
-    shot.overlay_path, shot.layout_at = str(out), round(start, 3)
-    shot.layout_notes.append("name card: no real portrait, shown as a lower third on the shot's picture")
-
-
 def plan_start(shot: Shot, job: LayoutJob) -> float:
     return float(job.extra.get("_start", 0.0))
 
@@ -351,17 +383,23 @@ def _framed_rect(shot: Shot, ctx: Any, W: int, H: int) -> Optional[tuple[float, 
 
 def _fits(job: LayoutJob, size: tuple[float, float]) -> bool:
     """The content laid out at this panel size keeps every text whole at the floors (kinds that report it)."""
+    missing = list(job.missing)
     comp = comp_class(job.spec.kind)(job, int(size[0]) // 2 * 2, int(size[1]) // 2 * 2, True)
     try:
         check = getattr(comp, "fits", None)
         return bool(check()) if callable(check) else bool(getattr(comp, "ok", True))
     finally:
         comp.close()
+        job.missing[:] = missing  # a trial size never decides whether the layout is whole
 
 
 def _plan_panel(shot: Shot, job: LayoutJob, pres: str, previous: str, ctx: Any) -> tuple[Optional[PanelPlan], str]:
-    """Place the panel from the picture beneath; trims the job to the panel's visible window."""
-    start, end = _panel_window(job, pres, shot.duration)
+    """Place the panel from the picture beneath; trims the job to the panel's visible window. None with the
+    reason when it has under PANEL_MIN_S before the cut or no clear position."""
+    win = _panel_window(job, pres, shot.duration)
+    if win is None:
+        return None, f"under {PANEL_MIN_S:g} s from its first words to the cut"
+    start, end = win
     _shift(job, start)
     job.duration = max(0.5, end - start)
     job.extra["_start"] = start

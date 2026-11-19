@@ -1,11 +1,11 @@
-"""Picture layout kinds: nothing before its cue, split sides fill on their own word, name card fallback."""
+"""Picture layout kinds: nothing before its cue, split sides fill on their own word, missing pictures drop them."""
 import numpy as np
 import pytest
 from PIL import Image
 
 from vidbush.mg.layouts import comp_class
 from vidbush.mg.layouts.base import FrameProfile, LayoutJob, PictureRef
-from vidbush.mg.layouts.pictures import NameCard, NameLowerThird
+from vidbush.mg.layouts.pictures import NameCard
 from vidbush.mg.layouts.timing import Cue
 from vidbush.models import LayoutElement, LayoutKind, LayoutSpec
 
@@ -65,25 +65,27 @@ def test_split_right_half_empty_until_its_cue(tmp_path, frame):
     assert not np.array_equal(comp.render(28)[:, right], comp.canvas(28)[:, right])
 
 
-def test_name_card_falls_back_without_real_portrait(tmp_path):
+def test_name_card_without_real_portrait_is_incomplete(tmp_path):
+    """A name goes on screen only beside a real picture of that person: no card, no lower third."""
     els = [dict(role="portrait", picture="x"), dict(role="name", text="Lizzie"), dict(role="role", text="Elder")]
     real = _pic(tmp_path, "p", (90, 90, 90))
     generated = PictureRef(real.path, "image", source="ai_image")
     frame = PROFILES[0]
-    assert NameCard.fallback_needed(_job(LayoutKind.name_card, els, [1, 1, 1], {}, frame))
-    assert NameCard.fallback_needed(_job(LayoutKind.name_card, els, [1, 1, 1], {0: generated}, frame))
-    assert not NameCard.fallback_needed(_job(LayoutKind.name_card, els, [1, 1, 1], {0: real}, frame))
+    for pics in ({}, {0: generated}):
+        job = _job(LayoutKind.name_card, els, [1, 1, 1], pics, frame)
+        NameCard(job, W, H, False).close()
+        assert job.missing and "portrait" in job.missing[0]
+    job = _job(LayoutKind.name_card, els, [1, 1, 1], {0: real}, frame)
+    NameCard(job, W, H, False).close()
+    assert job.missing == []
 
 
-@pytest.mark.parametrize("frame", PROFILES)
-def test_lower_third_is_transparent_before_cue_and_inside_visible_area(tmp_path, frame):
-    els = [dict(role="portrait"), dict(role="name", text="Lizzie"), dict(role="role", text="Elder, Toksook Bay")]
-    job = _job(LayoutKind.name_card, els, [1.0, 1.0, 1.3], {}, frame)
-    lt = NameLowerThird(job, W, H, False)
-    assert not lt.render_rgba(9).any()
-    f = lt.render_rgba(25)
-    ys, xs = np.nonzero(f[..., 3] > 8)
-    assert len(ys)
-    x0, y0, x1, y1 = frame.visible(W, H)
-    assert xs.max() < W / 2 and ys.min() > H / 2  # lower left
-    assert ys.max() <= y1 + 4  # above the bars or the caption band (shadow allowance)
+@pytest.mark.parametrize("kind,els", [
+    (LayoutKind.split_comparison, [dict(role="left", text="Alaska"), dict(role="right", text="Fort Worth")]),
+    (LayoutKind.list_slideshow, [dict(role="item", text="Bush plane"), dict(role="item", text="Snowmobile")]),
+])
+def test_missing_picture_makes_the_layout_incomplete_never_a_card(tmp_path, kind, els):
+    a = _pic(tmp_path, "a", (200, 40, 40))
+    job = _job(kind, els, [1.0, 2.0], {0: a}, PROFILES[1])
+    comp_class(kind)(job, W, H, False).close()
+    assert any("element 1" in m and "no real picture" in m for m in job.missing)

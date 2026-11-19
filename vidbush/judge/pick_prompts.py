@@ -19,14 +19,28 @@ PICK_SYSTEM = (
 
 PICK_RULES = [
     "What your output is used for: each pick is cut in at the clause's first word and plays from the start "
-    "time you give. A clause you leave without a pick goes down a ladder: a new search with your queries, "
-    "then the director restates it as a layout, then the previous picture is held, then (only where allowed) "
-    "an AI still. So saying nothing fits is cheap; a wrong picture is not.",
-    "The picture must show the thing the clause is about at the moment it is said, because the viewer "
-    "hears the words and looks for them on screen. A picture that fits the topic but not the clause is "
-    "related, and related loses to a layout that states the point: answer nothing fits rather than pick a "
-    "related picture. Example (invented): for 'the mill closed in the winter of the flood' a picture of the "
-    "mill closed or the flood is right; any picture of the town is related.",
+    "time you give, shown plain: no words are ever typed over it. A clause you leave without a pick is filled "
+    "in this order: your fitting picture, a complete layout, a neighbouring picture held a little longer, an AI "
+    "still (only where allowed), your loose picture. So saying nothing fits is cheap; a wrong picture is not.",
+    "pick: the asset that shows the thing the clause is about at the moment it is said, because the viewer "
+    "hears the words and looks for them on screen. Example (invented): for 'the mill closed in the winter of "
+    "the flood' a picture of the mill closed or of the flood is the pick.",
+    "Fit means the situation, not a shared noun. Each clause has a setting (period, season, place, "
+    "circumstance) and each asset a record (shows, place, period, look). An asset fits a clause only when "
+    "period, season, setting and circumstance agree with what is being said; refuse a mismatch, because the "
+    "viewer sees a summer street under a line about a winter storm, or a modern crowd under a line about a "
+    "1920s celebration, as a mistake. A modern picture may cover a historical clause only when its subject is "
+    "unchanged by time (a landscape, a mountain, a coastline, the open sea). Sharing a word with the "
+    "narration is not fitting.",
+    "fitting: for a clause with no pick, and for every full layout clause (in case the layout cannot be "
+    "drawn), the asset that best fits the situation described, by the rule above, though it does not show "
+    "the specific thing. Example (invented): for 'in the winter of 1890 the miners slept in tents on the ice' "
+    "a black and white photograph of a tent camp in snow fits; a modern summer campsite does not. Null when "
+    "nothing fits.",
+    "hold: for a clause with no pick, 'previous' or 'next' when that neighbouring clause's picture also fits "
+    "this clause's situation and could stay on screen across it, else empty.",
+    "loose: for a clause with neither pick nor fitting, a real asset loosely related to the clause that does "
+    "not contradict its setting, shown plain. Null when even that would mislead.",
     "A named real thing (the clause's real_thing) is only shown by an asset whose record supports that it is "
     "that thing: its title, description, page text, date, or the text visible in the frame. A look-alike is "
     "refused, because a viewer who knows the subject sees the substitution and stops trusting the film. For "
@@ -49,12 +63,14 @@ PICK_RULES = [
     "start: for a video, the second in the asset where the shot begins, inside one of the record's usable "
     "ranges, so that start plus the shot length stays inside the clip. The record's frame times tell you what "
     "plays when. For a still, leave start null.",
-    "One asset may cover two adjacent clauses (give the same pick). Using an asset again anywhere else is "
-    "allowed only as a deliberate callback: set callback true and say what changed.",
+    "One asset may cover at most two shots in a row (a whole view, then one closer view): never three. Using "
+    "an asset again anywhere else is allowed only as a deliberate callback at least 60 s after its last "
+    "showing: set callback true and say what changed.",
     "The previous scene's last picks are given so the cut into this scene reads as continuous: do not open "
     "with the same picture, and prefer a first picture that follows on from them.",
-    f"AI stills are marked ai. Never pick one for a named real person, a real event or a document. At most "
-    f"{V.AI_RUN_MAX} AI stills in a row, each on screen at most {V.AI_HOLD_MAX_S:g} s.",
+    f"AI stills are marked ai. Never pick one for a named real person or a document, and never in the first "
+    f"{V.AI_OPENING_S:g} s of the film. At most {V.AI_RUN_MAX} AI stills in a row, each on screen at most "
+    f"{V.AI_HOLD_MAX_S:g} s. Never give an AI still as fitting or loose.",
     "label: a place, name or date label, only when the picked asset's record supports it (the label words "
     "appear in its title, description, date, page text or visible text). Give label_source, the record "
     "field it comes from. Otherwise empty: a label is never written from what the clause hoped to show.",
@@ -72,7 +88,8 @@ PICK_OUTPUT = {
     "picks": [{"clause": "c001", "pick": 12, "start": 3.5, "reason": "short", "identity": "",
                "identity_field": "", "label": "", "label_source": "", "callback": False,
                "search_again": [], "element_picks": [{"element": 0, "pick": 7, "start": None}],
-               "document_pick": None}],
+               "document_pick": None, "fitting": None, "fitting_start": None, "hold": "",
+               "loose": None, "loose_start": None}],
 }
 
 
@@ -101,7 +118,6 @@ RESTATE_KINDS = {
     "split_comparison": "two things we do have pictures of, side by side",
     "date_title": "a date or period title over related real footage",
     "route_map": "a map of the places or the route the clause names",
-    "text_over_footage": "the clause's key words or quoted words typed as they are said, over related real footage",
 }
 
 RESTATE_RULES = [
@@ -113,8 +129,10 @@ RESTATE_RULES = [
     "or document).",
     "The asset beneath must not contradict the clause's place or period (no modern beach under a past "
     "event), because the typed words then sit on a picture that says something else.",
-    "text: what is typed on screen, at most 6 words, taken from the clause's own words (a number carries its "
-    "unit; quoted words are typed as they are said). anchor: the exact clause words the text appears on.",
+    "text: what is typed on screen, at most 6 words: only a number with its unit, a date, or short labels; "
+    "never a stretch of the narration typed out. anchor: the exact clause words the text appears on.",
+    "A layout is drawn only when it is complete: both pictures of a comparison, every place of a map, the "
+    "picture beneath. When it cannot be complete, set kind null.",
     "For route_map give places, the place names in the order they are said. For split_comparison give "
     "pictures, two asset numbers, and text as 'left words / right words'. For the other kinds give beneath, "
     "the asset the text sits over.",

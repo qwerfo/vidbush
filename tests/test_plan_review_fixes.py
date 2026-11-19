@@ -6,7 +6,7 @@ from vidbush.plan import edit as E
 from vidbush.shots import ideas as I
 
 from test_plan_direct import run, scene  # noqa: F401  (fixture)
-from test_plan_edit import jpg, picks, pool, recs, shots  # noqa: F401  (fixtures)
+from test_plan_edit import AFTER_OPENING, jpg, picks, pool, recs, shots  # noqa: F401  (fixtures)
 
 
 def words(text, t0=0.0, step=0.5):
@@ -44,7 +44,7 @@ def test_ai_element_pick_on_a_person_layout_is_refused(pool, recs):  # noqa: F81
 
 
 def test_ai_element_pick_on_a_layout_without_a_real_thing_stays(pool, recs):  # noqa: F811
-    sh = shots([3.0])
+    sh = shots([3.0], None, AFTER_OPENING)
     sh[0]["plan"].update(treatment="split_comparison", layout={"elements": [{"text": "x", "picture_subject": "y"}]})
     p, errors = E.check(picks({"pick": None, "element_picks": [{"element": 0, "pick": 3}]}), sh, pool, recs, {}, 0)
     assert errors == []
@@ -80,7 +80,7 @@ def test_element_pick_out_of_range_is_an_error(pool, recs):  # noqa: F811
 
 
 def test_same_ai_still_on_adjacent_shots_counts_total_time(pool, recs):  # noqa: F811
-    sh = shots([3.0, 3.0])
+    sh = shots([3.0, 3.0], None, AFTER_OPENING)
     p, errors = E.check(picks(3, 3), sh, pool, recs, {}, 0)
     assert any("6.0 s" in e for e in errors)
     out = E.resolve(p, sh, 0, recs, {})
@@ -88,10 +88,19 @@ def test_same_ai_still_on_adjacent_shots_counts_total_time(pool, recs):  # noqa:
 
 
 def test_ai_run_resets_after_a_layout_in_check_and_resolve(pool, recs):  # noqa: F811
-    sh = shots([3.0, 3.0, 3.0, 3.0])
+    sh = shots([3.0, 3.0, 3.0, 3.0], None, AFTER_OPENING)
     sh[1]["plan"].update(treatment="chart", presentation="full")
     p, errors = E.check(picks(3, {"pick": None}, 4, 5), sh, pool, recs, {}, 0)
     assert not any("in a row" in e for e in errors)
     out = E.resolve(p, sh, 0, recs, {})
     assert [x["_cand"].id if x["_cand"] else None for x in out] == ["ai3", None, "ai4", "ai5"]
     assert out[1]["filled_by"] == "pick"  # a full chart needs no picture
+
+
+def test_ai_element_pick_in_the_first_15_s_is_refused(pool, recs):  # noqa: F811
+    """Adam: no AI-looking picture in the opening 15 s; a layout's AI picture is on screen like an AI still."""
+    sh = shots([3.0])
+    sh[0]["plan"].update(treatment="split_comparison", layout={"elements": [{"text": "x", "picture_subject": "y"}]})
+    p, errors = E.check(picks({"pick": None, "element_picks": [{"element": 0, "pick": 3}]}), sh, pool, recs, {}, 0)
+    assert any("first 15 s" in e for e in errors)
+    assert E.resolve(p, sh, 0, recs, {})[0]["element_picks"] == []

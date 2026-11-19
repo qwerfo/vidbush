@@ -10,10 +10,34 @@ import pytest
 
 import numpy as np
 
-from test_render_helpers import build_shotlist, count_frames, make_bumper, make_wav, write_captions
-from vidbush.audio.loudness import normalize, read_audio
+from test_render_helpers import build_shotlist, count_frames, make_bumper, write_captions
+from vidbush.audio.loudness import normalize, read_audio, write_audio
+from vidbush.models import Narration, Word
 from vidbush.render.assemble import assemble, verify
 from vidbush.util import NullLogger, ToolError, ffprobe, read_json
+
+
+def speech_wav(path: Path, seconds: float, seed: int = 1, bed: float = 0.0) -> Path:
+    """Stereo 48 kHz tone bursts of uneven length: an envelope the sound gate can follow (a steady sine has none);
+    bed adds a steady tone under it, as music sits under the narration in a mix."""
+    rng = np.random.default_rng(seed)
+    n = int(round(seconds * 48000))
+    gate, i, on = np.zeros(n, np.float32), 0, True
+    while i < n:
+        step = int(rng.uniform(0.08, 0.35) * 48000)
+        gate[i:i + step] = 1.0 if on else 0.0
+        i, on = i + step, not on
+    t = np.arange(n) / 48000
+    sig = 0.25 * np.sin(2 * np.pi * 330 * t) * gate + bed * np.sin(2 * np.pi * 523 * t)
+    return write_audio(path, np.stack([sig, sig], axis=1), 48000)
+
+
+def save_narration(ctx, seconds: float, spoken: float) -> Path:
+    """work/narration.json and its wav, speaking from 0 to `spoken` seconds."""
+    wav = speech_wav(ctx.work / "narration" / "narration.wav", seconds)
+    ctx.save("narration", Narration(audio_path=str(wav), duration=seconds,
+                                    words=[Word(text="the", start=0.05, end=spoken)]))
+    return wav
 
 
 @pytest.fixture
@@ -21,7 +45,8 @@ def ready_ctx(make_ctx):
     ctx = make_ctx(mode="script")
     shotlist = build_shotlist(ctx.work / "media")
     write_captions(ctx.work)
-    make_wav(ctx.work / "mix.wav", shotlist.duration)
+    save_narration(ctx, shotlist.duration, shotlist.duration - 0.1)
+    speech_wav(ctx.work / "mix.wav", shotlist.duration, bed=0.1)  # the narration with a music bed under it
     return ctx, shotlist
 
 
@@ -68,9 +93,9 @@ def _loudness(path: Path) -> float:
 
 
 def _master_mix(ctx, seconds: float) -> None:
-    """mix.wav as the mix stage leaves it: already at -14 LUFS."""
-    raw = make_wav(ctx.work / "mix_raw.wav", seconds)
-    normalize(raw, ctx.work / "mix.wav", -14.0, -1.0, 48000, 2, exact_samples=round(seconds * 48000))
+    """mix.wav as the mix stage leaves it: the narration, already at -14 LUFS."""
+    normalize(Path(read_json(ctx.work / "narration.json")["audio_path"]), ctx.work / "mix.wav", -14.0, -1.0, 48000,
+              2, exact_samples=round(seconds * 48000))
 
 
 def _srt_starts(path: Path) -> list[float]:
@@ -139,6 +164,29 @@ def test_verify_raises_on_av_drift(tmp_path) -> None:
                    check=True)
     with pytest.raises(ToolError):
         verify(clip, 30, NullLogger())
+
+
+def test_sound_gate_keeps_a_final_without_narration_off_disk(ready_ctx) -> None:
+    ctx, shotlist = ready_ctx
+    final, _ = assemble(shotlist, ctx)
+    good = final.read_bytes()
+    assert read_json(ctx.work / "sound_check.json")["ok"]
+    write_audio(ctx.work / "mix.wav", np.zeros((round(shotlist.duration * 48000), 2), np.float32), 48000)
+    with pytest.raises(ToolError, match="sound check failed"):
+        assemble(shotlist, ctx)
+    assert final.read_bytes() == good, "the silent file never replaced final.mp4"
+    report = read_json(ctx.work / "sound_check.json")
+    assert not report["ok"] and report["faults"]
+
+
+def test_sound_gate_fails_when_the_mix_cut_the_narration(ready_ctx) -> None:
+    ctx, shotlist = ready_ctx
+    save_narration(ctx, shotlist.duration + 2.0, shotlist.duration + 1.5)
+    with pytest.raises(ToolError, match="the mix cut it"):
+        assemble(shotlist, ctx)
+    (ctx.work / "trim.json").write_text(json.dumps({"until": 2.0}))  # an excerpt cuts it on purpose
+    assemble(shotlist, ctx)
+    assert read_json(ctx.work / "sound_check.json")["runtime_s"] == pytest.approx(shotlist.duration)
 
 
 def test_missing_intro_is_skipped(ready_ctx) -> None:

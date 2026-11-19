@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import cv2
 import numpy as np
@@ -76,6 +76,7 @@ class LayoutJob:
     pictures: dict[int, PictureRef] = field(default_factory=dict)  # element index -> picture
     extra: dict[str, Any] = field(default_factory=dict)  # kind specific inputs (map geometry, timeline history)
     notes: list[str] = field(default_factory=list)  # decisions a review can read
+    missing: list[str] = field(default_factory=list)  # why it cannot be drawn whole: the stage then drops it
 
     def els(self, role: str) -> list[tuple[int, Any, Cue]]:
         """(index, element, cue) of every element with this role, in spoken order."""
@@ -110,31 +111,94 @@ def picture_size(ref: PictureRef) -> tuple[int, int]:
     return 1920, 1080
 
 
-def cover(img: np.ndarray, w: int, h: int, focus: tuple[float, float] = (0.5, 0.5)) -> np.ndarray:
-    """img scaled to cover w x h and cropped around focus (0..1)."""
+def cover(img: np.ndarray, w: int, h: int, focus: tuple[float, float] = (0.5, 0.5),
+          faces: Sequence[tuple[float, float, float, float]] = ()) -> Optional[np.ndarray]:
+    """img scaled to cover w x h and cropped around focus (0..1). With faces (0..1 boxes of img) the window
+    keeps every face whole, and None is returned when no window of this shape can."""
     ih, iw = img.shape[:2]
     s = max(w / iw, h / ih)
     nw, nh = max(w, int(math.ceil(iw * s))), max(h, int(math.ceil(ih * s)))
+    x, y = focus[0] * nw - w / 2, focus[1] * nh - h / 2
+    if faces:
+        from .placement import face_origin
+        o = face_origin(faces, w / nw, h / nh, focus)
+        if o is None:
+            return None
+        x, y = o[0] * nw, o[1] * nh
     r = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
-    x = int(min(max(0, focus[0] * nw - w / 2), nw - w))
-    y = int(min(max(0, focus[1] * nh - h / 2), nh - h))
+    x, y = int(round(min(max(0, x), nw - w))), int(round(min(max(0, y), nh - h)))
     return r[y:y + h, x:x + w]
+
+
+def contain(img: np.ndarray, w: int, h: int) -> np.ndarray:
+    """The whole picture fitted inside w x h on a blurred, darkened cover copy of itself: the framing of a
+    picture that no cover window can show with every face whole."""
+    out = darken(cover(img, w, h), 0.55, max(4.0, w / 60))
+    ih, iw = img.shape[:2]
+    s = min(w / iw, h / ih)
+    fw, fh = max(1, min(w, int(iw * s))), max(1, min(h, int(ih * s)))
+    x, y = (w - fw) // 2, (h - fh) // 2
+    out[y:y + fh, x:x + fw] = cv2.resize(img, (fw, fh), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+    return out
+
+
+@lru_cache(maxsize=256)
+def clip_faces(path: str, t: float) -> tuple[tuple[tuple[float, float, float, float], ...], float]:
+    """(face boxes 0..1, width / height) of a clip's frame at t; ((), 0.0) when it cannot be read.
+    shortcut: one frame stands for the clip, so a face that moves far later can still be cut; sample more
+    frames if reviews show it."""
+    from .placement import FACE_W, face_boxes
+    try:
+        p = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(0.0, t):.3f}", "-i", path, "-frames:v", "1",
+                            "-vf", f"scale={FACE_W}:-2", "-f", "image2pipe", "-vcodec", "png", "-"],
+                           capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return (), 0.0
+    grey = cv2.imdecode(np.frombuffer(p.stdout, np.uint8), cv2.IMREAD_GRAYSCALE) if p.stdout else None
+    if grey is None:
+        return (), 0.0
+    return face_boxes(grey), grey.shape[1] / grey.shape[0]
 
 
 class Footage:
     """Frames of a picture at a fixed size over time: a still (with no motion of its own) or a clip read
-    sequentially through ffmpeg from in_point (looped from in_point if it runs out)."""
+    sequentially through ffmpeg from in_point (looped from in_point if it runs out). The cover crop keeps
+    every face whole; when no crop of this shape can, the whole picture is shown (contained is True)."""
 
     def __init__(self, ref: PictureRef, w: int, h: int, fps: int) -> None:
         self.ref, self.w, self.h, self.fps = ref, int(w), int(h), fps
         self.proc: Optional[subprocess.Popen] = None
         self.last: Optional[np.ndarray] = None
         self.i = -1
+        self.contained = False
+        self.unreadable = False  # a clip that gave no frame: the house ground stands in, never black
         if ref.media == "image":
-            self.last = cover(_still(ref.path), self.w, self.h)
+            from .placement import faces_of
+            img = _still(ref.path)
+            self.last = cover(img, self.w, self.h, faces=faces_of(ref.path))
+            if self.last is None:
+                self.contained, self.last = True, contain(img, self.w, self.h)
+        else:
+            self.vf = self._fill()
+
+    def _fill(self) -> str:
+        """ffmpeg filter giving w x h frames: the cover crop that keeps every face of the first frame whole,
+        else the whole clip on the house ground."""
+        from .placement import cover_window
+        w, h = self.w, self.h
+        faces, aspect = clip_faces(self.ref.path, self.ref.in_point)
+        win = cover_window(faces, aspect, w / h) if aspect else (0.0, 0.0, 1.0, 1.0)
+        if win is None:
+            self.contained = True
+            return (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=0x{DEFAULT.ink.lstrip('#')}")
+        x, y, cw, ch = win
+        fx = x / (1 - cw) if cw < 0.999 else 0.5
+        fy = y / (1 - ch) if ch < 0.999 else 0.5
+        return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}:(iw-{w})*{fx:.4f}:(ih-{h})*{fy:.4f}"
 
     def _open(self) -> None:
-        vf = f"scale={self.w}:{self.h}:force_original_aspect_ratio=increase,crop={self.w}:{self.h},fps={self.fps}"
+        vf = f"{self.vf},fps={self.fps}"
         self.proc = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", f"{max(0.0, self.ref.in_point):.3f}", "-i",
                                       self.ref.path, "-an", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -150,7 +214,7 @@ class Footage:
             if len(buf) < n:
                 self.close()
                 if self.last is None:
-                    self.last = np.zeros((self.h, self.w, 3), np.uint8)
+                    self.unreadable, self.last = True, ink_ground(self.w, self.h, DEFAULT).copy()
                 self.i = i  # clip ran out: hold its last frame
                 break
             self.last = np.frombuffer(buf, np.uint8).reshape(self.h, self.w, 3)
@@ -167,15 +231,15 @@ class Footage:
             self.proc = None
 
 
-def framed(img: np.ndarray, w: int, h: int, house: House, k: float, focus: tuple[float, float] = (0.5, 0.5),
-           fit: bool = False) -> Sprite:
-    """A picture in the house frame: cover (or fit) into w x h, thin paper border, rounded, soft shadow."""
+def framed(img: np.ndarray, w: int, h: int, house: House, k: float, fit: bool = False) -> Sprite:
+    """A picture in the house frame: cover (or fit) into w x h, thin paper border, rounded, soft shadow.
+    Layout pictures arrive already cropped by Footage (faces kept whole), so this cover only sizes them."""
     w, h = max(8, int(w)), max(8, int(h))
     if fit:
         ih, iw = img.shape[:2]
         s = min(w / iw, h / ih)
         w, h = max(8, int(iw * s)), max(8, int(ih * s))
-    pic = cover(img, w, h, focus)
+    pic = cover(img, w, h)
     b = max(2, int(round(house.frame_px * k)))
     r = max(2, int(round(house.radius_px * k)))
     W, H = w + 2 * b, h + 2 * b
@@ -320,5 +384,5 @@ def premul(rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     return out
 
 
-__all__ = ["FrameProfile", "PictureRef", "LayoutJob", "LayoutComp", "Footage", "framed", "cover", "darken",
+__all__ = ["FrameProfile", "PictureRef", "LayoutJob", "LayoutComp", "Footage", "framed", "cover", "contain", "darken",
            "drift", "ink_ground", "premul", "picture_size", "coloured"]

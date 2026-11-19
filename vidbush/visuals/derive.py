@@ -4,7 +4,8 @@ derive_crops: one approved still used by nearby shots (same asset within 3
 shots) is shown as up to three framings, full, tight and detail. Crops are
 16:9 windows [x, y, w, h] in 0..1 of the source, placed by a saliency map
 (spectral residual plus edge density, weighted to the band that stays visible
-under the letterbox) so tight and detail land on something interesting.
+under the letterbox) so tight and detail land on something interesting. A
+window that would cut through a face is never chosen (faces found once per file).
 vary_repeated_video: a clip used by several shots gets a different in point
 for each use.
 """
@@ -12,7 +13,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import cv2
 import numpy as np
@@ -64,8 +65,22 @@ def crop_size(img_w: int, img_h: int, scale: float) -> tuple[float, float]:
     return min(1.0, w_n * scale), min(1.0, h_n * scale)
 
 
-def ranked_crops(sal: np.ndarray, w: float, h: float, n: int = 3, max_iou: float = 0.35) -> list[Crop]:
-    """Up to n distinct windows of size (w, h), best saliency first (inside the letterbox-visible band)."""
+def cuts_face(crop: Crop, faces: Sequence[Sequence[float]]) -> bool:
+    """True when the window [x, y, w, h] holds part of a face box (x0, y0, x1, y1) but not all of it."""
+    x, y, w, h = crop
+    e = 1e-6
+    for a, b, c, d in faces:
+        touches = min(c, x + w) > max(a, x) and min(d, y + h) > max(b, y)
+        whole = a >= x - e and b >= y - e and c <= x + w + e and d <= y + h + e
+        if touches and not whole:
+            return True
+    return False
+
+
+def ranked_crops(sal: np.ndarray, w: float, h: float, n: int = 3, max_iou: float = 0.35,
+                 faces: Sequence[Sequence[float]] = ()) -> list[Crop]:
+    """Up to n distinct windows of size (w, h), best saliency first (inside the letterbox-visible band), none
+    cutting through a face."""
     rows, cols = sal.shape
     integral = cv2.integral(sal.astype(np.float64))
     cw, ch = max(1, round(w * cols)), max(1, round(h * rows))
@@ -80,7 +95,7 @@ def ranked_crops(sal: np.ndarray, w: float, h: float, n: int = 3, max_iou: float
     scored.sort(key=lambda t: -t[0])
     out: list[Crop] = []
     for _, crop in scored:
-        if all(iou(crop, o) <= max_iou for o in out):
+        if not cuts_face(crop, faces) and all(iou(crop, o) <= max_iou for o in out):
             out.append([round(v, 4) for v in crop])
         if len(out) >= n:
             break
@@ -95,13 +110,15 @@ def iou(a: Crop, b: Crop) -> float:
 
 
 def framing_crop(path: str, img_w: int, img_h: int, framing: str, rank: int = 0) -> Optional[Crop]:
-    """Crop for one framing ("full" gives None); rank picks the next best distinct window for repeats."""
+    """Crop for one framing ("full" gives None); rank picks the next best distinct window for repeats. None
+    when every window of that size would cut through a face."""
+    from ..mg.layouts.placement import faces_of
     if framing not in SCALES:
         return None
     w, h = crop_size(img_w, img_h, SCALES[framing])
     if w >= 0.95 and h >= 0.95:
         return None  # source too small to crop without visible softness
-    crops = ranked_crops(saliency_map(path), w, h, n=rank + 1)
+    crops = ranked_crops(saliency_map(path), w, h, n=rank + 1, faces=faces_of(path))
     return crops[min(rank, len(crops) - 1)] if crops else None
 
 

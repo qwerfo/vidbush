@@ -36,14 +36,14 @@ def test_render_all_motion_and_cache(make_ctx) -> None:
     assert Path(cand.local_path).parent == ctx.work / "mg"
     assert s2.overlay_path.endswith(".mov") and Path(s2.overlay_path).exists()
     assert s3.overlay_path == ""
-    assert s4.selected == "s4_motion_1" and Path(s4.selected_candidate().local_path).exists()
-    assert len(outs) == 3
+    assert s4.selected is None  # an invalid spec draws nothing, never a text card of its title or intent
+    assert len(outs) == 2
     mtimes = {p: p.stat().st_mtime_ns for p in outs}
     sl2, outs2 = render_all_motion(tiny_shotlist(), ctx)
     assert outs2 == outs
     assert all(p.stat().st_mtime_ns == mtimes[p] for p in outs2)
     log = ctx.log.path.read_text()
-    assert '"cached": 3' in log and "invalid bar_chart payload" in log
+    assert '"cached": 2' in log and "invalid bar_chart payload" in log
 
 
 def test_cache_key_includes_renderer_and_version(make_ctx) -> None:
@@ -57,33 +57,32 @@ def test_cache_key_includes_renderer_and_version(make_ctx) -> None:
     assert r.mg_key(spec, ctx.settings) == base
 
 
-def test_failed_render_is_cached_as_fallback_and_retried(make_ctx, monkeypatch) -> None:
-    """A text-card fallback never lands under the real key; the next run retries and then replaces it."""
+def test_failed_render_draws_nothing_and_is_retried(make_ctx, monkeypatch) -> None:
+    """A renderer error writes no clip and no text card: the shot shows its picture; the next run retries."""
     from vidbush.mg import renderer as r
     from vidbush.render import mg_python
-    from vidbush.models import MotionKind
     ctx = make_ctx()
     ctx.settings.render.workers = 1
     real = mg_python.render_spec_python
     broken = {"on": True}
 
     def flaky(spec, out, alpha, settings):  # noqa: ANN001
-        if broken["on"] and spec.kind != MotionKind.text_overlay:
+        if broken["on"]:
             raise RuntimeError("drawing bug")
         return real(spec, out, alpha, settings)
 
     monkeypatch.setattr(mg_python, "render_spec_python", flaky)
+    pic = Candidate(id="s1_wikimedia_0", source=SourceKind.wikimedia, local_path="pic.jpg", score=0.4,
+                    flags=["alt:loose"])
+    fit = Candidate(id="s1_wikimedia_1", source=SourceKind.wikimedia, local_path="fit.jpg", score=0.2,
+                    flags=["alt:fitting"])
     sl = ShotList(project_id="t1", width=320, height=180, duration=1.0, shots=[
         Shot(id="s1", beat_id="b1", start=0, end=1, duration=1.0, type=ShotType.motion_graphic, intent="cost",
-             motion=b.number_card_spec("$375M", "Cost", duration=1.0))])
+             motion=b.number_card_spec("$375M", "Cost", duration=1.0), candidates=[pic, fit])])
     sl, outs = r.render_all_motion(sl, ctx)
-    assert outs[0].name.endswith(".fallback.mp4") and outs[0].exists()
-    planned = outs[0].with_name(outs[0].name.replace(".fallback", ""))
-    assert not planned.exists()
-    mtime = outs[0].stat().st_mtime_ns
-    sl, outs2 = r.render_all_motion(sl, ctx)
-    assert outs2 == outs and outs2[0].stat().st_mtime_ns == mtime, "old fallback reused while still failing"
+    assert outs == [] and not list((ctx.work / "mg").glob("*.mp4"))
+    assert sl.shots[0].selected == "s1_wikimedia_1"  # the planner's fitting alternate first
     broken["on"] = False
-    sl, outs3 = r.render_all_motion(sl, ctx)
-    assert outs3 == [planned] and planned.exists() and not outs[0].exists()
-    assert sl.shots[0].selected_candidate().local_path == str(planned)
+    sl, outs2 = r.render_all_motion(sl, ctx)
+    assert len(outs2) == 1 and outs2[0].exists() and ".fallback" not in outs2[0].name
+    assert sl.shots[0].selected_candidate().local_path == str(outs2[0])

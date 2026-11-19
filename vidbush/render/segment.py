@@ -142,8 +142,9 @@ def _visual(shot: Shot, profile: StyleProfile, settings: Settings, n: int, seg_d
     cand = shot.selected_candidate()
     path = resolve_media(cand.local_path, settings) if cand else None
     if cand is None or path is None or not path.is_file():
-        log.warn("shot has no usable visual, rendering a dark slate", shot=shot.id,
-                 path=str(path) if path else "")
+        # last resort only: the planner owes every shot a picture, so a slate is a fault to fix upstream
+        log.error(f"shot {shot.id} has no usable visual, rendering a dark slate", shot=shot.id,
+                  path=str(path) if path else "")
         return ["-f", "lavfi", "-i", f"color=c={SLATE}:s={r.width}x{r.height}:r={r.fps}"], "setsar=1", None
     vis_h = visible_height(profile, r.width, r.height)
     if is_still(shot):
@@ -308,30 +309,35 @@ def framed_image(im: Any, w: int, h: int, vis_h: int, max_scale: float = MAX_STI
 
 def _prepare_still(path: Path, crop: Optional[list[float]], kb: dict[str, float], settings: Settings,
                    cache_dir: Path, vis_h: Optional[int] = None) -> np.ndarray:
-    """RGB array of the still: EXIF upright, cropped, cover resized (or blur filled when portrait, or when
-    covering the frame would enlarge it more than MAX_STILL_UPSCALE) to frame size times max zoom."""
+    """RGB array of the still: EXIF upright, cropped, cover resized with every face whole (or blur filled when
+    portrait, when covering the frame would enlarge it more than MAX_STILL_UPSCALE, or when no cover crop
+    keeps every face whole) to frame size times max zoom."""
     from PIL import Image, ImageOps
     r = settings.render
     zmax = max(kb["zoom0"], kb["zoom1"], 1.0)
     w, h = int(np.ceil(r.width * zmax)), int(np.ceil(r.height * zmax))
     vis = int(np.ceil((vis_h or r.height) * zmax))
-    key = stable_hash("still-5", content_fingerprint(path), crop, w, h, vis)
+    key = stable_hash("still-6", content_fingerprint(path), crop, w, h, vis)
     cached = cache_dir / f"{key}.png"
     if cached.exists():
         return np.asarray(Image.open(cached).convert("RGB"))
     im = to_8bit_rgb(ImageOps.exif_transpose(Image.open(path)))
     # small is judged on the native source: a crop is a deliberate zoom (derive refuses crops under MIN_CROP_PX)
     small = small_still(im.width, im.height, r.width, r.height)
-    if crop and len(crop) == 4 and 0.01 < crop[2] and 0.01 < crop[3]:
+    crop = crop if crop and len(crop) == 4 and 0.01 < crop[2] and 0.01 < crop[3] else None
+    if crop:
         x, y, cw, ch = crop
         im = im.crop((int(x * im.width), int(y * im.height), int((x + cw) * im.width), int((y + ch) * im.height)))
-    from .stillmotion import is_narrow
+    from .stillmotion import cover_box, is_narrow
+    win = cover_box(str(path), crop, im.width, im.height, w / h)
     if is_narrow(im.width, im.height, w, vis):  # never full screen on blurred bars: framed on the house ground
         im = framed_image(im, w, h, vis)
-    elif im.width / max(im.height, 1) < PORTRAIT_ASPECT or small:
+    elif im.width / max(im.height, 1) < PORTRAIT_ASPECT or small or win is None:
         im = blur_fill_image(im, w, h, vis)
-    else:
-        im = ImageOps.fit(im, (w, h), method=Image.LANCZOS, centering=(0.5, 0.5))
+    else:  # the cover crop placed so every face stays whole
+        x, y, cw, ch = win
+        box = (round(x * im.width), round(y * im.height), round((x + cw) * im.width), round((y + ch) * im.height))
+        im = im.resize((w, h), Image.LANCZOS, box=box)
     cache_dir.mkdir(parents=True, exist_ok=True)
     tmp = cached.with_suffix(f".{threading.get_ident()}.png")
     im.save(tmp, "PNG", compress_level=1)

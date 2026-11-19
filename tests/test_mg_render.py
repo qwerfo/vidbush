@@ -109,12 +109,15 @@ def test_full_hd_frame(settings, tmp_path: Path) -> None:
     assert (n, w, h) == (2, 1920, 1080)
 
 
-def test_invalid_payload_falls_back_to_text(settings, tmp_path: Path) -> None:
+def test_invalid_payload_draws_nothing(settings, tmp_path: Path) -> None:
+    """Never a text card of the title in place of a spec that cannot be drawn."""
+    from pydantic import ValidationError
     spec = MotionSpec(kind=MotionKind.bar_chart, duration=1.0, width=W, height=H, payload={"title": "Broken"})
-    comp = build_comp(spec, False)
-    assert type(comp).__name__ == "TextOverlay"
-    out = render_spec(spec, tmp_path / "bad.mp4", False, settings)
-    assert probe_frames(out)[0] == 30
+    with pytest.raises(ValidationError):
+        build_comp(spec, False)
+    with pytest.raises(ValidationError):
+        render_spec(spec, tmp_path / "bad.mp4", False, settings)
+    assert not (tmp_path / "bad.mp4").exists()
 
 
 def test_remotion_failure_falls_back_to_python(settings, tmp_path: Path, monkeypatch) -> None:

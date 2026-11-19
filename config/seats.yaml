@@ -67,19 +67,22 @@ roles:
     - {provider: closerouter, model: "google/gemini-3.8-flash"}
     - {provider: openlux, model_match: {family: gemini, version: "3.8-flash", prefix: ""}}
     - {provider: wellflow, model: "gemini-3.8-flash"}
+  # Describer, cheap_classifier and auditor run on the cheapest working provider of the seat: options.usd_per_call
+  # (USD per call, measured 2026-11-18, replaced by the project's own mean after 3 paid calls) ranks them, an
+  # entry more than 5 times the cheapest is never used for these roles, and an entry with no price is skipped.
   cheap_classifier:
-    - {provider: closerouter, model: "google/gemini-3.8-flash"}
-    - {provider: openlux, model_match: {family: gemini, version: "3.8-flash", prefix: ""}}
-    - {provider: wellflow, model: "gemini-3.8-flash"}
+    - {provider: closerouter, model: "google/gemini-3.8-flash", options: {usd_per_call: 0.0002}}
+    - {provider: openlux, model_match: {family: gemini, version: "3.8-flash", prefix: ""}, options: {usd_per_call: 0.01}}
+    - {provider: wellflow, model: "gemini-3.8-flash", options: {usd_per_call: 0.01}}
   # Describer (v2 picker, vidbush/judge/describe.py): one call per asset, cached by content hash, so a
   # cheap vision model is enough. When closerouter is down, openlux Sonnet is priced per token and cost
   # about 0.002 USD a call with low reasoning effort (0.007 without, 2026-11-18), while wellflow reports no cost (estimated at 0.01 USD an image)
   # and openlux gemini spent 10k tokens and 38 s on one image.
   describer:
-    - {provider: closerouter, model: "google/gemini-3.8-flash"}
+    - {provider: closerouter, model: "google/gemini-3.8-flash", options: {usd_per_call: 0.0002}}
     - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824},
-                                                             extra_body: {reasoning_effort: low}}}
-    - {provider: wellflow, model: "gemini-3.8-flash"}
+                                                             extra_body: {reasoning_effort: low}, usd_per_call: 0.0035}}
+    - {provider: wellflow, model: "gemini-3.8-flash", options: {usd_per_call: 0.02}}
   # Picker (v2, vidbush/plan/edit.py): one call per scene compares the described pool and picks per clause.
   # The director's model (the strongest vision model the policy already uses), then the cheap vision model.
   # Low reasoning effort on openlux: one scene's pick spent 193k tokens at the default and 157k at medium (2026-11-18).
@@ -94,9 +97,10 @@ roles:
   # best with the reference tile rows on probe slices (2026-11-17); Gemini 3.8 Flash and Opus 5.5 were
   # further off, and wellflow_cheap answers images with server_error. Same order as director.
   auditor:
-    - {provider: closerouter, model_match: {family: sonnet, version: "5.5"}}
-    - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824}}}
-    - {provider: anthropic_direct, model: "claude-sonnet-5-5"}
+    - {provider: closerouter, model_match: {family: sonnet, version: "5.5"}, options: {usd_per_call: 0.0009}}
+    - {provider: openlux, model: "claude-sonnet-5-5", options: {price_per_mtok: {prompt: 0.1765, completion: 0.8824},
+                                                             usd_per_call: 0.0006}}
+    - {provider: anthropic_direct, model: "claude-sonnet-5-5", options: {usd_per_call: 0.007}}
   # Images: Elevate then Algrow, unchanged.
   image:
     - {provider: image_primary, model_env: IMAGE_MODEL, model: "your-image-model"}

@@ -20,10 +20,16 @@ DIRECTOR_RULES = [
     "Researchers search the listed sources with your queries for the real_thing and the subject; an editor "
     "then compares the pictures found and picks one per clause, or answers that nothing fits. Layouts are "
     "drawn by code from your elements, each element appearing on its anchor words.",
-    "When a real thing cannot be found, the editor goes down this ladder: a layout with real pictures inside, "
-    "then a map, then text over related real footage, then an AI still. An AI still is never used for a named "
-    "real person, a real event or a document, so for those name the real_thing precisely and give queries "
-    "that can find the real one.",
+    "When the specific picture cannot be found, the editor fills the clause in this order: a real picture that "
+    "fits the situation (same period, season, setting and circumstance), shown plain; a neighbouring real "
+    "picture held a little longer; an AI still; a loosely related real picture. The narration's words are never "
+    "typed over a picture in place of the missing one. An AI still is never used for a named real person or a "
+    "document, so for those name the real_thing precisely and give queries that can find the real one.",
+    "setting: when and where the clause happens, as the story tells it: period (a year, decade or 'present "
+    "day'), season ('winter', 'summer', or 'any' when the story does not say), place (as precise as the script "
+    "allows) and circumstance (one short phrase of what is going on, example, invented: 'families sheltering "
+    "from a storm at night'). The editor refuses a picture whose period, season, setting or circumstance "
+    "disagrees, because a viewer sees a summer pier under a winter storm as a mistake.",
     "scene_purpose: one sentence on what the viewer should discover, understand or feel in this scene.",
     "subject: one plain sentence of what the viewer should see, reflecting what the clause means in the "
     "story, not only its nouns. Example (invented): for 'the town paid the doctor in fish because it had no "
@@ -35,12 +41,20 @@ DIRECTOR_RULES = [
     "Use a layout where it explains better than a picture: a comparison, a striking number, a person "
     "introduced by name, a spoken list, a jump in time, a journey or distance, a unit conversion, comparable "
     "numbers, a document the narration quotes. Most clauses stay pictures. Vary intensity: follow a dense "
-    "layout with a simple picture.",
-    "presentation is required for route_map, chart, table and timeline, with a short presentation_reason: "
-    "full when the graphic is what the clause is about; panel when the picture is the subject and the graphic "
-    "orients the viewer; full_then_dock when it is introduced full screen and stays useful as context while "
-    "the narration moves on; panel_then_expand when it sits as a panel and grows to full screen when the "
-    "narration turns to its detail (stage 2 elements appear then). Do not choose a position on screen.",
+    "layout with a simple picture. A layout is drawn only when all of it can be shown: every picture it needs, "
+    "every place on a map, and at least 3 s on screen from its first anchored word; otherwise the clause keeps "
+    "a plain picture, so plan layouts whose content exists.",
+    "presentation is required for route_map, chart, table, timeline and document_focus, with a short "
+    "presentation_reason. Panel is the default: when a map, chart, table, timeline or period document supports "
+    "what is being said while a good real picture is on screen, it rides as a panel over that picture, placed "
+    "by the picture, because the picture keeps the viewer in the scene while the graphic orients them. Full "
+    "only when the graphic is itself the subject of the clause, or for a hero moment. Wherever the narration "
+    "moves between named places, measures a distance or size, or compares quantities, plan a route_map, chart, "
+    "table or timeline there (a panel over the picture by default), never a photograph of a map or chart: code "
+    "draws them accurately from your elements, while a found map picture is usually the wrong map. full_then_dock "
+    "when it is introduced full screen and stays useful as context while the narration moves on; "
+    "panel_then_expand when it sits as a panel and grows to full screen when the narration turns to its detail "
+    "(stage 2 elements appear then). Do not choose a position on screen.",
     "document_focus takes a presentation and a presentation_reason like the graphics, and a purpose in "
     "layout.purpose: evidence (a specific passage is quoted or referred to), period (the document is there for "
     "atmosphere or to place the story in time) or subject (the narration is about the document itself). How to "
@@ -63,20 +77,26 @@ DIRECTOR_RULES = [
     "layout, for a layout treatment: title where the layout has one, and elements in spoken order, each "
     "{role, text, anchor, picture_subject, stage}. anchor is the exact narration words the element appears "
     "on; they must be spoken inside this clause or the hold clauses that follow it. text is what is typed on "
-    "screen, at most 6 words; it may use the narration's own key words when it is a number, a name, a date or "
-    "a short phrase typed as it is said. A number carries its unit (example, invented: '40 KM', not '40'). "
+    "screen, at most 6 words, and only what adds something the picture cannot: a number with its unit, a "
+    "name, a date, a short label on a graphic, or (document_focus) a passage marked on its real page. Never a "
+    "stretch of the narration typed out, because the viewer is already hearing it. A number carries its unit "
+    "(example, invented: '40 KM', not '40'). "
     "picture_subject is the real picture the element needs, or empty. stage is 1, or 2 for detail that "
     "appears after a panel_then_expand. A timeline has a timeline_id; reuse that id in a later clause to "
     "return to the same timeline with its earlier events still on it.",
     "Each element must stay readable: it appears on its anchor words and needs 0.3 s per word, at least 1 s, "
     "before the shot ends; elements are listed in the order their anchors are spoken.",
-    "grammar: a list, possibly empty, of labels you deliberately use: sequence (wide, then medium, then "
-    "detail of the same subject or the same photograph across consecutive clauses), callback (showing an "
-    "earlier picture again because its meaning has changed; set callback_to to that clause id), hero (one of "
+    "grammar: a list, possibly empty, of labels you deliberately use: sequence (a whole view, then one closer "
+    "view of the same subject or photograph on the next clause; one picture serves at most two shots in a "
+    "row), callback (showing an earlier picture again because its meaning has changed, never within a minute "
+    "of its last showing; set callback_to to that clause id), hero (one of "
     "two to four moments in the whole video that deserve the richest treatment), quiet (the music should "
     "drop away here before a reveal). Explain each label in grammar_note.",
     "Pictures that would be on screen for a long time or that the story returns to are worth a sequence or a "
     "callback; otherwise show something new on each clause.",
+    "The first 60 seconds decide whether a viewer stays: the opening scene is the strongest stretch of the film. "
+    "It opens on a strong real picture with motion or on a complete layout landing on its words, and no AI "
+    "still is planned in its first 15 seconds.",
     "No em dash characters anywhere. Keep every string short and concrete.",
 ]
 
@@ -88,6 +108,8 @@ OUTPUT_SHAPE = {
         "presentation": "full|panel|full_then_dock|panel_then_expand (route_map, chart, table, timeline only)",
         "presentation_reason": "short",
         "medium": "moving|still|either",
+        "setting": {"period": "1925 | 1950s | present day", "season": "winter|spring|summer|autumn|any",
+                    "place": "", "circumstance": "short phrase"},
         "anchor": "exact words from the clause",
         "real_thing": {"name": "", "kind": "person|place|document|object|event", "date": "", "place": ""},
         "queries": {"archive": ["Name 1920"], "stock": ["plain description"]},
@@ -115,6 +137,8 @@ ELEMENT_ROLES["formats"] = ["chart bar or point: '<label>: <value><unit>' (inven
                             "table header and row: cells separated by ' | '",
                             "timeline event: '<date>: <label>' (invented: '1925: First crossing')",
                             "route_map route: '<from place> to <to place>', optionally ' by <road|rail|river|sea|air|trail>'",
+                            "route_map place: 'Town, State or Country' (invented: 'Riverton, Wyoming'), so the "
+                            "map finds the right one; a map with a place it cannot find is not drawn",
                             "name_card: portrait is the picture element, name and role are text",
                             "number_over_footage and date_title: the background is the clause's own picture, "
                             "do not list it"]
@@ -145,67 +169,4 @@ def director_retry(user: str, previous: Any, errors: list[str]) -> str:
     return (user + "\n\nYour previous reply is below, followed by the problems found in it. Return the whole "
             "corrected JSON object, every clause again, fixing each problem.\n\nPrevious reply:\n"
             + json.dumps(previous, ensure_ascii=False)[:24000] + "\n\nProblems:\n"
-            + "\n".join(f"- {e}" for e in errors))
-
-
-EDIT_SYSTEM = (
-    "You are the picture editor of a documentary. You see the clauses of one scene with what each should "
-    "show, and numbered contact sheets of the pictures found for the scene. You assign pictures to clauses by "
-    "comparing them side by side. Reply with one JSON object only."
-)
-
-EDIT_RULES = [
-    "What your output is used for: each pick is cut in at the clause's first word and plays from the frame "
-    "you name. A clause you leave without a pick goes down the fallback ladder described below.",
-    "Compare the candidates against the clause subject: what the picture shows, when and where. A picture "
-    "is right when a viewer hearing the clause would see the thing meant. Prefer the real thing named in "
-    "real_thing over a look-alike. Use the titles, sources and dates given; they are often more reliable "
-    "than the frame for identity.",
-    "Answer nothing fits rather than force a weak picture: set pick to null and say why in reason.",
-    "One candidate may cover two adjacent clauses (set the same pick). Using a candidate again anywhere "
-    "else is allowed only as a deliberate callback: set callback true and say what changed.",
-    "frame: the letter of the keyframe to start from (a, b or c for video, a for a photograph). Choose the "
-    "frame that shows the subject; the shot plays from there.",
-    "label: a place or name label for the picture, only when the picked picture is the real thing it "
-    "names (a photograph of the actual building, the actual person). Otherwise empty.",
-    "AI stills are marked AI in the sheet. An AI still must show what the clause means, not only its "
-    "nouns (example, invented: a line about villagers pooling money to buy a museum's stuffed bear needs "
-    "coins and a stuffed bear in a glass case, not people offering coins to a live bear). Never pick an AI "
-    "still for a named real person, a real event or a document. At most two AI stills in a row, each "
-    f"on screen at most {V.AI_HOLD_MAX_S:g} s. Where a stretch has no real picture, go up the ladder before "
-    "a third AI still: ask for a layout, a map, hold the previous real picture longer (pick it again on "
-    "the next clause), or text over related real footage.",
-    "fallback, for a clause with no pick: one of map, hold_previous, text_over_footage, ai_still. map: a "
-    "map of the place the clause is about (set map_place). text_over_footage: a short title over related real "
-    "footage (set fallback_pick to that candidate and overlay_text to the words, at most 6). Never an AI still "
-    "for fallback_pick.",
-    "For layout clauses, pick pictures for the layout elements that have a picture_subject (element_picks), "
-    "and for over-picture layouts and panels also the picture beneath (pick). For a document_focus, "
-    "document_pick is the document itself (never an AI still); pick is the footage beneath it unless its "
-    "presentation is full. A document used as evidence or subject is only right when its page shows the "
-    "passages to mark: for each passage say in passages_visible (true or false, in order) whether you can see "
-    "those words on the page you picked. A different page that only looks similar is not the document. When the document is not in the pool, "
-    "use fallback text_over_footage: its quoted words typed over related real footage (fallback_pick); a map "
-    "never stands in for a document.",
-    "No em dash characters anywhere.",
-]
-
-EDIT_OUTPUT = {
-    "picks": [{"clause": "c001", "pick": 12, "frame": "b", "label": "", "callback": False,
-               "reason": "short", "fallback": "", "fallback_pick": None, "overlay_text": "", "map_place": "",
-               "element_picks": [{"element": 0, "pick": 7, "frame": "a"}], "document_pick": None, "passages_visible": []}],
-}
-
-
-def edit_prompt(scene_purpose: str, clauses: list[dict[str, Any]], catalogue: list[dict[str, Any]],
-                sheet_note: str) -> str:
-    body = {"scene_purpose": scene_purpose, "clauses": clauses, "candidates": catalogue,
-            "sheets": sheet_note, "rules": EDIT_RULES, "output": EDIT_OUTPUT}
-    return json.dumps(body, ensure_ascii=False)
-
-
-def edit_retry(prompt: str, previous: Any, errors: list[str]) -> str:
-    return (prompt + "\n\nYour previous reply is below, followed by the problems found in it. Return the "
-            "whole corrected JSON object, every clause again.\n\nPrevious reply:\n"
-            + json.dumps(previous, ensure_ascii=False)[:16000] + "\n\nProblems:\n"
             + "\n".join(f"- {e}" for e in errors))

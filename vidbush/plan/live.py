@@ -6,8 +6,10 @@ sourcing (source_clause): one pool per scene through registry.source_pool, each 
     director's real_thing and per-class queries; a full layout that shows real pictures (a portrait, two
     sides, list items, a document) searches for stills. Candidates land on their shots.
 pick (pick_clause, the judge stage's place): the picker lane's stage (judge/pick_stage.py: describe each
-    asset once, pick per scene by comparison, its ladder, AI stills under the fixed checks), then Adam's AI
-    rulings measured on the result and flagged.
+    asset once, pick per scene by comparison, its ladder, AI stills under the fixed checks); then every
+    layout that cannot be shown whole is dropped to a picture, an asset serves at most two shots in a row and
+    never again within a minute, an empty shot holds a neighbour, and Adam's AI rulings are measured.
+    No narration is ever typed over a picture (Adam).
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import LayoutKind, Narration, ShotList, ShotType
+from ..models import GENERATED_SOURCES, LayoutKind, Narration, ShotList, ShotType, SourceKind
 from . import edit as E
 from . import vocab as V
 
@@ -71,14 +73,13 @@ def pick_clause(sourced: ShotList, ctx: Any) -> ShotList:
         if not (work / name).exists():
             raise RuntimeError(f"{work / name} is missing: rerun the shotlist stage (resume --force shotlist)")
     sl = pick_shotlist(sourced, ctx)
-    for n in drop_pictureless_layouts(sl):
-        ctx.log.info("document without its page", note=n)
-    nar = ctx.load("narration", Narration)
-    record = describe_records(ctx.settings)
-    for n in fill_empty_shots(sl, lambda a, b: spoken(nar, a, b), sourced, record):
+    for n in drop_incomplete_layouts(sl):
+        ctx.log.info("layout dropped", note=n)
+    for n in enforce_repeats(sl):
+        ctx.log.info("repeat", note=n)
+    for n in fill_empty_shots(sl):
         ctx.log.info("empty shot filled", note=n)
-    if record.looked and not record.found:  # a wrong folder makes every lookup miss: say so
-        ctx.log.warn("no describe records found for the fill", folder=str(record.folder), looked=record.looked)
+    renumber(sl)
     rulings = check_ai_rulings(sl)
     plan = json.loads((work / PLAN_FILE).read_text(encoding="utf-8"))
     plan["ai_rulings"] = rulings
@@ -88,151 +89,218 @@ def pick_clause(sourced: ShotList, ctx: Any) -> ShotList:
     return sl
 
 
-def spoken(narration: Any, a: float, b: float) -> str:
-    """The words whose middle falls in [a, b)."""
-    return " ".join(w.text for w in narration.words if a <= (w.start + w.end) / 2 < b)
-
-
 def _real(c: Any) -> bool:
-    from ..models import GENERATED_SOURCES, SourceKind
     return (c is not None and c.source not in GENERATED_SOURCES and c.source != SourceKind.motion
             and not c.reject_reason and bool(c.local_path))
 
 
-def _limit(c: Any) -> float:
-    if c.media == "video":
-        return max(0.0, min(V.HOLD_MAX_S, (c.out_point or 0) - (c.in_point or 0)))
-    return V.HOLD_MAX_S
+def key_of(c: Any) -> str:
+    return (c.local_path or c.url or c.id).lower()
 
 
-# full layouts made of real pictures: without any of them they draw empty boxes or a black frame
+def _file_s(c: Any) -> float:
+    from ..util import media_duration
+    try:
+        return media_duration(c.local_path)
+    except Exception:  # noqa: BLE001 - an unreadable length gives no room to grow
+        return c.out_point or 0.0
+
+
+def can_cover(c: Any, start: float, end: float, earlier: float = 0.0) -> bool:
+    """The picture may stay on screen over [start, end): inside its hold limit (4 s for an AI still), and a
+    video has the frames for it (earlier: seconds it must start before its current in point)."""
+    if c.source in (SourceKind.ai_image, SourceKind.ai_video):
+        return end - start <= V.AI_HOLD_MAX_S + 1e-6
+    if end - start > V.HOLD_MAX_S + 1e-6:
+        return False
+    if c.media != "video":
+        return True
+    first = (c.in_point or 0.0) - earlier
+    return first >= -0.05 and first + (end - start) <= _file_s(c) + 0.05
+
+
+# full layouts made of real pictures: every one of them must be there, or the layout is not drawn
 PICTURE_ROLES = {LayoutKind.document_focus: ("document",), LayoutKind.name_card: ("portrait",),
                  LayoutKind.list_slideshow: ("item",), LayoutKind.split_comparison: ("left", "right")}
 
 
-def drop_pictureless_layouts(sl: ShotList) -> list[str]:
-    """A picture layout with none of its real pictures is not drawn (the renderer shows empty boxes, an empty
-    ground or black: a document's marks need a page, a name card a face). Adam's ruling for a missing
-    document holds for all of them: the words go over related real footage, so the layout goes and
-    fill_empty_shots gives the shot a related picture with its spoken words."""
+def incomplete(lay: Any) -> Optional[str]:
+    """Why a layout cannot be shown whole, or None (Adam: a graphic is shown whole or not at all)."""
+    roles = PICTURE_ROLES.get(lay.kind)
+    if roles:
+        need = [e for e in lay.elements if e.role in roles]
+        if not need or any(not e.picture for e in need):
+            return f"{lay.kind.value} is missing real pictures"
+        if lay.kind == LayoutKind.split_comparison and {e.role for e in need} != {"left", "right"}:
+            return "split_comparison needs both sides"
+    if lay.kind == LayoutKind.route_map:
+        from ..judge.ladder import place_resolves
+        names = []
+        for e in lay.elements:
+            if e.role == "route":
+                a, _, b = e.text.partition(" to ")
+                names += [a, b.split(" by ")[0]]
+            elif e.role == "place":
+                names.append(e.text)
+        names = [n.strip() for n in names if n.strip()]
+        lost = [n for n in names if not place_resolves(n)]
+        if not names or lost:
+            return f"route_map places not found: {', '.join(lost) or 'none given'}"
+    return None
+
+
+def drop_incomplete_layouts(sl: ShotList) -> list[str]:
+    """A layout missing a picture or a place is not drawn (empty boxes, one-sided comparisons and empty maps
+    were the worst opening faults); the shot keeps its own picture, else the picker's alternate."""
+    from .emit import drop_layout
     notes = []
     for s in sl.shots:
-        lay = s.layout
-        roles = PICTURE_ROLES.get(lay.kind) if lay is not None else None
-        if not roles or any(e.role in roles and e.picture for e in lay.elements):
-            continue
-        s.layout, s.motion, s.selected = None, None, None
-        s.type = ShotType.footage
-        s.flags.append(f"{lay.kind.value}_without_pictures")
-        notes.append(f"{s.id}: {lay.kind.value} has none of its real pictures; its words over related footage")
+        why = incomplete(s.layout) if s.layout is not None else None
+        if why:
+            drop_layout(s, why)
+            notes.append(f"{s.id}: {why}; the shot keeps a picture")
     return notes
 
 
-drop_pageless_documents = drop_pictureless_layouts  # earlier name
+drop_pictureless_layouts = drop_incomplete_layouts  # earlier name
 
 
-_WORD = re.compile(r"[a-z]{4,}")
+def _shown_near(shots: list, s: Any, c: Any) -> bool:
+    """Another shot shows this asset within a minute of s."""
+    k = key_of(c)
+    for t in shots:
+        o = t.selected_candidate() if t is not s else None
+        if o is not None and key_of(o) == k and t.start < s.end + V.REPEAT_GAP_S and t.end > s.start - V.REPEAT_GAP_S:
+            return True
+    return False
 
 
-def _words(text: str) -> set[str]:
-    return set(_WORD.findall((text or "").lower()))
+def _merge(prev: Any, s: Any) -> None:
+    """prev stays on screen over s: one shot, one move."""
+    pc = prev.selected_candidate()
+    if pc is not None and pc.media == "video":
+        pc.out_point = round(pc.out_point + (s.end - prev.end), 3)
+    prev.end = s.end
+    prev.duration = round(prev.end - prev.start, 3)
+    for spec in (prev.motion, prev.overlay):
+        if spec is not None:
+            spec.duration = prev.duration
+    prev.flags.append(f"held_over:{s.id}")
 
 
-def clean_record(rec: Optional[dict]) -> bool:
-    """A picture words may go over: described, usable, nothing blocking, not a talking head or a screen,
-    not a document, and no words of its own (slates, leaders, title cards, burned captions clash with ours)."""
-    if not rec:
-        return False
-    v = rec.get("visual") or {}
-    bad = {"burned_in_subtitles", "watermark", "stock_preview_mark", "channel_logo", "presenter_to_camera",
-           "screen_recording"}
-    return (bool(v.get("usable", True)) and not bad & set(v.get("quality") or []) and v.get("look") != "document"
-            and not str(v.get("text_in_frame") or "").strip())
-
-
-def describe_records(settings: Any) -> Any:
-    """record(candidate) -> its cached describe record, or None; never calls a model. record.looked and
-    record.found count the lookups and the hits, record.folder is where it looked."""
-    from ..judge import describe as D
-    root = D.cache_dir(settings)
-
-    def record(c: Any) -> Optional[dict]:
-        record.looked += 1
-        try:
-            f = root / f"{D.record_key(c)}.json"
-            rec = json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
-        except (OSError, ValueError):
-            rec = None
-        record.found += rec is not None
-        return rec
-    record.looked, record.found, record.folder = 0, 0, root
-    return record
-
-
-def fill_empty_shots(sl: ShotList, words_at: Any = None, pool: Optional[ShotList] = None,
-                     record: Any = None) -> list[str]:
-    """No shot leaves the pick with nothing on screen (the renderer would show a plain slate). In order:
-    the previous shot's real picture holds on when the two together stay inside its hold limit; else the
-    shot's own best unused real candidate, or the scene's, with the clause's words over it; else it stays
-    empty and is reported. A shot with a layout is left to the layouts renderer. Returns notes."""
-    from ..models import MotionKind, MotionSpec
+def enforce_repeats(sl: ShotList) -> list[str]:
+    """Adam: one asset serves at most two consecutive shots (a whole view, then one closer view) and is never
+    shown again within a minute. A shot that breaks it takes its real alternate when that is free; else, when
+    it continues the same asset, the previous shot holds over it inside its limit (one shot, one move); else
+    its picture is removed and the fill holds a neighbour."""
+    from .emit import alternate_of, picture_type
     notes: list[str] = []
-    shown = {c.url or c.local_path for s in sl.shots for c in [s.selected_candidate()] if c is not None}
-    for i, s in enumerate(sl.shots):
-        if s.selected_candidate() is not None or s.layout is not None:
+    out: list[Any] = []
+    for s in sl.shots:
+        c = s.selected_candidate()
+        if c is None or not _real(c):
+            out.append(s)
             continue
-        prev = sl.shots[i - 1] if i else None
+        k = key_of(c)
+        run = 1
+        for t in reversed(out):
+            if t.selected_candidate() is None or key_of(t.selected_candidate()) != k:
+                break
+            run += 1
+        before = out[:len(out) - (run - 1)]
+        soon = any(t.selected_candidate() is not None and key_of(t.selected_candidate()) == k
+                   and s.start - t.end < V.REPEAT_GAP_S for t in before)
+        if run <= V.REPEAT_RUN_MAX and not soon:
+            out.append(s)
+            continue
+        why = "a third shot in a row" if run > V.REPEAT_RUN_MAX else "again within a minute"
+        alt = alternate_of(s)
+        if alt is not None and key_of(alt) != k and not _shown_near(sl.shots, s, alt):
+            s.selected = alt.id
+            if s.layout is None:
+                s.type = picture_type(alt)
+            s.flags.append("repeat:alternate")
+            notes.append(f"{s.id}: {c.id} {why}; shows {alt.id}")
+            out.append(s)
+            continue
+        prev = out[-1] if out else None
         pc = prev.selected_candidate() if prev is not None else None
-        if (prev is not None and prev.scene_id == s.scene_id and _real(pc) and prev.overlay is None
-                and prev.duration + s.duration <= _limit(pc) + 1e-6):
-            s.candidates.append(pc.model_copy(update={"in_point": (pc.in_point or 0) + prev.duration}))
-            s.selected, s.type = pc.id, prev.type
-            s.flags.append("filled:hold_previous")
-            notes.append(f"{s.id}: holds {prev.id}'s picture")
+        if (run > 1 and pc is not None and prev.layout is None and s.layout is None and s.overlay is None
+                and can_cover(pc, prev.start, s.end)):
+            _merge(prev, s)
+            notes.append(f"{s.id}: {why}; {prev.id} holds over it as one shot")
             continue
-        said = words_at(s.start, s.end) if words_at else ""
-        want = _words(said) | _words(s.intent)
-
-        def fits(c: Any) -> bool:
-            return _real(c) and (c.url or c.local_path) not in shown and (record is None or clean_record(record(c)))
-
-        def rank(c: Any) -> tuple[int, float]:
-            rec = record(c) if record is not None else None
-            v = (rec or {}).get("visual") or {}
-            seen = _words(" ".join(str(v.get(k) or "") for k in ("shows", "place", "period")) + " " + (c.title or ""))
-            return (len(want & seen), c.score or 0.0)
-
-        own = [c for c in s.candidates if fits(c)]
-        # the scene's whole sourced pool (the pick keeps only what it chose), else the picked list's
-        src = pool.shots if pool is not None else sl.shots
-        scene = [c for t in src if t.scene_id == s.scene_id and t.start < s.end + 30 and t.end > s.start - 30
-                 for c in t.candidates if fits(c)]
-        pick = max(own or scene, key=rank, default=None)
-        if pick is None:
-            s.flags.append("filled:nothing")
-            notes.append(f"{s.id}: nothing real in the shot or scene, left empty")
-            continue
-        if pick.id not in {c.id for c in s.candidates}:
-            s.candidates.append(pick)
-        s.selected = pick.id
-        shown.add(pick.url or pick.local_path)
-        words = " ".join(said.split()[:6])
-        video = pick.media == "video"
-        if words:
-            s.type = ShotType.footage_overlay if video else ShotType.image_overlay
-            s.overlay = MotionSpec(kind=MotionKind.text_overlay, duration=s.duration, background="transparent",
-                                   payload={"title": words, "subtitle": ""})
-        else:
-            s.type = ShotType.footage if video else ShotType.image
-        s.flags.append("filled:related_with_words")
-        notes.append(f"{s.id}: related real picture {pick.id} with its words")
+        if s.layout is None:
+            s.selected = None
+            s.flags.append("repeat:removed")
+            notes.append(f"{s.id}: {c.id} {why}; picture removed for the fill")
+        out.append(s)
+    sl.shots = out
     return notes
+
+
+def fill_empty_shots(sl: ShotList, *_: Any, **__: Any) -> list[str]:
+    """No shot leaves the pick with nothing on screen, and nothing is ever typed over a picture to fill one
+    (Adam). In order: the shot's own real alternate (the picker's fitting, then loose picture); the previous
+    shot's real picture holds over it (one shot, one move) inside its hold limit; the next shot's real picture
+    starts early over it; else it stays empty and is reported. A shot with a layout is left to the renderer.
+    Word overlap with the narration no longer ranks anything: fit is the picker's judgement of the situation."""
+    from .emit import alternate_of, picture_type
+    notes: list[str] = []
+    out: list[Any] = []
+    shots = sl.shots
+    for i, s in enumerate(shots):
+        if s.selected_candidate() is not None or s.layout is not None:
+            out.append(s)
+            continue
+        alt = alternate_of(s)
+        if alt is not None and not _shown_near(shots, s, alt):
+            s.selected, s.type = alt.id, picture_type(alt)
+            s.flags.append("filled:alternate")
+            notes.append(f"{s.id}: its alternate {alt.id}")
+            out.append(s)
+            continue
+        prev = out[-1] if out else None
+        pc = prev.selected_candidate() if prev is not None else None
+        if (prev is not None and prev.scene_id == s.scene_id and _real(pc) and prev.layout is None
+                and can_cover(pc, prev.start, s.end)):
+            _merge(prev, s)
+            notes.append(f"{s.id}: {prev.id}'s picture holds over it")
+            continue
+        nxt = shots[i + 1] if i + 1 < len(shots) else None
+        nc = nxt.selected_candidate() if nxt is not None else None
+        if (nxt is not None and nxt.scene_id == s.scene_id and _real(nc) and nxt.layout is None
+                and can_cover(nc, s.start, nxt.end, earlier=nxt.start - s.start)):
+            if nc.media == "video":
+                nc.in_point = round(nc.in_point - (nxt.start - s.start), 3)
+            nxt.start = s.start
+            nxt.duration = round(nxt.end - nxt.start, 3)
+            for spec in (nxt.motion, nxt.overlay):
+                if spec is not None:
+                    spec.duration = nxt.duration
+            nxt.flags.append(f"started_early_over:{s.id}")
+            notes.append(f"{s.id}: {nxt.id}'s picture starts early over it")
+            continue
+        s.flags.append("filled:nothing")
+        notes.append(f"{s.id}: nothing real to hold or show, left empty")
+        out.append(s)
+    sl.shots = out
+    return notes
+
+
+def renumber(sl: ShotList) -> None:
+    """Shot ids follow screen order again after merges (the AI takes on disk were named before, by emit's
+    deterministic ids, and are matched there, so renaming here is safe)."""
+    for i, s in enumerate(sl.shots):
+        s.id = f"shot_{i + 1:03d}"
+        s.index = i
 
 
 def check_ai_rulings(sl: ShotList) -> dict[str, Any]:
     """Adam's AI rulings measured on the emitted shot list: runs longer than two, stills over 4 s, AI on a
-    named real person, event or document. Each offending shot is flagged; the counts go into plan_v2.json."""
-    out = {"run_over_two": [], "over_4s": [], "real_thing": []}
+    named real person or a document, AI in the opening 15 s. Each offending shot is flagged; the counts go into
+    plan_v2.json."""
+    out = {"run_over_two": [], "over_4s": [], "real_thing": [], "opening": []}
     run = 0
     for s in sl.shots:
         ai = s.type in (ShotType.ai_image, ShotType.ai_video)
@@ -246,6 +314,8 @@ def check_ai_rulings(sl: ShotList) -> dict[str, Any]:
         rt = getattr(s, "real_thing", None)
         if rt is not None and rt.kind in E.NO_AI_KINDS:
             out["real_thing"].append(s.id)
+        if not E.ai_allowed_at(s.start):
+            out["opening"].append(s.id)
     for key, ids in out.items():
         for s in sl.shots:
             if s.id in ids:

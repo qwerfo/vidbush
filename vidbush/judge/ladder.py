@@ -1,16 +1,18 @@
-"""The ladder for clauses where nothing in the pool fits, in this order:
+"""The ladder for clauses where the specific picture was not found, in Adam's order:
 
-1. re-source once, with the queries the picker wrote from what the pool contained and what was missing,
-   into the same pool; new assets are described and the picker is asked again for those clauses only;
-2. ask the director to restate the clause as a layout that needs no missing picture (a number over real
-   footage, a comparison of things we do have, a date title, a route map, the quoted words set as text
-   over related real footage);
-3. hold the previous real picture when the clause is short and the hold stays inside the limit;
-4. an AI still, only where Adam's rulings allow it (no named real person, real event or document; at most
-   two in a row; at most 4 s).
+0. (off by default) re-source once with the picker's queries into the same pool and ask the picker again;
+1. the picker's fitting picture: a real picture of the same situation (period, season, setting,
+   circumstance), shown plain with no text;
+2. the director restates the clause as a layout, kept only when the layout is complete (a number or a date
+   over a real picture, two real pictures side by side, a map whose places all resolve);
+3. hold or extend a neighbouring real picture the picker said still fits, up to HOLD_FILL_MAX_S in total;
+4. an AI still where Adam's rulings allow it (never a named real person or a document, never in the opening
+   15 s, at most two in a row, at most 4 s each);
+5. the picker's loosely related real picture, plain.
 
-Every clause records which step filled it in pick["filled_by"]: pick, resource, restate, hold, ai_still, or
-none (the shot is flagged nothing_fits and left for the operator).
+The narration's words are never typed over a picture in place of the missing one (Adam). Every clause
+records which step filled it in pick["filled_by"]: pick, resource, fitting, restate, hold, ai_still, loose,
+or none (the shot is flagged nothing_fits and the live fill holds a neighbour).
 """
 from __future__ import annotations
 
@@ -24,10 +26,18 @@ from ..plan import vocab as V
 from . import describe as DS
 from . import pick_prompts as PP
 
-SHORT_CLAUSE_S = 3.0  # a hold of the previous picture reads as continuous only over a short clause
 RESTATE_SEAT, RESTATE_TASK, STAGE = "director", "plan_restate", "judge"
 RESTATE_RETRIES = 1
 MAX_TEXT_WORDS = 6
+
+
+def place_resolves(name: str) -> bool:
+    """The map renderer can place it (the same gazetteer lookup the route map uses)."""
+    from ..mg.layouts import routemap as RM
+    try:
+        return RM.resolve(*RM.split_place(name)) is not None
+    except Exception:  # noqa: BLE001 - an unknown place is a place we cannot draw
+        return False
 
 
 def missing_document(p: dict, plan: dict) -> bool:
@@ -77,7 +87,7 @@ def _names(rec: dict, rt: dict) -> bool:
 def _used(e: dict, used_before: dict[str, str]) -> dict[str, str]:
     used = dict(used_before)
     for p in e["picks"]:
-        for c in [p.get("_cand"), p.get("_fallback_cand"), p.get("_doc")] + [x["_cand"] for x in p.get("element_picks", [])]:
+        for c in [p.get("_cand"), p.get("_doc")] + [x["_cand"] for x in p.get("element_picks", [])]:
             if c is not None:
                 used.setdefault(E.asset_key(c), p["clause"])
     return used
@@ -97,10 +107,16 @@ class Ladder:
                  ai_tail: int, previous: list[dict]) -> None:
         if open_clauses(e) and self.resource is not None:
             self.step_resource(e, scene_plan, narration, used_before, ai_tail, previous)
+        for i in open_clauses(e):
+            self.step_alternate(e, i, "_fit", "fitting", used_before, ai_tail)
         if open_clauses(e):
             self.step_restate(e, scene_plan, narration, used_before)
         for i in open_clauses(e):
-            self.step_hold_or_ai(e, i, ai_tail)
+            self.step_hold(e, i)
+        for i in open_clauses(e):
+            self.step_ai(e, i, ai_tail)
+        for i in open_clauses(e):
+            self.step_alternate(e, i, "_loose", "loose", used_before, ai_tail)
         for p, s in zip(e["picks"], e["shots"]):
             if is_open(p, s["plan"]):
                 p["filled_by"] = "none"
@@ -178,7 +194,10 @@ class Ladder:
 
     # ------------------------------------------------------------ 2. restate as a layout
     def step_restate(self, e, scene_plan, narration, used_before) -> None:
-        idx = open_clauses(e)
+        # a missing document is never restated: no layout stands in for a page (the shot keeps a picture)
+        idx = [i for i in open_clauses(e) if not E.needs_document(e["shots"][i]["plan"])]
+        if not idx:
+            return
         rows = []
         for i in idx:
             r = E.clause_row(e["shots"][i], narration)
@@ -229,13 +248,9 @@ class Ladder:
                 errs.append(f"{cid}: text needs 1 to {MAX_TEXT_WORDS} words.")
             if kind == "number_over_footage" and not re.search(r"\d", text):
                 errs.append(f"{cid}: number_over_footage text needs the number (in digits) with its unit.")
-            clause_words = set(E.content_words(" ".join(w.text for w in words)))
-            tw = E.content_words(text)
-            if kind == "text_over_footage" and tw and sum(x in clause_words for x in tw) * 2 < len(tw):
-                errs.append(f"{cid}: text '{text}' is not this clause's own words; type words spoken in it.")
             beneath = None
             rt = s["plan"].get("real_thing") or {}
-            if kind in ("number_over_footage", "date_title", "text_over_footage"):
+            if kind in ("number_over_footage", "date_title"):
                 beneath = E._cand_at(e["pool"], r.get("beneath"))
                 if beneath is None or E.is_ai(beneath):
                     errs.append(f"{cid}: beneath must be a real asset number from the pool.")
@@ -248,13 +263,10 @@ class Ladder:
                     if beneath.media != "video" and dur > V.HOLD_MAX_S + 1e-6:
                         errs.append(f"{cid}: a still under text for {dur:.1f} s is over the {V.HOLD_MAX_S:g} s "
                                     f"limit; choose footage.")
-                    if rt.get("name") and rt.get("kind") != "document" and not _names(e["records"].get(beneath.id, {}), rt):
+                    if rt.get("name") and not _names(e["records"].get(beneath.id, {}), rt):
                         errs.append(f"{cid}: asset {r.get('beneath')} would be read as {rt['name']} but its record "
                                     f"does not name it; a look-alike is refused. Choose footage whose record names "
                                     f"it, or a route_map or date_title over something else.")
-                    if rt.get("kind") == "document" and kind != "text_over_footage":
-                        errs.append(f"{cid}: a missing document is stated as its quoted words over footage "
-                                    f"(text_over_footage).")
             pictures: list = []
             if kind == "split_comparison":
                 pictures = [E._cand_at(e["pool"], n) for n in (r.get("pictures") or [])][:2]
@@ -266,6 +278,10 @@ class Ladder:
             places = [str(x) for x in (r.get("places") or []) if str(x).strip()]
             if kind == "route_map" and not places:
                 errs.append(f"{cid}: route_map needs places.")
+            unknown = [pl for pl in places if not place_resolves(pl)] if kind == "route_map" else []
+            if unknown:
+                errs.append(f"{cid}: route_map places {', '.join(unknown)} are not on our map; a map with a "
+                            f"missing place is not drawn. Choose another kind or set kind null.")
             errors += [x for x in errs if x]
             if errs or not commit:
                 continue
@@ -289,14 +305,7 @@ class Ladder:
             t = E.time_problem(c, e["records"].get(c.id, {}), None, dur)[0]
             return t if t is not None else "a"
 
-        if kind == "text_over_footage":
-            p["_cand"] = None  # emit reads the fallback only when no picture is picked: the text footage is it
-            p["pick"] = None
-            p["fallback"] = "text_over_footage"
-            p["_fallback_cand"] = beneath
-            p["overlay_text"] = text
-            p["frame"] = play_from(beneath)
-        elif kind == "route_map":
+        if kind == "route_map":
             plan.update(treatment="route_map", presentation="full", layout={"title": " to ".join(places), "elements": [
                 {"role": "place", "text": pl, "anchor": "", "at": start_at} for pl in places]})
         elif kind == "split_comparison":
@@ -315,22 +324,63 @@ class Ladder:
         p["filled_by"] = "restate"
         p["restated"] = {"kind": kind, "text": text, "anchor": anchor, "places": places, "reason": reason}
 
-    # ------------------------------------------------------------ 3. hold, 4. AI still
-    def step_hold_or_ai(self, e: dict, i: int, ai_tail: int) -> None:
+    # ------------------------------------------------------------ 1 and 5. the picker's alternates
+    def step_alternate(self, e: dict, i: int, key: str, step: str, used_before: dict[str, str],
+                       ai_tail: int) -> None:
+        """The picker's fitting (step 1) or loose (step 5) real picture, plain, when no other clause of the
+        film shows that asset yet and it breaks no neighbour rule."""
+        p = e["picks"][i]
+        if p.get("_cand") is not None:  # a missing document over its own picture: the picture stays
+            p["filled_by"] = "pick_no_document"
+            return
+        alt = p.get(key)
+        if not alt:
+            return
+        c, start = alt
+        if E.asset_key(c) in _used(e, used_before):
+            return
+        p.update(_cand=c, start=start, frame=start, label="", filled_by=step)
+        if self._neighbour_problem(e, i, ai_tail):
+            p.update(_cand=None, start=None, frame=None, filled_by="")
+
+    # ------------------------------------------------------------ 3. hold a neighbour
+    def step_hold(self, e: dict, i: int) -> None:
+        """Hold the previous real picture over this clause, or start the next one early, when the picker said
+        that picture still fits and the two together stay within HOLD_FILL_MAX_S (and inside the clip)."""
         p, s = e["picks"][i], e["shots"][i]
         dur = E.shot_seconds(s)
-        prev = e["picks"][i - 1] if i > 0 else None
-        pc = prev.get("_cand") if prev else None
-        if p.get("_cand") is not None:  # a missing document over its own picture: nothing to hold or generate
+        side = p.get("hold")
+        j = i - 1 if side == "previous" else i + 1 if side == "next" else None
+        if j is None or not 0 <= j < len(e["picks"]):
             return
-        if pc is not None and not E.is_ai(pc) and dur <= SHORT_CLAUSE_S + 1e-6:
-            prev_dur = E.shot_seconds(e["shots"][i - 1])
-            if prev_dur + dur <= V.HOLD_MAX_S + 1e-6:
-                p["fallback"] = "hold_previous"
-                p["filled_by"] = "hold"
+        n, ns = e["picks"][j], e["shots"][j]
+        c = n.get("_cand")
+        if c is None or E.is_ai(c) or n.get("fallback") or n.get("filled_by") == "hold":
+            return
+        if side == "next" and ns["plan"]["treatment"] != "picture":
+            return  # a layout's cut stays on its words
+        total = E.shot_seconds(ns) + dur
+        if total > V.HOLD_FILL_MAX_S + 1e-6:
+            return
+        if c.media == "video":
+            start = n.get("start") if isinstance(n.get("start"), (int, float)) else c.in_point
+            if side == "next":
+                start = max(c.in_point, start - dur)
+            if start + total > c.out_point + 0.05:
                 return
+            if side == "next":
+                n["start"] = n["frame"] = round(start, 3)
+        p["fallback"] = "hold_previous" if side == "previous" else "extend_next"
+        p["filled_by"] = "hold"
+
+    # ------------------------------------------------------------ 4. AI still
+    def step_ai(self, e: dict, i: int, ai_tail: int) -> None:
+        p, s = e["picks"][i], e["shots"][i]
+        if p.get("_cand") is not None:
+            return
         rt = s["plan"].get("real_thing") or {}
-        if (rt.get("kind") not in E.NO_AI_KINDS and dur <= V.AI_HOLD_MAX_S + 1e-6
+        if (rt.get("kind") not in E.NO_AI_KINDS and not E.needs_document(s["plan"])
+                and E.shot_seconds(s) <= V.AI_HOLD_MAX_S + 1e-6 and E.ai_allowed_at(s["clauses"][0].start)
                 and _ai_run_around(e, i, ai_tail) <= V.AI_RUN_MAX):
             p["fallback"] = "ai_still"
             p["filled_by"] = "ai_still"

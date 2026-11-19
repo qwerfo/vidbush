@@ -60,7 +60,7 @@ def _resolve(settings: Settings, target: str) -> tuple[Path, Optional[Path]]:
 
 
 def cmd_audit(settings: Settings, args: argparse.Namespace) -> int:
-    from ..providers.base import CostTracker
+    from ..providers.base import CheapSeatDown, CostTracker
     from ..providers.seats import Seats
     from ..util import media_duration, write_json
     from . import auditor
@@ -89,9 +89,14 @@ def cmd_audit(settings: Settings, args: argparse.Namespace) -> int:
               file=sys.stderr)
     model = f"{configured[0].name}/{configured[0].model}" if configured else "mock"
     t0 = time.time()
-    auditor.run_audit(video, words, out, auditor.seats_vision(seats), media_duration(video),
-                      shots=core.shift(core.load_shots(root), intro), every=args.every, limit=args.limit,
-                      workers=args.workers, model=model)
+    try:
+        auditor.run_audit(video, words, out, auditor.seats_vision(seats), media_duration(video),
+                          shots=core.shift(core.load_shots(root), intro), every=args.every, limit=args.limit,
+                          workers=args.workers, model=model)
+    except CheapSeatDown as e:  # never a dearer auditor: stop, keep the rows so far, resume later
+        write_json(out / COST_FILE, tracker.report)
+        print(f"audit stopped: {e}", file=sys.stderr)
+        return 1
     write_json(out / COST_FILE, tracker.report)  # written even when this run made no call
     # the reports cover every row of the audit, never only this run's slice
     summary = auditor.write_reports(core.latest_rows(out / "audit.jsonl"), out, video,

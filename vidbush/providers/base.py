@@ -84,6 +84,19 @@ class CostCapReached(BaseException):
         self.total_usd, self.cap_usd, self.role, self.stage = total_usd, cap_usd, role, stage
 
 
+class CheapSeatDown(BaseException):
+    """Every provider of a cheapest-provider role (seats.CHEAPEST_ROLES) within PRICE_GAP times the seat's
+    cheapest is down, or none has a price: raised instead of paying a dearer provider. A BaseException for the
+    same reason as CostCapReached; the runner leaves the stage pending and ends the run needs_review, and the
+    audit command returns 1 after writing its cost file."""
+
+    def __init__(self, role: str, stage: str, down: list[str], skipped: list[str]) -> None:
+        super().__init__(f"cheap seat down: every {role} provider within {PRICE_GAP:g} times the seat's cheapest "
+                         f"is down ({', '.join(down) or 'none has a price'}) in {stage}; dearer providers are never "
+                         f"used for {role} ({', '.join(skipped) or 'none'}); resume once one is back")
+        self.role, self.stage, self.down, self.skipped = role, stage, down, skipped
+
+
 class NotConfigured(ProviderError):
     """Provider has no key or base URL."""
 
@@ -123,22 +136,24 @@ PER_UNIT_KINDS = ("tokens", "images")
 
 
 def price_warnings(entries: list[CostEntry]) -> list[str]:
-    """One line per model whose providers differ more than PRICE_GAP times in USD per unit (token or image).
+    """One line per role and model whose providers differ more than PRICE_GAP times in USD per unit (token or
+    image). The model is compared by its last path part, so relay vendor prefixes (google/...) group together.
     Free calls (subscriptions, mocks) are left out: a 0 USD price is a contract, not an anomaly."""
-    per: dict[tuple[str, str], dict[str, list[float]]] = {}
+    per: dict[tuple[str, str, str], dict[str, list[float]]] = {}
     for e in entries:
         if e.ok and not e.mock and e.model and e.unit_kind in PER_UNIT_KINDS and e.units > 0 and e.cost_usd > 0:
-            acc = per.setdefault((e.model, e.unit_kind), {}).setdefault(e.provider, [0.0, 0.0])
+            key = (e.role, e.model.split("/")[-1], e.unit_kind)
+            acc = per.setdefault(key, {}).setdefault(e.provider, [0.0, 0.0])
             acc[0] += e.cost_usd
             acc[1] += e.units
     out = []
-    for (model, kind), provs in sorted(per.items()):
+    for (role, model, kind), provs in sorted(per.items()):
         rates = {p: c / u for p, (c, u) in provs.items()}
         hi, lo = max(rates, key=rates.__getitem__), min(rates, key=rates.__getitem__)
         if len(rates) > 1 and rates[hi] > PRICE_GAP * rates[lo]:
             unit = kind.rstrip("s")
             out.append(f"provider {hi} charged {rates[hi] / rates[lo]:.1f} times {lo} per {unit} for model {model} "
-                       f"({rates[hi]:.3g} against {rates[lo]:.3g} USD per {unit})")
+                       f"in role {role} ({rates[hi]:.3g} against {rates[lo]:.3g} USD per {unit})")
     return out
 
 

@@ -50,15 +50,15 @@ def make_job(spec: LayoutSpec, words: Sequence[Any], clip_start: float, duration
             continue
         ref = picture_ref(pool.get(el.picture)) or picture_ref(el.picture)
         if ref is None:
-            job.notes.append(f"element {i} ({el.role}): picture {el.picture} not found")
+            job.missing.append(f"element {i} ({el.role}): picture {el.picture} not found")
         elif ref.generated:
-            job.notes.append(f"element {i} ({el.role}): generated picture refused, layouts show real pictures only")
+            job.missing.append(f"element {i} ({el.role}): generated picture refused, layouts show real pictures only")
         else:
             job.pictures[i] = ref
-    for c in cues:
+    for c in cues:  # a layout is shown whole or not at all: an element it cannot time makes it incomplete
         el = spec.elements[c.index]
         if c.outside:
-            job.notes.append(f"element {c.index} ({el.role}): its words are spoken outside the shot, not shown")
+            job.missing.append(f"element {c.index} ({el.role}): its words are spoken outside the shot")
         elif el.anchor and not c.found:
-            job.notes.append(f"element {c.index} ({el.role}): anchor '{el.anchor}' not spoken near the clip")
+            job.missing.append(f"element {c.index} ({el.role}): anchor '{el.anchor}' not spoken near the clip")
     return job

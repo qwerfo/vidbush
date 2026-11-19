@@ -16,7 +16,7 @@ import numpy as np
 from ...models import LayoutKind
 from .. import easing as ez
 from ..house import MIN_BODY_PX, MIN_HEAD_PX, MIN_HERO_PX, MIN_LABEL_PX
-from ..textdraw import ELLIPSIS, Sprite, blit, fit_text, font, rect, round_rect, scaled, text_sprite, with_shadow
+from ..textdraw import ELLIPSIS, Sprite, blit, fit_text, font, rect, scaled, text_sprite
 from . import register
 from .base import Footage, LayoutComp, LayoutJob, darken, framed, ink_ground
 
@@ -130,9 +130,10 @@ class NumberOverFootage(PictureGround):
 SLIDE_S = 0.6  # a picture sliding or stepping to its new place
 
 
-def still_of(job: LayoutJob, i: int, w: float, h: float) -> Optional[np.ndarray]:
-    """One still of element i's real picture, covering w x h (a clip gives a frame just after its in point);
-    None when the element has no usable picture."""
+def still_of(job: LayoutJob, i: int, w: float, h: float, crop_only: bool = False) -> Optional[np.ndarray]:
+    """One still of element i's real picture, covering w x h with every face whole (a clip gives a frame just
+    after its in point); None when the element has no usable picture, or with crop_only when no crop of this
+    shape keeps every face whole."""
     ref = job.pictures.get(i)
     if ref is None or ref.generated:
         return None
@@ -140,7 +141,8 @@ def still_of(job: LayoutJob, i: int, w: float, h: float) -> Optional[np.ndarray]
         ref = replace(ref, in_point=ref.in_point + 0.5)  # past any fade in at the cut point
     foot = Footage(ref, max(8, int(w)), max(8, int(h)), job.fps)
     try:
-        return foot.frame(0).copy()
+        img = foot.frame(0).copy()
+        return None if foot.unreadable or (crop_only and foot.contained) else img
     finally:
         foot.close()
 
@@ -159,21 +161,15 @@ def tinted(img: np.ndarray, color: tuple[int, int, int], amount: float) -> np.nd
 
 
 class PictureComp(LayoutComp):
-    """A layout of framed real pictures: frames are built once per element; a missing picture becomes a
-    quiet text card (and a note) so the layout still reads."""
+    """A layout of framed real pictures, frames built once per element. A picture it cannot show makes the
+    layout incomplete (job.missing): it is dropped whole, never drawn with an empty card or a text card."""
 
-    def framed_or_card(self, i: int, w: float, h: float, text: str,
-                       focus: tuple[float, float] = (0.5, 0.45)) -> Sprite:
+    def framed_pic(self, i: int, w: float, h: float) -> Optional[Sprite]:
         img = still_of(self.job, i, w, h)
-        if img is not None:
-            return framed(img, w, h, self.house, self.k, focus)
-        self.job.notes.append(f"element {i}: no real picture, shown as a text card")
-        card = np.zeros((int(h), int(w), 4), np.uint8)
-        blit(card, round_rect(int(w), int(h), self.px(self.house.radius_px), self.house.rgb("ink2")), 0, 0)
-        if text:
-            t = self.label(text, 52, "muted", max_w=w * 0.84, lines=2, floor=MIN_BODY_PX, align="center")
-            blit(card, t, (w - t.w) / 2, (h - t.h) / 2)
-        return Sprite(card, 0)
+        if img is None:
+            self.job.missing.append(f"element {i} ({self.spec.elements[i].role}): no real picture")
+            return None
+        return framed(img, w, h, self.house, self.k)
 
     def balanced(self, text: str, base: float, color: str, max_w: float, floor: float, tracking_em: float,
                  weight: str = "SemiBold", caps: bool = True) -> Sprite:
@@ -218,6 +214,7 @@ class SplitComparison(PictureComp):
         for role in ("left", "right"):
             got = self.job.first(role)
             if got is None:
+                self.job.missing.append(f"split_comparison: no {role} side")
                 continue
             i, el, cue = got
             cap = self.label(el.text, 52, max_w=pw, lines=2, floor=MIN_BODY_PX, align="center") if el.text else None
@@ -231,7 +228,9 @@ class SplitComparison(PictureComp):
         for i, el, cue, cap in caps:
             side = 0 if el.role == "left" else 1
             cx = self.box[0] + half * (side + 0.5)
-            pic = self.framed_or_card(i, pw, ph, "" if cap else el.text)
+            pic = self.framed_pic(i, pw, ph)
+            if pic is None:
+                continue
             self.sides.append(dict(side=side, cue=cue, pic=pic, cap=cap, cx=cx, top=top, ph=ph))
 
     def draw(self, frame: np.ndarray, t: float) -> None:
@@ -260,35 +259,32 @@ class SplitComparison(PictureComp):
                 blit(frame, rect(rw, self.rule_h, self.house.rgb("accent")), s["cx"] - rw / 2 + dx, y)
 
 
-# ---------------------------------------------------------------- name card and its lower third fallback
+# ---------------------------------------------------------------- name card
 
 @register(LayoutKind.name_card)
 class NameCard(PictureComp):
-    """A real portrait with the person's name and role beside it. Without a real portrait the pipeline shows
-    NameLowerThird over the shot's own picture instead (fallback_needed); rendered anyway, the card shows the
-    name and role alone and notes it."""
-
-    @staticmethod
-    def fallback_needed(job: LayoutJob) -> bool:
-        got = job.first("portrait")
-        if got is None:
-            return True
-        ref = job.pictures.get(got[0])
-        return ref is None or ref.generated
+    """A real portrait with the person's name and role beside it. A name is put on screen only beside a picture
+    that really shows that person: with no real portrait, or one whose face no crop of the card's shape keeps
+    whole, the card is incomplete (job.missing) and dropped, never shown as a name alone or a lower third."""
 
     def setup(self) -> None:
         name, role, por = self.job.first("name"), self.job.first("role"), self.job.first("portrait")
-        no_pic = self.fallback_needed(self.job)
-        if no_pic:
-            self.job.notes.append("name_card: no real portrait, use NameLowerThird over the shot's picture")
         ph = self.bh * 0.78  # the portrait fills most of the box height
         pw = ph * 0.8
         self.gap = self.px(64)
-        tw = self.bw * 0.86 if no_pic else min(0.45 * self.W, self.bw - pw - self.gap)
-        if not no_pic and tw < 0.3 * self.W:  # a narrow frame: the portrait gives way to the text column
+        tw = min(0.45 * self.W, self.bw - pw - self.gap)
+        if tw < 0.3 * self.W:  # a narrow frame: the portrait gives way to the text column
             tw = 0.3 * self.W
             pw = self.bw - tw - self.gap
             ph = pw / 0.8
+        if por is None or por[0] not in self.job.pictures:
+            self.job.missing.append("name_card: no real portrait")
+            return
+        img = still_of(self.job, por[0], pw, ph, crop_only=True)
+        if img is None:
+            self.job.missing.append("name_card: the portrait cannot be cropped to the card with every face whole")
+            return
+        self.pic = (framed(img, pw, ph, self.house, self.k), por[2])
         self.name = (self.balanced(name[1].text, 120, "paper", tw, MIN_HEAD_PX, 0.0, "Bold", caps=False),
                      name[2]) if name and name[1].text else None
         self.role = (self.balanced(role[1].text, 40, "muted", tw, MIN_BODY_PX, 0.14), role[2]) \
@@ -296,21 +292,16 @@ class NameCard(PictureComp):
         if self.role is not None and self.name is not None:  # the role never comes before the name
             c = self.role[1]
             self.role = (self.role[0], replace(c, appear=max(c.appear, self.name[1].appear + 0.3)))
-        self.pic = None
-        if not no_pic:
-            img = still_of(self.job, por[0], pw, ph)
-            self.pic = (framed(img, pw, ph, self.house, self.k, (0.5, 0.35)), por[2])
         textw = max([s[0].w for s in (self.name, self.role) if s is not None] or [0])
         self.rule_h = max(3, self.px(6))
         self.th = (self.name[0].h + self.px(52) if self.name else 0) + (self.role[0].h if self.role else 0)
-        total = (pw + self.gap if self.pic else 0) + textw
-        self.x0 = self.box[0] + (self.bw - total) / 2
-        self.tx = self.x0 + (pw + self.gap if self.pic else 0)
+        self.x0 = self.box[0] + (self.bw - (pw + self.gap + textw)) / 2
+        self.tx = self.x0 + pw + self.gap
         self.pw, self.ph = pw, ph
         self.cy = self.box[1] + self.bh / 2
 
     def draw(self, frame: np.ndarray, t: float) -> None:
-        if self.pic is not None and t >= self.pic[1].appear:
+        if t >= self.pic[1].appear:
             spr, c = self.pic
             p = self.settle(t, c, 0.6)
             dy = -self.px(12) * ez.ease_in_out_sine(ez.progress(t, c.appear, self.dur))
@@ -334,60 +325,6 @@ class NameCard(PictureComp):
                 p = self.settle(t, c)
                 x = self.tx + self.px(10) * ez.progress(t, c.appear, self.dur)
                 blit(frame, spr, x, y + self.px(14) * (1 - p), p)
-
-
-class NameLowerThird(LayoutComp):
-    """The name card's fallback: a lower third (name, role) over the shot's own picture, lower left inside the
-    visible area and above the caption band. render_rgba(i) is a premultiplied full-frame overlay. Not a
-    registered kind: the caller picks it when NameCard.fallback_needed(job)."""
-
-    def make_ground(self):  # noqa: ANN201
-        return None
-
-    def setup(self) -> None:
-        name, role = self.job.first("name"), self.job.first("role")
-        mw = self.bw * 0.6
-        self.name = (self.label(name[1].text, 64, "paper", "Bold", caps=False, max_w=mw, floor=MIN_HEAD_PX),
-                     name[2]) if name and name[1].text else None
-        self.role = (self.label(role[1].text, 36, "muted", max_w=mw, floor=MIN_LABEL_PX, tracking_em=0.14),
-                     role[2]) if role and role[1].text else None
-        if self.role is not None and self.name is not None:
-            c = self.role[1]
-            self.role = (self.role[0], replace(c, appear=max(c.appear, self.name[1].appear + 0.25)))
-        self.padx, self.pady, self.bar = self.px(34), self.px(22), max(4, self.px(8))
-        self.lgap = self.px(8)
-        tw = max([s[0].w for s in (self.name, self.role) if s is not None] or [0])
-        th = sum(s[0].h for s in (self.name, self.role) if s is not None) + (self.lgap if self.role else 0)
-        self.pw, self.ph = int(tw + 2 * self.padx + self.bar), int(th + 2 * self.pady)
-        sp = self.px(26) + 2
-        body = np.zeros((self.ph + 2 * sp, self.pw + 2 * sp, 4), np.uint8)
-        blit(body, round_rect(self.pw, self.ph, self.px(self.house.radius_px), self.house.rgb("ink"), 0.9), sp, sp)
-        blit(body, rect(self.bar, self.ph, self.house.rgb("accent")), sp, sp)
-        self.panel = Sprite(with_shadow(body, self.px(16) + 1, max(1, self.px(6)), 0.45), sp)
-        self.x, self.y = self.box[0], self.box[3] - self.ph
-        self.start = min([s[1].appear for s in (self.name, self.role) if s is not None] or [0.0])
-
-    def draw(self, frame: np.ndarray, t: float) -> None:
-        if t < self.start:
-            return
-        out = 1.0 - ez.ease_in_cubic(ez.progress(t, self.dur - 0.35, self.dur))
-        w = wipe(self.panel, ez.ease_out_cubic(ez.progress(t, self.start, self.start + 0.45)))
-        if w is not None:
-            blit(frame, w, self.x, self.y, out)
-        y = self.y + self.pady
-        for s in (self.name, self.role):
-            if s is None:
-                continue
-            spr, c = s
-            if t >= c.appear:
-                p = self.settle(t, c, 0.4)
-                blit(frame, spr, self.x + self.bar + self.padx + self.px(18) * (1 - p), y, p * out)
-            y += spr.h + self.lgap
-
-    def render_rgba(self, i: int) -> np.ndarray:
-        frame = np.zeros((self.H, self.W, 4), np.uint8)
-        self.draw(frame, i / self.fps)
-        return frame
 
 
 # ---------------------------------------------------------------- list slideshow
@@ -442,7 +379,9 @@ class ListSlideshow(PictureComp):
             self.s, self.slots = 1.0, []
         self.items = []
         for (i, el, cue), cap, small in zip(items, caps, smalls):
-            pic = self.framed_or_card(i, hw, hh, "" if cap else el.text)
+            pic = self.framed_pic(i, hw, hh)
+            if pic is None:
+                continue
             self.items.append(dict(cue=cue, pic=pic, cap=cap, small=small))
 
     def _target(self, k: int, t: float) -> dict[int, tuple[float, ...]]:

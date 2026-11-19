@@ -43,6 +43,24 @@ def _is_year(s: str) -> bool:
     return t.isdigit() and 1000 <= int(t) <= 2100
 
 
+SETTING_KEYS = ("period", "season", "place", "circumstance")
+NARRATION_RUN = 4  # this many narration words in a row typed on screen is the narration typed out
+
+
+def _tokens(s: str) -> list[str]:
+    return [t for t in "".join(ch.lower() if ch.isalnum() else " " for ch in s).split()]
+
+
+def types_narration(text: str, spoken: str) -> bool:
+    """The text copies NARRATION_RUN or more narration words in a row and carries no number: it types out
+    what the viewer is already hearing (Adam: never acceptable)."""
+    t, w = _tokens(text), _tokens(spoken)
+    if len(t) < NARRATION_RUN or _has_digit(text):
+        return False
+    runs = {tuple(w[i:i + NARRATION_RUN]) for i in range(len(w) - NARRATION_RUN + 1)}
+    return any(tuple(t[i:i + NARRATION_RUN]) in runs for i in range(len(t) - NARRATION_RUN + 1))
+
+
 def validate(raw: Any, clauses: list[Clause], narration: Narration) -> tuple[list[dict], list[str]]:
     """Normalised clause plans in clause order plus a list of plain-language problems."""
     errors: list[str] = []
@@ -87,6 +105,10 @@ def validate(raw: Any, clauses: list[Clause], narration: Narration) -> tuple[lis
                               f"\"{c.text}\".")
             if p.get("medium") not in V.MEDIA:
                 p["medium"] = "either"
+            st = p.get("setting") if isinstance(p.get("setting"), dict) else {}
+            p["setting"] = {k: str(st.get(k) or "").strip()[:80] for k in SETTING_KEYS}
+            if not p["setting"]["period"] or not p["setting"]["place"]:
+                errors.append(f"{c.id}: setting needs period and place (and season, circumstance).")
         if t in V.PRESENTED_KINDS:
             if p.get("presentation") not in V.PRESENTATIONS:
                 errors.append(f"{c.id}: {t} needs presentation, one of {', '.join(V.PRESENTATIONS)}.")
@@ -147,6 +169,9 @@ def validate(raw: Any, clauses: list[Clause], narration: Narration) -> tuple[lis
                     errors.append(f"{c0.id} element {k}: text is empty.")
                 if len(text.split()) > 6 and not doc:  # a marked passage is page text, not typed text
                     errors.append(f"{c0.id} element {k}: '{text}' is over 6 words.")
+                if not doc and types_narration(text, " ".join(w.text for w in words)):
+                    errors.append(f"{c0.id} element {k}: '{text}' types out the narration; on-screen text is "
+                                  f"only a number with its unit, a name, a date or a short label.")
                 if not doc and _has_digit(text) and not _is_year(text) and not any(ch.isalpha() or ch in "%$" for ch in text):
                     errors.append(f"{c0.id} element {k}: the number '{text}' needs its unit.")
                 try:
@@ -221,7 +246,7 @@ def repair(plans: list[dict], clauses: list[Clause], narration: Narration) -> li
         if c.end - clauses[start].start > limit:
             p.update(treatment="picture", subject=head.get("subject", ""), anchor=c.text,
                      queries=head.get("queries", {}), real_thing=head.get("real_thing"),
-                     medium=head.get("medium", "either"), grammar=["sequence"],
+                     medium=head.get("medium", "either"), grammar=["sequence"], setting=head.get("setting", {}),
                      grammar_note="hold split at the hold limit: closer framing of the same subject")
             p.setdefault("repairs", []).append("hold over the limit split into a new picture")
             start = i

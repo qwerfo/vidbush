@@ -2,7 +2,7 @@
 
 Entry points:
 - comp_class(kind): the LayoutComp subclass drawing a LayoutKind.
-- render_full(job, out): an opaque full-frame clip (H.264 mp4).
+- render_full(job, out, alpha): a full-frame clip, opaque (H.264 mp4) or an alpha overlay (qtrle mov).
 - render_panel(job, plan, out): a panel presentation as an alpha overlay clip (qtrle mov).
 Each returns the seconds the render took, so the cost of each kind can be reported.
 
@@ -16,9 +16,13 @@ import time
 from pathlib import Path
 from typing import Callable
 
+import cv2
+import numpy as np
+
 from ...models import LayoutKind
+from .. import easing as ez
 from .base import LayoutComp, LayoutJob, drift
-from .panel import PanelComp, PanelPlan
+from .panel import IN_S, PanelComp, PanelPlan
 
 REGISTRY: dict[LayoutKind, type[LayoutComp]] = {}
 _MODULES = ("pictures", "data", "routemap", "document")
@@ -47,26 +51,39 @@ def _sink(out: Path, job: LayoutJob, alpha: bool):  # noqa: ANN202
     return FrameSink(Path(out), job.width, job.height, job.fps, alpha, "veryfast")
 
 
-def render_full(job: LayoutJob, out: Path) -> float:
-    """Opaque full-frame layout clip; returns render seconds."""
+def render_full(job: LayoutJob, out: Path, alpha: bool = False) -> float:
+    """Full-frame layout clip; returns render seconds. Opaque from the cut, or with alpha an overlay that
+    fades in over the shot's own picture (a layout whose first words come after the cut). Nothing is written
+    when the composition finds the layout incomplete (job.missing): it is shown whole or not at all."""
     t0 = time.perf_counter()
     comp = comp_class(job.spec.kind)(job, job.width, job.height, False)
+    if job.missing:
+        comp.close()
+        return time.perf_counter() - t0
     n = max(1, round(job.duration * job.fps))
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     try:
-        with _sink(out, job, False) as sink:
+        with _sink(out, job, alpha) as sink:
             for i in range(n):
-                sink.write(drift(comp.render(i), i / job.fps, job.duration, job.house.drift))
+                f = drift(comp.render(i), i / job.fps, job.duration, job.house.drift)
+                if alpha:  # premultiplied: the picture beneath shows only while the layout fades in
+                    a = ez.ease_out_cubic(ez.progress(i / job.fps, 0.0, IN_S))
+                    f = np.dstack([cv2.convertScaleAbs(f, alpha=a), np.full(f.shape[:2], round(255 * a), np.uint8)])
+                sink.write(f)
     finally:
         comp.close()
     return time.perf_counter() - t0
 
 
 def render_panel(job: LayoutJob, plan: PanelPlan, out: Path) -> float:
-    """Panel presentation as a premultiplied alpha overlay clip; returns render seconds."""
+    """Panel presentation as a premultiplied alpha overlay clip; returns render seconds. Nothing is written
+    when the layout is incomplete (job.missing)."""
     t0 = time.perf_counter()
     cls = comp_class(job.spec.kind)
     pc = PanelComp(job, lambda j, w, h, panel: cls(j, w, h, panel), plan)
+    if job.missing:
+        pc.close()
+        return time.perf_counter() - t0
     n = max(1, round(job.duration * job.fps))
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     try:

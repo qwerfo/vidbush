@@ -51,9 +51,12 @@ def recs(pool):
     return out
 
 
-def shots(durs, kinds=None):
-    """Consecutive one-clause picture shots lasting durs seconds; kinds give each a real_thing kind."""
-    out, t = [], 0.0
+AFTER_OPENING = 20.0  # a start past vocab.AI_OPENING_S, for tests about AI runs rather than the opening
+
+
+def shots(durs, kinds=None, t0=0.0):
+    """Consecutive one-clause picture shots lasting durs seconds from t0; kinds give each a real_thing kind."""
+    out, t = [], t0
     kinds = kinds or [None] * len(durs)
     for i, (d, k) in enumerate(zip(durs, kinds)):
         c = Clause(id=f"c{i + 1:03d}", beat="b001", scene="s01", text="words", start=t, end=t + d, words=[i, i])
@@ -77,9 +80,18 @@ def ids(out):
     return [p["_cand"].id if p.get("_cand") else None for p in out]
 
 
-@pytest.mark.parametrize("kind", ["person", "event", "document"])
-def test_ai_still_for_real_person_event_document_is_an_error(pool, recs, kind):
-    sh = shots([3.0], [kind])
+def move(sh, i, start):
+    """Shift clause i (and every later one) so clause i starts at start, keeping durations."""
+    d = start - sh[i]["clauses"][0].start
+    for s in sh[i:]:
+        for c in s["clauses"]:
+            c.start, c.end = c.start + d, c.end + d
+    return sh
+
+
+@pytest.mark.parametrize("kind", ["person", "document"])
+def test_ai_still_for_real_person_or_document_is_an_error(pool, recs, kind):
+    sh = shots([3.0], [kind], AFTER_OPENING)
     p, errors = E.check(picks(3), sh, pool, recs, {}, 0)
     assert any("never allowed for a real " + kind in e for e in errors)
     out = E.resolve(p, sh, 0, recs, {})
@@ -87,40 +99,73 @@ def test_ai_still_for_real_person_event_document_is_an_error(pool, recs, kind):
     assert out[0]["filled_by"] == ""  # left for the ladder
 
 
-def test_ai_still_for_a_place_is_allowed(pool, recs):
-    _, errors = E.check(picks(3), shots([3.0], ["place"]), pool, recs, {}, 0)
+@pytest.mark.parametrize("kind", ["place", "event"])
+def test_ai_still_for_a_place_or_an_event_is_allowed(pool, recs, kind):
+    # Adam: anonymous figures in a real event may be an AI illustration
+    sh = shots([3.0], [kind], AFTER_OPENING)
+    p, errors = E.check(picks(3), sh, pool, recs, {}, 0)
+    assert errors == []
+    assert ids(E.resolve(p, sh, 0, recs, {})) == ["ai3"]
+
+
+def test_ai_still_in_the_first_15_s_is_an_error_and_removed(pool, recs):
+    sh = shots([3.0], None, 12.0)
+    p, errors = E.check(picks(3), sh, pool, recs, {}, 0)
+    assert any("first 15 s of the film" in e for e in errors)
+    out = E.resolve(p, sh, 0, recs, {})
+    assert out[0]["_cand"] is None and "removed by the AI rulings" in out[0]["resolved"]
+    _, errors = E.check(picks(3), shots([3.0], None, 15.0), pool, recs, {}, 0)
     assert errors == []
 
 
 def test_third_ai_still_in_a_row_is_an_error(pool, recs):
-    _, errors = E.check(picks(3, 4, 5), shots([3.0, 3.0, 3.0]), pool, recs, {}, 0)
+    _, errors = E.check(picks(3, 4, 5), shots([3.0, 3.0, 3.0], None, AFTER_OPENING), pool, recs, {}, 0)
     assert len(errors) == 1 and errors[0].startswith("c003") and "number 3 in a row" in errors[0]
-    _, errors = E.check(picks(3, 4), shots([3.0, 3.0]), pool, recs, {}, 0)
+    _, errors = E.check(picks(3, 4), shots([3.0, 3.0], None, AFTER_OPENING), pool, recs, {}, 0)
     assert errors == []
 
 
 def test_ai_tail_from_previous_scene_counts(pool, recs):
-    sh = shots([3.0, 3.0])
+    sh = shots([3.0, 3.0], None, AFTER_OPENING)
     p, errors = E.check(picks(3, 4), sh, pool, recs, {}, 1)
     assert len(errors) == 1 and errors[0].startswith("c002")
     assert ids(E.resolve(p, sh, 1, recs, {})) == ["ai3", None]
 
 
 def test_ai_still_over_hold_limit_is_an_error(pool, recs):
-    sh = shots([4.5])
+    sh = shots([4.5], None, AFTER_OPENING)
     p, errors = E.check(picks(3), sh, pool, recs, {}, 0)
     assert any("limit is 4 s" in e for e in errors)
     assert ids(E.resolve(p, sh, 0, recs, {})) == [None]
-    _, errors = E.check(picks(3), shots([4.0]), pool, recs, {}, 0)
+    _, errors = E.check(picks(3), shots([4.0], None, AFTER_OPENING), pool, recs, {}, 0)
     assert errors == []
 
 
 def test_reuse_non_adjacent_needs_callback(pool, recs):
     _, errors = E.check(picks(1, 2, 1), shots([3.0] * 3), pool, recs, {}, 0)
     assert len(errors) == 1 and "already used at c001" in errors[0]
-    _, errors = E.check(picks(1, 2, {"pick": 1, "callback": True}), shots([3.0] * 3), pool, recs, {}, 0)
-    assert errors == []
     _, errors = E.check(picks(1, 1), shots([3.0] * 2), pool, recs, {}, 0)
+    assert errors == []
+
+
+def test_a_callback_within_60_s_is_refused(pool, recs):
+    sh = shots([3.0] * 3)
+    p, errors = E.check(picks(1, 2, {"pick": 1, "callback": True}), sh, pool, recs, {}, 0)
+    assert len(errors) == 1 and errors[0].startswith("c003") and "never shown again within 60 s" in errors[0]
+    out = E.resolve(p, sh, 0, recs, {})
+    assert ids(out) == ["real1", "real2", None] and "within a minute" in out[2]["resolved"]
+    sh = move(shots([3.0] * 3), 2, 3.0 + 60.0)  # real1 left the screen at 3 s; back at 63 s
+    p, errors = E.check(picks(1, 2, {"pick": 1, "callback": True}), sh, pool, recs, {}, 0)
+    assert errors == [] and ids(E.resolve(p, sh, 0, recs, {})) == ["real1", "real2", "real1"]
+
+
+def test_a_callback_within_60_s_of_an_earlier_scene_is_refused(pool, recs):
+    sh = shots([3.0], None, 100.0)
+    shown_end = {E.asset_key(pool[0]): 50.0}
+    used = {E.asset_key(pool[0]): "c009"}
+    _, errors = E.check(picks({"pick": 1, "callback": True}), sh, pool, recs, used, 0, shown_end)
+    assert any("50 s ago" in e for e in errors)
+    _, errors = E.check(picks({"pick": 1, "callback": True}), sh, pool, recs, used, 0, {E.asset_key(pool[0]): 40.0})
     assert errors == []
 
 
@@ -141,7 +186,7 @@ def test_label_on_ai_pick_is_an_error(pool, recs):
 
 
 def test_resolve_removes_bad_ai_picks_and_leaves_the_clause_open(pool, recs):
-    sh = shots([3.0, 3.0, 5.0, 3.0], ["person", None, None, None])
+    sh = shots([3.0, 3.0, 5.0, 3.0], ["person", None, None, None], AFTER_OPENING)
     p, errors = E.check(picks(3, 1, 4, {"pick": 5, "label": "x"}), sh, pool, recs, {}, 0)
     assert errors
     out = E.resolve(p, sh, 0, recs, {})
@@ -155,7 +200,7 @@ def test_resolve_removes_bad_ai_picks_and_leaves_the_clause_open(pool, recs):
 
 
 def test_resolve_third_ai_in_a_row(pool, recs):
-    sh = shots([3.0, 3.0, 3.0])
+    sh = shots([3.0, 3.0, 3.0], None, AFTER_OPENING)
     p, _ = E.check(picks(3, 4, 5), sh, pool, recs, {}, 0)
     out = E.resolve(p, sh, 0, recs, {})
     assert ids(out) == ["ai3", "ai4", None]
@@ -163,10 +208,19 @@ def test_resolve_third_ai_in_a_row(pool, recs):
 
 
 def test_hold_limit_counts_the_adjacent_same_asset(pool, recs):
-    sh = shots([4.0, 4.0, 4.0])  # 12 s of one real picture, limit 9 s
+    sh = shots([5.0, 5.0])  # 10 s of one real picture, limit 9 s
+    p, errors = E.check(picks(1, 1), sh, pool, recs, {}, 0)
+    assert len(errors) == 1 and errors[0].startswith("c002") and "10.0 s" in errors[0]
+    assert ids(E.resolve(p, sh, 0, recs, {})) == ["real1", None]
+
+
+def test_third_consecutive_shot_of_one_asset_is_an_error_and_dropped(pool, recs):
+    sh = shots([2.0, 2.0, 2.0])  # 6 s: inside the hold limit, so only the run rule speaks
     p, errors = E.check(picks(1, 1, 1), sh, pool, recs, {}, 0)
-    assert len(errors) == 1 and errors[0].startswith("c003") and "12.0 s" in errors[0]
-    assert ids(E.resolve(p, sh, 0, recs, {})) == ["real1", "real1", None]
+    assert len(errors) == 1 and errors[0].startswith("c003") and "shot number 3 in a row" in errors[0]
+    out = E.resolve(p, sh, 0, recs, {})
+    assert ids(out) == ["real1", "real1", None] and "third shot in a row" in out[2]["resolved"]
+    assert out[2]["filled_by"] == ""  # left for the ladder
 
 
 def test_in_point_from_a_start_time_or_a_legacy_letter(pool):
@@ -202,7 +256,7 @@ def test_sheets_build_ceil_n_over_rows_640_wide(pool, tmp_path):
 
 
 def test_resolve_removes_accidental_repeat_but_keeps_adjacent_and_callback(pool, recs):
-    sh = shots([3.0, 3.0, 3.0, 3.0, 3.0])
+    sh = move(shots([3.0, 3.0, 3.0, 3.0, 3.0]), 4, 80.0)  # the callback comes over a minute later
     p, errors = E.check(picks(1, 1, 6, 1, {"pick": 1, "callback": True}), sh, pool, recs, {}, 0)
     assert errors
     out = E.resolve(p, sh, 0, recs, {})

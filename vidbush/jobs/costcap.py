@@ -16,6 +16,7 @@ from .context import StageContext
 
 CAP_FILE = "cost_cap.json"
 CAP_PREFIX = "cost cap"
+SEAT_PREFIX = "cheap seat down"  # CheapSeatDown's message starts so
 
 
 def cap_path(work: Path) -> Path:
@@ -26,7 +27,7 @@ def cap_path(work: Path) -> Path:
 def reset(ctx: StageContext) -> None:
     """Forget an earlier cap at the start of a run (the cap is per run)."""
     cap_path(ctx.work).unlink(missing_ok=True)
-    if ctx.project.status_note.startswith(CAP_PREFIX):
+    if ctx.project.status_note.startswith((CAP_PREFIX, SEAT_PREFIX)):
         ctx.project.status_note = ""
 
 
@@ -72,6 +73,15 @@ def stopped_inside(ctx: StageContext, stage: str, total: float, cap_usd: float) 
                                     "reason": reason, "at": time.time()})
     ctx.log.warn("cost cap reached inside a stage, run stopped", stage=stage, total_usd=round(total, 5),
                  cap_usd=cap_usd)
+
+
+def stopped_by_seat(ctx: StageContext, stage: str, e: BaseException) -> None:
+    """Record a stop inside `stage` because every cheap provider of a cheapest-provider role is down
+    (providers.base.CheapSeatDown): the stage stays pending and resume reruns it once a provider is back.
+    No cost cap file: the cap did not stop it."""
+    ctx.project.status = "needs_review"
+    ctx.project.status_note = f"{e}; stopped inside {stage}, resume reruns {stage}"
+    ctx.log.warn("cheap seat down inside a stage, run stopped", stage=stage, error=str(e)[:400])
 
 
 def read_cap(work: Path) -> Optional[dict[str, Any]]:

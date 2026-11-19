@@ -22,7 +22,7 @@ from ..config import Settings
 from ..models import Shot, SourceKind, StyleProfile
 from ..util import stable_hash
 
-RENDER_VERSION = "seg-7"  # seg-7: destination still motion, framed narrow stills, matched look
+RENDER_VERSION = "seg-8"  # seg-8: crops and still moves keep every face whole
 KB_KEYS = ("zoom0", "zoom1", "x0", "y0", "x1", "y1")
 FP_BLOCK = 1 << 20  # bytes hashed at each end of a file
 _FP_MEMO: dict[tuple[str, int, int], str] = {}
@@ -122,7 +122,8 @@ def still_motion(shot: Shot, profile: StyleProfile, W: int = 1920, H: int = 1080
     cw, ch = (iw * crop[2], ih * crop[3]) if crop else (iw, ih)
     vis = visible_height(profile, W, H)
     framed = sm.is_narrow(int(cw), int(ch), W, vis)
-    if not framed and (cw / max(ch, 1) < PORTRAIT_ASPECT or small_still(int(iw), int(ih), W, H)):
+    if not framed and (cw / max(ch, 1) < PORTRAIT_ASPECT or small_still(int(iw), int(ih), W, H)
+                       or sm.cover_box(c.local_path, crop, int(cw), int(ch), W / H) is None):
         return {"zoom0": 1.0, "zoom1": 1.06, "x0": 0.5, "y0": 0.5, "x1": 0.5, "y1": 0.5},             "whole picture on a soft fill: slow push on the frame"
     return sm.plan(shot, c, W, H, profile.motion.ken_burns_intensity, framed=framed)
 

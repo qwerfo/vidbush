@@ -16,7 +16,7 @@ from typing import Any, Callable, Iterable, Optional
 from ..config import Settings
 from ..models import (STAGES, Brief, InputMode, Project, ProjectPaths, StageAttempt, StageRecord, StageStatus,
                       VideoFormat)
-from ..providers.base import CostCapReached
+from ..providers.base import CheapSeatDown, CostCapReached
 from ..util import read_json, write_json
 from . import costcap, lock, provenance
 from .context import StageContext, build_context
@@ -129,7 +129,8 @@ def run_project(settings: Settings, project_id: str, stages: Optional[dict[str, 
 
     cost_cap (USD, None = no cap): checked before every live paid call (Seats.check_cap) and after each
     stage against the project's cost total; when crossed the run stops (inside the stage, which stays
-    pending, or at the boundary) and the project is marked needs_review (costcap.py).
+    pending, or at the boundary) and the project is marked needs_review (costcap.py). CheapSeatDown (every
+    cheap provider of a describe, classify or audit seat is down) stops the run the same way.
 
     Explicitly forced stages read the snapshot of the stage before them (context.shotlist_source)."""
     root = project_dir(settings, project_id)
@@ -165,6 +166,11 @@ def _run_locked(settings: Settings, project_id: str, stages: Optional[dict[str, 
         except CostCapReached as e:
             costcap.mark_forced_pending(ctx, name, force | downstream(name))
             costcap.stopped_inside(ctx, name, e.total_usd, e.cap_usd)
+            capped = True
+            break
+        except CheapSeatDown as e:
+            costcap.mark_forced_pending(ctx, name, force | downstream(name))
+            costcap.stopped_by_seat(ctx, name, e)
             capped = True
             break
         except Exception:
@@ -234,10 +240,12 @@ def _run_stage(ctx: StageContext, name: str, fn: StageFn, rec: StageRecord,
         if ctx.settings.fail_at_stage == name:
             raise InjectedFailure(f"injected failure at stage {name} (VIDBUSH_FAIL_AT)")
         rec.outputs = [str(p) for p in fn(ctx)]
-    except CostCapReached as e:
+    except (CostCapReached, CheapSeatDown) as e:
+        capped = isinstance(e, CostCapReached)
         rec.status, rec.error, rec.finished_at = StageStatus.pending, str(e), time.time()
-        _close_attempt(attempt, rec.finished_at, "capped", str(e))
-        ctx.log.warn("stage stopped by the cost cap", stage=name, error=str(e))
+        _close_attempt(attempt, rec.finished_at, "capped" if capped else "stopped", str(e))
+        ctx.log.warn("stage stopped by the cost cap" if capped else "stage stopped: the cheap seat is down",
+                     stage=name, error=str(e))
         ctx.save_project()
         raise
     except Exception as e:

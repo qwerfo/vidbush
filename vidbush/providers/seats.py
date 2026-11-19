@@ -8,6 +8,11 @@ providers all fail a request raises ProviderError, so the stage fails and
 resume can retry, unless settings.allow_mock_fallback is true. Every mock use
 is recorded in mock_roles and the cost report; roles that were configured as
 real but still used mock are also in fallback_roles.
+
+Cheapest rule (CHEAPEST_ROLES: describer, cheap_classifier, auditor): each call
+runs on the cheapest working provider of its seat, priced per call (unit_prices);
+a provider more than PRICE_GAP times the seat's cheapest is never used for them,
+and when every provider within that gap is down the call raises CheapSeatDown.
 """
 from __future__ import annotations
 
@@ -29,13 +34,17 @@ from . import tts_algrow
 from . import tts_elevate
 from . import reply_cache as reply_cache_mod
 from . import video_elevate
-from .base import (HEALTH, CallResult, CostCapReached, CostTracker, ProviderClient, ProviderError, ProviderSpec,
-                   is_placeholder_model)
+from .base import (HEALTH, PRICE_GAP, CallResult, CheapSeatDown, CostCapReached, CostTracker, ProviderClient,
+                   ProviderError, ProviderSpec, is_placeholder_model)
 
 ROLES = ["researcher", "writer", "director", "judge", "editor", "cheap_classifier", "image", "video",
-         "tts", "vision", "search", "auditor"]
+         "tts", "vision", "search", "auditor", "describer", "picker"]
 LLM_ROLES = {"researcher", "writer", "director", "editor"}
-VISION_ROLES = {"judge", "vision", "cheap_classifier", "auditor"}
+VISION_ROLES = {"judge", "vision", "cheap_classifier", "auditor", "describer", "picker"}
+# volume roles that run on the cheapest working provider of their seat; a provider dearer per call than
+# PRICE_GAP times the seat's cheapest is never used for them (CheapSeatDown when the cheap ones are down)
+CHEAPEST_ROLES = {"describer", "cheap_classifier", "auditor"}
+HISTORY_MIN_CALLS = 3  # real paid calls of one role, provider and model before their mean replaces usd_per_call
 IMAGE_DETAILS = {"high", "low", "auto"}  # OpenAI style image_url.detail values
 _BAD_DETAILS_LOGGED: set[str] = set()
 # per role default LLM timeout in seconds; long form writing needs minutes, others keep the old default
@@ -234,10 +243,18 @@ class Seats:
             return res
 
         provs = [p for p in self.providers_for(role) if p.configured]
+        dear: list[ProviderSpec] = []
+        if provs and role in CHEAPEST_ROLES:
+            provs, dear = self.cheapest(role, provs)
+            if not provs:
+                raise CheapSeatDown(role, stage, [], [p.name for p in dear])
         if provs:
             try:
                 return self.client.call(role, stage, provs, cached if cache_req is not None else live, note)
             except ProviderError as e:
+                if role in CHEAPEST_ROLES and all(
+                        HEALTH.is_held(f"{p.name}:{p.model}") for p in provs):
+                    raise CheapSeatDown(role, stage, [p.name for p in provs], [p.name for p in dear]) from e
                 if not self.settings.allow_mock_fallback:
                     self.log.warn("role failed on every real provider", role=role, stage=stage, error=str(e)[:400])
                     raise
@@ -250,6 +267,42 @@ class Seats:
         self.client._record(role, stage, mock.MOCK_SPEC, ok=True, latency=0.0, note=note or "mock", mock=True,
                             units=res.units, unit_kind=res.unit_kind)
         return res
+
+    def unit_prices(self, role: str, provs: list[ProviderSpec]) -> list[Optional[float]]:
+        """USD per call of role on each provider: the mean of this tracker's real paid calls for the same role,
+        provider and model once there are HISTORY_MIN_CALLS of them, else options.usd_per_call, else None."""
+        paid: dict[tuple[str, str], list[float]] = {}
+        for e in list(self.tracker.report.entries):
+            if e.role == role and e.ok and not e.mock and e.unit_kind != "reply_cache" and e.cost_usd > 0:
+                paid.setdefault((e.provider, e.model), []).append(e.cost_usd)
+        out: list[Optional[float]] = []
+        for p in provs:
+            seen = paid.get((p.name, p.model), [])
+            opt = p.options.get("usd_per_call")
+            out.append(sum(seen) / len(seen) if len(seen) >= HISTORY_MIN_CALLS
+                       else float(opt) if isinstance(opt, (int, float)) and not isinstance(opt, bool) else None)
+        return out
+
+    def cheapest(self, role: str, provs: list[ProviderSpec]) -> tuple[list[ProviderSpec], list[ProviderSpec]]:
+        """(providers within PRICE_GAP times the cheapest priced one, cheapest first with ties in config order;
+        the rest). An entry with no price is never used for the role, logged once; a seat with a single provider uses it
+        (one provider is its own cheapest)."""
+        priced = []
+        for i, (p, price) in enumerate(zip(provs, self.unit_prices(role, provs))):
+            if price is None:
+                self._log_once("no_unit_price", "provider has no usd_per_call for a cheapest-provider role, skipped",
+                               f"{role}:{p.name}:{p.model}")
+            else:
+                priced.append((price, i, p))
+        if not priced and len(provs) == 1:  # one provider is its own cheapest
+            return list(provs), []
+        floor = min((x[0] for x in priced), default=0.0)
+        cheap = [p for price, _, p in sorted(priced, key=lambda x: x[:2]) if price <= PRICE_GAP * floor]
+        dear = [p for p in provs if p not in cheap]
+        for p in dear:
+            self._log_once("dear_skipped", f"provider more than {PRICE_GAP:g} times the seat's cheapest per call, "
+                           "skipped for this role", f"{role}:{p.name}:{p.model}")
+        return cheap, dear
 
     def note_fallback(self, role: str, stage: str, scene_id: str, reason: str) -> None:
         """Record that heuristics made a scene's part of the work although `role` has a configured real

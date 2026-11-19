@@ -13,7 +13,10 @@ content full frame (or on the next shot) instead. The reason is returned in word
 """
 from __future__ import annotations
 
+import os
+import threading
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Optional, Sequence
 
 import cv2
@@ -27,6 +30,10 @@ SUBJECT_MAX = 0.2  # a subject core wider than this share of the picture is not 
 SUBJECT_OVERLAP = 0.05  # share of the subject's heart a panel may cover
 HEART = 0.6  # a panel may cover at most this share of the subject core
 MARGIN = 0.035  # gap between the panel and the picture edge, share of frame width
+FACE_MIN = 0.02  # a face smaller than this share of the picture height is ignored by crops
+FACE_PAD = 0.15  # each face box grows by this share of its size, so hair and chin stay inside a crop
+FACE_W = 800  # width a picture is searched for faces at (a FACE_MIN face is still a dozen pixels)
+_LOCAL = threading.local()
 
 
 @dataclass
@@ -62,25 +69,108 @@ def rect_for(position: str, size: tuple[float, float], visible: tuple[float, flo
 
 # ---------------------------------------------------------------- analysis
 
-def _faces(grey: np.ndarray) -> list[tuple[int, int, int, int]]:
+def _profile_cascade() -> Any:
+    """Profile face cascade, built once per thread (None when OpenCV has none)."""
+    if not hasattr(_LOCAL, "profile"):
+        c = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
+        _LOCAL.profile = None if c.empty() else c
+    return _LOCAL.profile
+
+
+def _faces(grey: np.ndarray, min_share: float = 1 / 25) -> list[tuple[int, int, int, int]]:
     try:
         from ...judge.prefilter import face_cascade
         casc = face_cascade()
     except Exception:  # noqa: BLE001  no cascade: no face boxes
         return []
-    h = grey.shape[0]
-    found = casc.detectMultiScale(grey, scaleFactor=1.1, minNeighbors=5, minSize=(max(12, h // 25),) * 2)
+    side = max(12, int(grey.shape[0] * min_share))
+    found = casc.detectMultiScale(grey, scaleFactor=1.1, minNeighbors=5, minSize=(side, side))
     out = [tuple(int(v) for v in b) for b in (found if len(found) else [])]
     try:  # profile faces too: a face turned sideways is still a face
-        prof = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
-        if not prof.empty():
+        prof = _profile_cascade()
+        if prof is not None:
             for flip in (False, True):
                 g = cv2.flip(grey, 1) if flip else grey
-                for x, y, w, hh in prof.detectMultiScale(g, 1.1, 6, minSize=(max(12, h // 25),) * 2):
+                for x, y, w, hh in prof.detectMultiScale(g, 1.1, 6, minSize=(side, side)):
                     out.append((grey.shape[1] - x - w if flip else x, y, w, hh))
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+Box = tuple[float, float, float, float]
+
+
+def face_boxes(grey: np.ndarray) -> tuple[Box, ...]:
+    """Every face of at least FACE_MIN of the height in a grey picture: padded 0..1 boxes (x0, y0, x1, y1)."""
+    h, w = grey.shape[:2]
+    if w != FACE_W:
+        grey = cv2.resize(grey, (FACE_W, max(1, round(h * FACE_W / w))), interpolation=cv2.INTER_AREA)
+        h, w = grey.shape[:2]
+    out = []
+    for x, y, fw, fh in _faces(grey, FACE_MIN):
+        px, py = fw * FACE_PAD, fh * FACE_PAD
+        out.append((max(0.0, (x - px) / w), max(0.0, (y - py) / h), min(1.0, (x + fw + px) / w),
+                    min(1.0, (y + fh + py) / h)))
+    return tuple(out)
+
+
+@lru_cache(maxsize=2048)
+def _file_faces(path: str, mtime: float) -> tuple[Box, ...]:
+    from PIL import Image, ImageOps
+    try:
+        with Image.open(path) as im:
+            im.draft("L", (2 * FACE_W, 2 * FACE_W))  # a JPEG decodes at a fraction of its size
+            grey = np.asarray(ImageOps.exif_transpose(im).convert("L"))
+    except Exception:  # noqa: BLE001  unreadable: no face boxes
+        return ()
+    return face_boxes(grey)
+
+
+def faces_of(path: str) -> tuple[Box, ...]:
+    """Faces of a picture file in the 0..1 space of the whole, uncropped picture; one detection per file."""
+    try:
+        mtime = os.stat(path).st_mtime
+    except OSError:
+        return ()
+    return _file_faces(str(path), mtime)
+
+
+def faces_in_crop(faces: Sequence[Box], crop: Optional[Sequence[float]]) -> tuple[Box, ...]:
+    """Face boxes in the 0..1 space of crop [x, y, w, h] of the picture; faces wholly outside it are left out."""
+    if not crop:
+        return tuple(faces)
+    x, y, w, h = crop
+    out = []
+    for a, b, c, d in faces:
+        box = ((a - x) / w, (b - y) / h, (c - x) / w, (d - y) / h)
+        if box[2] > 0 and box[0] < 1 and box[3] > 0 and box[1] < 1:
+            out.append(tuple(min(1.0, max(0.0, v)) for v in box))
+    return tuple(out)  # type: ignore[return-value]
+
+
+def face_origin(faces: Sequence[Box], cw: float, ch: float,
+                focus: tuple[float, float] = (0.5, 0.5)) -> Optional[tuple[float, float]]:
+    """Top left (x, y) of a cw x ch window (0..1 of the picture) as near to centring on focus as holds every
+    face box whole, or None when no window of that size can."""
+    out = []
+    for size, f, lo_k, hi_k in ((cw, focus[0], 0, 2), (ch, focus[1], 1, 3)):
+        lo, hi = 0.0, max(0.0, 1.0 - size)
+        for b in faces:
+            lo, hi = max(lo, b[hi_k] - size), min(hi, b[lo_k])
+        if lo > hi + 1e-6:
+            return None
+        out.append(min(max(f - size / 2, lo), hi))
+    return out[0], out[1]
+
+
+def cover_window(faces: Sequence[Box], src_aspect: float, dst_aspect: float,
+                 focus: tuple[float, float] = (0.5, 0.5)) -> Optional[Box]:
+    """The dst_aspect window (x, y, w, h, 0..1) that covers a src_aspect picture and keeps every face whole,
+    or None when no window of that shape can."""
+    cw, ch = (dst_aspect / src_aspect, 1.0) if src_aspect > dst_aspect else (1.0, src_aspect / dst_aspect)
+    o = face_origin(faces, cw, ch, focus)
+    return None if o is None else (o[0], o[1], cw, ch)
 
 
 def _text(rgb: np.ndarray) -> list[tuple[float, float, float, float]]:
@@ -240,4 +330,5 @@ def debug_view(frame: np.ndarray, a: Analysis, p: Placement, W: int, H: int) -> 
     return out
 
 
-__all__ = ["POSITIONS", "Analysis", "Placement", "analyse", "choose", "place_panel", "rect_for", "debug_view"]
+__all__ = ["POSITIONS", "Analysis", "Placement", "analyse", "choose", "place_panel", "rect_for", "debug_view",
+           "faces_of", "face_boxes", "faces_in_crop", "face_origin", "cover_window"]

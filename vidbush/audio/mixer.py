@@ -293,6 +293,10 @@ def build_sound(narration: Narration, script: Script, shotlist: ShotList, brand:
     quiets = sp.quiet_spans(shotlist, plan_v2)
     speech = sp.speech_spans(narration)
     nar = read_audio(narration.audio_path, SR, 2)
+    if len(nar) != n:  # the shot list sets the runtime: say when the narration is padded or cut to it
+        (log.warn if len(nar) > n else log.info)(
+            "narration cut to the shot list" if len(nar) > n else "narration padded with silence to the shot list",
+            narration_s=round(len(nar) / SR, 3), shotlist_s=round(duration, 3))
     nar = np.pad(nar, ((0, max(0, n - len(nar))), (0, 0)))[:n]
     nar_lufs = float(measure(narration.audio_path)["lufs"])
     rel = lambda db: nar_lufs + db  # noqa: E731  absolute LUFS of a level relative to the narration

@@ -21,12 +21,14 @@ def scene():
 
 
 ANCHORS = {"c001": "ship", "c002": "forty men", "c003": "Alaska became a state"}
+SETTING = {"period": "1959", "season": "winter", "place": "Gulf of Alaska", "circumstance": "a ship at sea"}
 
 
 def valid() -> dict:
     return {"scene_purpose": "the voyage north",
             "clauses": [{"id": cid, "treatment": "picture", "subject": f"subject {cid}", "anchor": a,
-                         "queries": {"stock": ["ship at sea"]}} for cid, a in ANCHORS.items()]}
+                         "setting": dict(SETTING), "queries": {"stock": ["ship at sea"]}}
+                        for cid, a in ANCHORS.items()]}
 
 
 def by_id(reply: dict, cid: str) -> dict:
@@ -87,6 +89,19 @@ def _route_no_presentation(r):
     by_id(r, "c001").update(treatment="route_map", layout={"elements": [{"text": "Seattle", "anchor": "ship"}]})
 
 
+def _no_setting(r):
+    del by_id(r, "c001")["setting"]
+
+
+def _no_place(r):
+    by_id(r, "c002")["setting"]["place"] = " "
+
+
+def _types_narration(r):
+    by_id(r, "c003").update(treatment="date_title",
+                            layout={"elements": [{"text": "Alaska became a state", "anchor": "Alaska became a state"}]})
+
+
 @pytest.mark.parametrize("mutate,problem", [
     (_missing, "These clauses are missing: c002"),
     (_unknown, "treatment 'dance' is not one of"),
@@ -96,6 +111,9 @@ def _route_no_presentation(r):
     (_no_unit, "the number '40' needs its unit"),
     (_long_hold, f"over the {V.HOLD_MAX_S:g} s limit"),
     (_route_no_presentation, "route_map needs presentation"),
+    (_no_setting, "c001: setting needs period and place"),
+    (_no_place, "c002: setting needs period and place"),
+    (_types_narration, "types out the narration"),
 ])
 def test_each_problem_is_reported(scene, mutate, problem):
     script, nar, cl = scene
@@ -103,6 +121,33 @@ def test_each_problem_is_reported(scene, mutate, problem):
     mutate(r)
     _, errors = D.validate(r, cl, nar)
     assert any(problem in e for e in errors), errors
+
+
+def test_setting_is_normalised_and_a_hold_needs_none(scene):
+    script, nar, cl = scene
+    r = valid()
+    by_id(r, "c001")["setting"] = {"period": " 1959 ", "place": "Seattle", "extra": "x"}
+    by_id(r, "c002").pop("setting")
+    by_id(r, "c002").update(treatment="hold", reason="same ship")
+    plans, errors = D.validate(r, cl, nar)
+    assert errors == []
+    assert plans[0]["setting"] == {"period": "1959", "season": "", "place": "Seattle", "circumstance": ""}
+
+
+def test_types_narration_needs_four_words_in_a_row_without_a_digit():
+    spoken = "In nineteen fifty-nine Alaska became a state"
+    assert D.types_narration("Alaska became a state", spoken)
+    assert D.types_narration("ALASKA BECAME A STATE!", spoken)
+    assert not D.types_narration("Alaska became state", spoken)  # three words in a row
+    assert not D.types_narration("Alaska became a state 1959", spoken)  # a number adds what is not heard
+    assert not D.types_narration("Juneau, Alaska", spoken)
+
+
+def test_a_short_label_from_the_narration_is_accepted(scene):
+    script, nar, cl = scene
+    r = valid()
+    by_id(r, "c003").update(treatment="date_title", layout={"elements": [{"text": "1959", "anchor": "nineteen"}]})
+    assert D.validate(r, cl, nar)[1] == []
 
 
 def run(script, nar, cl, replies):
@@ -146,6 +191,18 @@ def test_repair_after_retries_missing_becomes_hold_and_long_hold_splits(scene):
     assert plans[2]["grammar"] == ["sequence"]
     assert plans[2]["subject"] == "subject c001"
     assert "hold over the limit split into a new picture" in plans[2]["repairs"]
+
+
+def test_a_hold_split_by_repair_keeps_the_heads_setting(scene):
+    """The repaired plan must validate: the split picture is the same subject, so it is in the same setting."""
+    script, nar, cl = scene
+    bad = valid()
+    _long_hold(bad)
+    for cid in ("c002", "c003"):
+        by_id(bad, cid).pop("setting")  # a hold has no setting of its own
+    plans, _ = D.validate(bad, cl, nar)
+    plans = D.repair(plans, cl, nar)
+    assert plans[2]["treatment"] == "picture" and plans[2].get("setting") == plans[0]["setting"]
     _, errors = D.validate({"scene_purpose": "x", "clauses": plans}, cl, nar)
     assert errors == []
 

@@ -23,10 +23,10 @@ longer passage. House colours: amber marks, ink chips, paper type.
 
 Readable or not: a mark is only made where the marked text reaches the type floor (34 px at 1080p) on screen
 at no more than MAX_UP times the scan's own resolution. In a panel too small for that (panel_share sizes the
-panel so it is, up to about half the frame) the document is shown only for its look, with a note. When the
-quoted words are not on the page: the page with a slow push and the quotation set beside it (full frame) or
-the page for its look (panel). No real document (missing, a clip, or generated, which make_job refuses): the
-quotation alone on the ink ground.
+panel so it is, up to about half the frame) the document is shown only for its look, with a note. Evidence
+whose quoted words are not legible on the page, or no real document still (missing, a clip, or generated,
+which make_job refuses), makes the layout incomplete (job.missing): it is dropped and the shot keeps its
+picture. The quotation is never typed on screen in place of the page.
 """
 from __future__ import annotations
 
@@ -44,10 +44,10 @@ import numpy as np
 
 from ...models import LayoutKind
 from .. import easing as ez
-from ..house import MIN_BODY_PX, MIN_LABEL_PX
-from ..textdraw import blit, rect, scaled
+from ..house import MIN_LABEL_PX
+from ..textdraw import blit, rect
 from . import register
-from .base import LayoutComp, _still, drift, framed
+from .base import LayoutComp, _still
 from .timing import NEVER, anchor_span, tokens
 
 TILE = 1024  # OCR tile side (full resolution pixels); the engine detects at 640, so text is read at 1.6x down
@@ -472,7 +472,6 @@ class DocumentFocus(LayoutComp):
         doc, quote, src = job.first("document"), job.first("quote"), job.first("source")
         self.quote = quote if quote and quote[2].appear < NEVER / 10 else None
         self.qtext = self.quote[1].text.strip() if self.quote else ""
-        self.times = word_times(job, self.quote[2]) if self.quote else []
         self.floor = MIN_LABEL_PX * self.OH / 1080.0
         self.fit_ok = True
         self.targets: list[Target] = []
@@ -481,17 +480,12 @@ class DocumentFocus(LayoutComp):
             self.src = (self.label(src[1].text, 30, "paper", "Medium", caps=False,
                                    max_w=self.bw - 2 * self.px(14), lines=2, floor=MIN_LABEL_PX), src[2])
         ref = job.pictures.get(doc[0]) if doc else None
-        self.mode = "quote_only"
-        if doc is None or ref is None:
-            job.notes.append("document_focus: no real document picture (missing or generated): the quotation alone")
-        elif ref.media != "image":
-            job.notes.append("document_focus: the document is a clip, not a still: the quotation alone")
-        else:
-            self.img = _still(ref.path)
-            self._setup_page(ref.path)
-        if self.mode in ("quote_only", "beside"):
-            self._setup_set_quote()
-        elif self.purpose == "evidence" and self.src is None:
+        if doc is None or ref is None or ref.media != "image":
+            job.missing.append("document_focus: no real document still (missing, generated or a clip)")
+            return
+        self.img = _still(ref.path)
+        self._setup_page(ref.path)
+        if self.purpose == "evidence" and self.src is None:
             job.notes.append("document_focus: evidence shown without a source label (none given)")
 
     # ------------------------------------------------------------ the page
@@ -545,15 +539,8 @@ class DocumentFocus(LayoutComp):
                 job.notes.append(f"document_focus: too small to read even at {MAX_UP:g}x the scan: "
                                  + ", ".join(f"'{s}'" for s in small) + " not marked")
         if not self.targets and self.qtext and self.purpose == "evidence" and self.fit_ok:
-            if self.panel:
-                job.notes.append("document_focus: the quoted words are not legible on the page: shown for its "
-                                 "look only in the panel")
-            else:
-                self.mode = "beside"
-                job.notes.append("document_focus: the quoted words are not legible on the page: the document "
-                                 "with the quotation beside it")
-                return
-        self.mode = "page"
+            job.missing.append("document_focus: the quoted words are not legible on the page")
+            return
         self._plan_camera()
         self._build_levels()
         self._build_masks()
@@ -824,44 +811,6 @@ class DocumentFocus(LayoutComp):
         self._ink(frame, [pts], 0.5 * op, "line", th + 4, self.house.rgb("ink"))
         self._ink(frame, [pts], op, "line", th)
 
-    # ------------------------------------------------------------ not found / no document: the quotation set
-
-    def _setup_set_quote(self) -> None:
-        beside = self.mode == "beside"
-        tw = self.bw * (0.46 if beside else 0.8)
-        text = f"“{self.qtext}”" if self.qtext else ""
-        self.qspr = self.label(text, 96, "paper", "SemiBold", caps=False, max_w=tw, lines=4, floor=MIN_BODY_PX,
-                               align="left" if beside else "center") if text else None
-        if beside:
-            dw, dh = self.bw * 0.46, self.bh * 0.96
-            self.doc = framed(self.img, dw, dh, self.house, self.k, fit=True)
-
-    def _set_quote(self, frame: np.ndarray, t: float) -> None:
-        beside = self.mode == "beside"
-        x0, y0, x1, y1 = self.box
-        tx = x0
-        if beside:
-            o = ez.ease_out_cubic(ez.progress(t, 0.0, 0.5))
-            s = 1.0 + 0.05 * ez.ease_in_out_sine(ez.clamp01(t / max(self.dur, 1e-3)))  # the slow push on the page
-            d = scaled(self.doc, s)
-            blit(frame, d, x0 + (self.bw * 0.48 - d.w) / 2, y0 + (self.bh - d.h) / 2, o)
-            tx = x0 + self.bw * 0.53
-        q = self.quote[2] if self.quote else None
-        total = (self.qspr.h if self.qspr is not None else 0) + (self.src[0].h + self.px(40) if self.src else 0)
-        ty = y0 + (self.bh - total) / 2
-        if self.qspr is not None and q is not None:
-            o = self.settle(t, q)
-            x = tx if beside else (self.W - self.qspr.w) / 2
-            blit(frame, self.qspr, x, ty + self.px(16) * (1 - o), o)
-            p = read_progress(t, self.times)  # the amber rule under the quotation grows as it is read
-            if p > 0:
-                blit(frame, rect(self.qspr.w * p, max(4, int(5 * self.OH / 1080)), self.house.rgb("accent")),
-                     x, ty + self.qspr.h + self.px(14))
-        if self.src is not None:
-            spr, sc = self.src
-            x = tx if beside else (self.W - spr.w) / 2
-            blit(frame, spr, x, ty + total - spr.h, self.settle(t, sc))
-
     # ------------------------------------------------------------ frame
 
     def fits(self) -> bool:
@@ -869,11 +818,6 @@ class DocumentFocus(LayoutComp):
         return self.fit_ok
 
     def draw(self, frame: np.ndarray, t: float) -> None:
-        if self.mode != "page":
-            self._set_quote(frame, t)
-            if self.mode == "quote_only":
-                frame[:] = drift(frame, t, self.dur, self.house.drift)  # never still
-            return
         s, c = self._page(frame, t)
         self._marks(frame, t, s, c)
         if self.src is not None:

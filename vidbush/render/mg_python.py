@@ -24,7 +24,6 @@ from typing import Any, Callable, Optional
 
 import cv2
 import numpy as np
-from pydantic import ValidationError
 
 from ..mg import easing as ez
 from ..mg.palettes import get_palette, mix
@@ -63,7 +62,7 @@ TNUM = ["tnum"]
 # ---------------------------------------------------------------- entry point
 
 def render_spec_python(spec: MotionSpec, out_path: Path, alpha: bool, settings: Any) -> Path:
-    """Render spec to out_path (mp4 or alpha mov). Invalid payloads fall back to a text_overlay."""
+    """Render spec to out_path (mp4 or alpha mov). An invalid payload raises: nothing is drawn in its place."""
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     comp = build_comp(spec, alpha)
@@ -79,21 +78,9 @@ def render_spec_python(spec: MotionSpec, out_path: Path, alpha: bool, settings: 
     return out_path
 
 
-def fallback_spec(spec: MotionSpec, text: str) -> MotionSpec:
-    """A text_overlay carrying `text`, same size, timing and palette as spec."""
-    payload = TextPayload(title=(text or spec.kind.value.replace("_", " ")).strip()[:160], position="center")
-    return spec.model_copy(update={"kind": MotionKind.text_overlay, "payload": payload.model_dump()})
-
-
 def build_comp(spec: MotionSpec, alpha: bool) -> CompBase:
-    """Composition object for spec; a payload that does not validate becomes a text_overlay."""
-    try:
-        payload = spec.typed_payload()
-    except (ValidationError, TypeError, ValueError):
-        raw = spec.payload if isinstance(spec.payload, dict) else {}
-        title = str(raw.get("title") or raw.get("label") or "")
-        spec = fallback_spec(spec, title)
-        payload = spec.typed_payload()
+    """Composition object for spec; a payload that does not validate raises (never a text card of its title)."""
+    payload = spec.typed_payload()
     from ..mg.inset import InsetComp, is_inset
     cls = _registry()[spec.kind]
     if is_inset(spec):  # map or chart over the picture: framed panel, not a full frame

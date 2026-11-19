@@ -1,4 +1,4 @@
-"""route_map and document_focus: phrase finding on a page, the fallback, route cue timing."""
+"""route_map and document_focus: phrase finding on a page, what makes them incomplete, route cue timing."""
 from __future__ import annotations
 
 import pytest
@@ -55,26 +55,25 @@ def _doc_job(path: str, source: str, quote: str) -> LayoutJob:
     return job
 
 
-def test_fallback_when_phrase_absent(page):
-    comp = DocumentFocus(_doc_job(page, "wikimedia", "Texas no longer largest"), 640, 360)
-    assert comp.mode == "beside"
-    comp.render(60)
+def test_quote_not_on_the_page_is_incomplete(page):
+    job = _doc_job(page, "wikimedia", "Texas no longer largest")
+    DocumentFocus(job, 640, 360)
+    assert any("not legible" in m for m in job.missing)  # dropped, never the quotation typed beside the page
 
 
 def test_focus_when_phrase_present(page):
     job = _doc_job(page, "wikimedia", "territory shall become a state")
     comp = DocumentFocus(job, 1280, 720)
-    assert comp.mode == "page"
+    assert job.missing == []
     assert [t.form for t in comp.targets] == ["highlight"]
     comp.render(10), comp.render(100)
 
 
-def test_no_document_quote_only(page):
+def test_no_document_is_incomplete(page):
     job = _doc_job(page, "wikimedia", "territory shall become a state")
     job.pictures.clear()  # a generated picture never reaches job.pictures (make_job refuses it)
-    comp = DocumentFocus(job, 640, 360)
-    assert comp.mode == "quote_only"
-    assert any("quotation alone" in n for n in job.notes)
+    DocumentFocus(job, 640, 360)
+    assert any("no real document" in m for m in job.missing)  # never the quotation alone
 
 
 def test_read_progress_follows_words():
@@ -131,7 +130,7 @@ def test_unresolved_place_dropped():
     job = LayoutJob(spec=spec, cues=[Cue(0, 0.5, 0.75, 1.0, True), Cue(1, 1.5, 1.75, 2.0, True)], duration=3.0)
     comp = RouteMap(job, 640, 360, True)
     assert [mk.label for mk in comp.map.p.markers] == ["Nome"]
-    assert any("Qwxzyville" in n and "dropped" in n for n in job.notes)
+    assert any("Qwxzyville" in m and "did not resolve" in m for m in job.missing)  # the stage drops the map
 
 
 def _marks_job(path: str, purpose=None, presentation=None) -> LayoutJob:
@@ -181,7 +180,7 @@ def test_camera_never_still(page):
 def test_period_has_no_marks(page):
     job = _marks_job(page, purpose="period")
     comp = DocumentFocus(job, 1920, 1080)
-    assert comp.targets == [] and comp.mode == "page"
+    assert comp.targets == [] and job.missing == []
     assert any("period" in n for n in job.notes)
 
 

@@ -133,11 +133,37 @@ def stage_judge(ctx: StageContext) -> list[str]:
     from ..plan.live import is_clause, pick_clause
     shotlist = ctx.load("shotlist", ShotList)
     if is_clause(ctx.profile):  # the picker: describe once, pick by comparison, the ladder (judge/pick_stage)
-        return [str(ctx.save("shotlist", pick_clause(shotlist, ctx)))]
+        return [str(ctx.save("shotlist", apply_trim(pick_clause(shotlist, ctx), ctx)))]
     if "judge" in ctx.extra.get("forced", ()) and not ctx.snapshot_used():
         clear_verdicts(shotlist)  # a project from before snapshots: its working copy holds old verdicts
-    shotlist = judge_and_select(shotlist, ctx)
+    shotlist = apply_trim(judge_and_select(shotlist, ctx), ctx)
     return [str(ctx.save("shotlist", shotlist))]
+
+
+def apply_trim(shotlist: ShotList, ctx: StageContext) -> ShotList:
+    """Excerpt render for review: work/trim.json {"until": seconds} keeps the shots that start before until, so
+    the video ends at the first shot end at or after it (a shot is never split), and shotlist.duration follows;
+    the mix pads or cuts the narration to it and the sound gate checks speech up to it. {"from": seconds} must
+    be 0: a later start would shift the shots to 0 and need the narration offset to follow, which the mixer and
+    captions do not support. Read when judge runs, so a new trim.json needs judge rerun (resume --force judge)."""
+    from ..render.assemble import TRIM_FILE
+    path = ctx.work / TRIM_FILE
+    if not path.exists():
+        return shotlist
+    trim = read_json(path)
+    if float(trim.get("from") or 0) != 0:
+        raise ValueError(f"{path}: only an excerpt from 0 is supported (from must be 0 or absent)")
+    until = trim.get("until")
+    if isinstance(until, bool) or not isinstance(until, (int, float)):
+        raise ValueError(f"{path}: until must be a number of seconds")
+    keep = [s for s in shotlist.shots if s.start < until]
+    if not keep:
+        raise ValueError(f"{path}: until {until} s is before the first shot")
+    if len(keep) == len(shotlist.shots):
+        return shotlist
+    ctx.log.info("excerpt render: shot list trimmed", until=until, end=keep[-1].end, shots=len(keep),
+                 dropped=len(shotlist.shots) - len(keep))
+    return shotlist.model_copy(update={"shots": keep, "duration": keep[-1].end})
 
 
 def stage_visuals(ctx: StageContext) -> list[str]:

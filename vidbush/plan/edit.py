@@ -4,8 +4,8 @@ Every asset in a scene's pool has a description record (vidbush/judge/describe.p
 apart from it what sourcing knows. The picker seat sees the scene's clauses, the records and one numbered
 image per asset, and for each clause picks an asset and the time to play from, or says nothing fits and
 what to search for. Code then checks only what can be checked: Adam's AI rulings (no AI still for a named
-real person, a real event or a document; at most two in a row; each at most 4 s), no accidental repeat of
-an asset, that the picked time range exists, that a named real thing is supported by the record, that a
+real person or a document; none in the opening 15 s; at most two in a row; each at most 4 s), no
+accidental repeat of an asset (at most two shots in a row, never again within 60 s), that the picked time range exists, that a named real thing is supported by the record, that a
 document's quoted words were found on the page, and that a label comes from the record. Problems go back
 to the model once, in plain words; what is still wrong is removed and the clause goes down the ladder
 (vidbush/judge/ladder.py).
@@ -27,7 +27,7 @@ RETRIES = 1
 PICK_KEYS = frozenset(PP.PICK_OUTPUT["picks"][0]) | {"reason"}
 SEAT, FALLBACK_SEAT, TASK, STAGE = "picker", "vision", "plan_pick", "judge"
 FRAME_POS = {"a": 0.2, "b": 0.5, "c": 0.8}  # keyframe letters of source/keyframes.py, kept for old replays
-NO_AI_KINDS = ("person", "event", "document")
+NO_AI_KINDS = ("person", "document")  # Adam: anonymous figures in a real event may be an AI illustration
 MAX_ASSETS = 40  # assets per picker call (one image each): a larger pool is shortlisted before description
 # by how many clause words its sourcing text shares, and the rest are logged; a cost and image-count cap
 OPEN_LICENCE = re.compile(r"public domain|\bcc0\b|\bcc[- ]by\b(?!.*\bn[cd]\b)|creative commons|no known copyright",
@@ -107,9 +107,11 @@ def shot_seconds(shot: dict) -> float:
 def clause_row(shot: dict, narration: Narration) -> dict:
     p, cl = shot["plan"], shot["clauses"]
     lo, hi = cl[0].words[0], cl[-1].words[1]
-    row = {"clause": cl[0].id, "seconds": round(shot_seconds(shot), 2),
+    row = {"clause": cl[0].id, "at_s": round(cl[0].start, 1), "seconds": round(shot_seconds(shot), 2),
            "words": " ".join(w.text for w in narration.words[lo:hi + 1]),
            "subject": p.get("subject", ""), "treatment": p["treatment"], "needs_pick": needs_pick(p)}
+    if p.get("setting"):
+        row["setting"] = p["setting"]
     if needs_document(p):
         lay = p.get("layout") or {}
         row["needs_document_pick"] = True
@@ -277,9 +279,28 @@ def time_problem(c: Candidate, rec: dict, start: Any, seconds: float) -> tuple[O
     return round(max(c.in_point, t), 3), None
 
 
+def ai_allowed_at(start: float) -> bool:
+    return start >= V.AI_OPENING_S - 1e-6
+
+
+def alternate(p: dict, field: str, pool: list[Candidate], recs: dict[str, dict], seconds: float,
+              taken: Any) -> Optional[tuple[Candidate, Any]]:
+    """The picker's fitting or loose asset for a clause, (candidate, start), when it is real, clean, plays long
+    enough and is not taken (taken(key) says the asset is already shown elsewhere); else None."""
+    c = _cand_at(pool, p.get(field)) if p.get(field) is not None else None
+    if c is None or is_ai(c) or DS.blocked(recs.get(c.id, {})) or taken(asset_key(c)):
+        return None
+    t, why = time_problem(c, recs.get(c.id, {}), p.get(f"{field}_start"), seconds)
+    if why or (c.media != "video" and seconds > V.HOLD_MAX_S + 1e-6):
+        return None
+    return c, (t if t is not None else "a")
+
+
 def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, dict],
-          used_before: dict[str, str], ai_tail: int) -> tuple[list[dict], list[str]]:
-    """Normalised picks, one per shot in order, and plain-language problems."""
+          used_before: dict[str, str], ai_tail: int,
+          shown_end: Optional[dict[str, float]] = None) -> tuple[list[dict], list[str]]:
+    """Normalised picks, one per shot in order, and plain-language problems. shown_end: asset key to the end
+    time of its last showing before this scene (the 60 s repeat rule)."""
     errors: list[str] = []
     items = raw.get("picks") if isinstance(raw, dict) else None
     if not isinstance(items, list):
@@ -289,13 +310,15 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
     picks: list[dict] = []
     used: dict[str, str] = {}
     run = ai_tail
-    prev_key, prev_secs = None, 0.0
+    prev_key, prev_secs, same_run = None, 0.0, 0
+    last_end = dict(shown_end or {})
 
     def seen(key: str) -> Optional[str]:
         return used.get(key) or used_before.get(key)
 
     for s in shots:
         cid = s["clauses"][0].id
+        t0 = s["clauses"][0].start
         got = by.get(cid) or {"clause": cid, "pick": None, "reason": "no answer for this clause"}
         # only the picker's own fields: fallbacks, overlay text and internal keys belong to the ladder and code
         p = {k: v for k, v in got.items() if k in PICK_KEYS}
@@ -324,6 +347,13 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
             if seen(key) and not adjacent and not p.get("callback"):
                 errors.append(f"{cid}: asset {n} is already used at {seen(key)}; pick another, or mark it a "
                               f"callback and say what changed.")
+            elif not adjacent and key in last_end and t0 - last_end[key] < V.REPEAT_GAP_S:
+                errors.append(f"{cid}: asset {n} was on screen {t0 - last_end[key]:.0f} s ago; an asset is never "
+                              f"shown again within {V.REPEAT_GAP_S:g} s. Pick another.")
+                p["_too_soon"] = True
+            if adjacent and same_run + 1 > V.REPEAT_RUN_MAX:
+                errors.append(f"{cid}: asset {n} would be its shot number {same_run + 1} in a row; one asset serves "
+                              f"at most {V.REPEAT_RUN_MAX} shots in a row. Pick another.")
             on_screen = dur + (prev_secs if adjacent else 0.0)
             if on_screen > _limit(cand) + 1e-6:
                 errors.append(f"{cid}: asset {n} would stay on screen {on_screen:.1f} s; the limit is "
@@ -333,6 +363,9 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
                 if rt.get("kind") in NO_AI_KINDS:
                     errors.append(f"{cid}: asset {n} is an AI still, never allowed for a real {rt['kind']} "
                                   f"({rt.get('name', '')}).")
+                if not ai_allowed_at(t0):
+                    errors.append(f"{cid}: asset {n} is an AI still in the first {V.AI_OPENING_S:g} s of the film; "
+                                  f"never there.")
             elif rt.get("name"):
                 why = identity_supported(rec, rt, str(p.get("identity") or ""), str(p.get("identity_field") or ""))
                 if why:
@@ -344,10 +377,18 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
                               f"only from its title, description, date, page or visible text. Leave it empty.")
                 p["_bad_label"] = True
             used.setdefault(key, cid)
+            same_run = same_run + 1 if adjacent else 1
             prev_key, prev_secs = key, on_screen
+            last_end[key] = s["clauses"][-1].end
         else:
-            prev_key, prev_secs = None, 0.0
+            prev_key, prev_secs, same_run = None, 0.0, 0
             p["label"] = ""
+        for field in ("fitting", "loose"):
+            fc = _cand_at(pool, p.get(field)) if p.get(field) is not None else None
+            if fc is not None and is_ai(fc):
+                errors.append(f"{cid}: {field} {p.get(field)} is an AI still; {field} is always a real asset.")
+        hold = str(p.get("hold") or "").strip().lower()
+        p["hold"] = hold if hold in ("previous", "next") else ""
         if ai_here:
             run += 1
             if run > V.AI_RUN_MAX:
@@ -366,9 +407,12 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
             if ec is None or not 0 <= k < n_els:
                 errors.append(f"{cid}: element pick {ep} names no element of this layout or no asset.")
                 continue
-            if is_ai(ec) and (rt.get("kind") in NO_AI_KINDS or s["plan"]["treatment"] == "name_card"):
-                errors.append(f"{cid}: element {k} cannot be an AI still: this layout shows a real "
-                              f"{rt.get('kind') or 'person'}.")
+            if is_ai(ec) and (rt.get("kind") in NO_AI_KINDS or s["plan"]["treatment"] == "name_card"
+                              or not ai_allowed_at(s["clauses"][0].start)):
+                why = (f"the first {V.AI_OPENING_S:g} s of the film take no AI picture"
+                       if not ai_allowed_at(s["clauses"][0].start) else
+                       f"this layout shows a real {rt.get('kind') or 'person'}")
+                errors.append(f"{cid}: element {k} cannot be an AI still: {why}.")
             if DS.blocked(recs.get(ec.id, {})):
                 errors.append(f"{cid}: element {k} asset {ep.get('pick')} has a mark or subtitles; never pick it.")
             ek = asset_key(ec)
@@ -412,11 +456,12 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
 
 
 def resolve(picks: list[dict], shots: list[dict], ai_tail: int, recs: dict[str, dict],
-            used_before: Optional[dict[str, str]] = None) -> list[dict]:
-    """Remove what is still illegal after the retry; the clause then goes down the ladder. Never adds content."""
+            used_before: Optional[dict[str, str]] = None, pool: Optional[list[Candidate]] = None) -> list[dict]:
+    """Remove what is still illegal after the retry; the clause then goes down the ladder. Never adds content.
+    The picker's fitting and loose assets become p['_fit'] and p['_loose'] ((candidate, start) or None)."""
     run = ai_tail
     used = dict(used_before or {})
-    prev_key, prev_secs = None, 0.0
+    prev_key, prev_secs, same_run = None, 0.0, 0
 
     def drop(p: dict, why: str) -> None:
         p["resolved"] = (p.get("resolved", "") + "; " + why).strip("; ")
@@ -442,8 +487,11 @@ def resolve(picks: list[dict], shots: list[dict], ai_tail: int, recs: dict[str, 
                 drop(p, f"pick {p.get('pick')} removed: {', '.join(DS.blocked(rec))}")
             elif on_screen > _limit(cand) + 1e-6:
                 drop(p, f"pick {p.get('pick')} removed: {on_screen:.1f} s on screen is over the limit")
-            elif is_ai(cand) and (rt.get("kind") in NO_AI_KINDS or run + 1 > V.AI_RUN_MAX):
+            elif is_ai(cand) and (rt.get("kind") in NO_AI_KINDS or run + 1 > V.AI_RUN_MAX
+                                  or not ai_allowed_at(s["clauses"][0].start)):
                 drop(p, f"AI pick {p.get('pick')} removed by the AI rulings")
+            elif p.get("_too_soon") or (adjacent and same_run + 1 > V.REPEAT_RUN_MAX):
+                drop(p, f"pick {p.get('pick')} removed: the same asset within a minute or a third shot in a row")
             elif not is_ai(cand) and rt.get("name") and identity_supported(
                     rec, rt, str(p.get("identity") or ""), str(p.get("identity_field") or "")):
                 drop(p, f"pick {p.get('pick')} removed: the record does not show it is {rt['name']}")
@@ -453,16 +501,18 @@ def resolve(picks: list[dict], shots: list[dict], ai_tail: int, recs: dict[str, 
                     p["resolved"] = (p.get("resolved", "") + f"; label '{p['label']}' removed: not in the record").strip("; ")
                     p["label"] = ""
                 used.setdefault(key, p.get("clause", ""))
+                same_run = same_run + 1 if adjacent else 1
                 prev_key, prev_secs = key, on_screen
             else:
-                prev_key, prev_secs = None, 0.0
+                prev_key, prev_secs, same_run = None, 0.0, 0
         else:
-            prev_key, prev_secs = None, 0.0
+            prev_key, prev_secs, same_run = None, 0.0, 0
         keep = []
         for ep in p.get("element_picks", []):
             ec = ep["_cand"]
             ek = asset_key(ec)
-            if is_ai(ec) and (rt.get("kind") in NO_AI_KINDS or s["plan"]["treatment"] == "name_card"):
+            if is_ai(ec) and (rt.get("kind") in NO_AI_KINDS or s["plan"]["treatment"] == "name_card"
+                              or not ai_allowed_at(s["clauses"][0].start)):
                 continue
             if DS.blocked(recs.get(ec.id, {})):
                 continue
@@ -482,6 +532,9 @@ def resolve(picks: list[dict], shots: list[dict], ai_tail: int, recs: dict[str, 
                 used.setdefault(asset_key(dc), p.get("clause", ""))
         p["filled_by"] = "pick" if p.get("_cand") is not None or not needs_pick(s["plan"]) else ""
         run = run + 1 if (cand is not None and is_ai(cand)) else 0
+    for p, s in zip(picks, shots):  # an alternate is never an asset some pick of the film already shows
+        p["_fit"] = alternate(p, "fitting", pool or [], recs, shot_seconds(s), lambda k: k in used)
+        p["_loose"] = alternate(p, "loose", pool or [], recs, shot_seconds(s), lambda k: k in used)
     return picks
 
 
@@ -507,7 +560,7 @@ def _previous_note(previous: list[dict]) -> list[dict]:
 def pick_call(seats, scene_purpose: str, shots: list[dict], narration: Narration, pool: list[Candidate],
               recs: dict[str, dict], sheet_dir: Path, scene_id: str, used_before: dict[str, str],
               ai_tail: int, previous: list[dict], log: Optional[Callable] = None,
-              tag: str = "") -> tuple[list[dict], list[dict], Any]:
+              tag: str = "", shown_end: Optional[dict[str, float]] = None) -> tuple[list[dict], list[dict], Any]:
     """One picker call (and one retry) for these shots over this pool; returns (picks, attempts, raw)."""
     images = []
     for n, c in enumerate(pool, 1):
@@ -527,20 +580,20 @@ def pick_call(seats, scene_purpose: str, shots: list[dict], narration: Narration
     imgs = [i for i in images if i]
     for attempt in range(RETRIES + 1):
         raw = seats.vision_json(role, TASK, PP.PICK_SYSTEM, prompt, imgs, STAGE, details=["high"] * len(imgs))
-        picks, errors = check(raw, shots, pool, recs, used_before, ai_tail)
+        picks, errors = check(raw, shots, pool, recs, used_before, ai_tail, shown_end)
         attempts.append({"attempt": attempt, "errors": errors})
         if log:
             log(f"{scene_id}{tag} pick attempt {attempt}: {len(errors)} problems, pool {len(pool)}")
         if not errors:
             break
         prompt = PP.pick_retry(base, {k: v for k, v in (raw or {}).items() if k != "_mock"}, errors)
-    return resolve(picks, shots, ai_tail, recs, used_before), attempts, raw
+    return resolve(picks, shots, ai_tail, recs, used_before, pool), attempts, raw
 
 
 def edit_scene(seats, scene_plan: dict, clauses: list[Clause], narration: Narration, old: ShotList,
                sheet_dir: Path, used_before: dict[str, str], ai_tail: int, log=None, *,
                settings: Any = None, extra: Optional[list] = None, previous: Optional[list[dict]] = None,
-               ladder: Optional[Callable] = None) -> dict:
+               ladder: Optional[Callable] = None, shown_end: Optional[dict[str, float]] = None) -> dict:
     shots = shots_of(scene_plan["clauses"], clauses)
     lo, hi = clauses[0].start, clauses[-1].end
     pool_all = scene_pool(old, lo, hi, extra)
@@ -552,7 +605,8 @@ def edit_scene(seats, scene_plan: dict, clauses: list[Clause], narration: Narrat
     if log and dropped:
         log(f"{scene_plan['scene']}: pool shortlisted to {len(pool)} assets, {len(dropped)} left out")
     picks, attempts, raw = pick_call(seats, scene_plan.get("scene_purpose", ""), shots, narration, pool, recs,
-                                     sheet_dir, scene_plan["scene"], used_before, ai_tail, previous or [], log)
+                                     sheet_dir, scene_plan["scene"], used_before, ai_tail, previous or [], log,
+                                     shown_end=shown_end)
     out = {"scene": scene_plan["scene"], "pool": pool, "picks": picks, "attempts": attempts, "records": recs,
            "pool_all": len(pool_all), "blocked": [c.id for c in blocked], "shortlist_dropped": [c.id for c in dropped],
            "mock": bool(isinstance(raw, dict) and raw.get("_mock")), "shots": shots}
@@ -564,7 +618,7 @@ def edit_scene(seats, scene_plan: dict, clauses: list[Clause], narration: Narrat
 def _used_after(e: dict) -> list[tuple[Candidate, str]]:
     out = []
     for p in e["picks"]:
-        for c in [p.get("_cand"), p.get("_fallback_cand"), p.get("_doc")] + [ep["_cand"] for ep in p.get("element_picks", [])]:
+        for c in [p.get("_cand"), p.get("_doc")] + [ep["_cand"] for ep in p.get("element_picks", [])]:
             if c is not None:
                 out.append((c, p["clause"]))
     return out
@@ -573,7 +627,7 @@ def _used_after(e: dict) -> list[tuple[Candidate, str]]:
 def last_picks(e: dict, narration: Narration) -> list[dict]:
     out = []
     for p, s in zip(e["picks"], e["shots"]):
-        c = p.get("_cand") or p.get("_fallback_cand")
+        c = p.get("_cand")
         if c is None:
             continue
         rec = e["records"].get(c.id, {})
@@ -588,14 +642,19 @@ def edit_all(seats, scene_plans: list[dict], clauses: list[Clause], narration: N
              ladder: Optional[Callable] = None) -> list[dict]:
     out = []
     used: dict[str, str] = {}
+    shown_end: dict[str, float] = {}
     ai_tail = 0
     previous: list[dict] = []
     for sp in scene_plans:
         cl = [c for c in clauses if c.scene == sp["scene"]]
         e = edit_scene(seats, sp, cl, narration, old, sheet_dir, used, ai_tail, log, settings=settings,
-                       extra=extra, previous=previous, ladder=ladder)
+                       extra=extra, previous=previous, ladder=ladder, shown_end=shown_end)
         for c, cid in _used_after(e):
             used.setdefault(asset_key(c), cid)
+        for p, s in zip(e["picks"], e["shots"]):
+            for c in [p.get("_cand"), p.get("_doc")] + [ep["_cand"] for ep in p.get("element_picks", [])]:
+                if c is not None:
+                    shown_end[asset_key(c)] = s["clauses"][-1].end
         ai_tail = 0
         for p in reversed(e["picks"]):
             c = p.get("_cand")

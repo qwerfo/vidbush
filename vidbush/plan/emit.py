@@ -2,15 +2,15 @@
 
 One shot per clause or merged clause (a clause plus its holds). Start and end come from the clause cuts.
 Type comes from the pick (video footage, photograph, AI still) or, for a full-frame layout, motion_graphic.
-A layout travels in Shot.layout (kind, presentation, elements); a motion_graphic shot also carries a plain
-title_card placeholder in Shot.motion so the current renderer can show it until the layouts lane lands.
+A layout travels in Shot.layout (kind, presentation, elements) and is drawn by the layouts renderer; the
+picker's real alternates ride on the shot (flags alt:fitting, alt:loose) for when a layout cannot be drawn.
 """
 from __future__ import annotations
 
 from typing import Any, Optional
 
 from ..models import (LAYOUT_ROLES, PANEL_LAYOUT_KINDS, Candidate, LayoutElement, LayoutKind, LayoutSpec,
-                      MotionKind, MotionSpec, Narration, RealThing, Script, Shot, ShotList, ShotType)
+                      Narration, RealThing, Script, Shot, ShotList, ShotType)
 from . import anchors as A
 from . import vocab as V
 from .clauses import Clause
@@ -18,7 +18,9 @@ from .edit import in_point, is_ai, needs_pick, shots_of
 
 QUERY_CAP = 8
 LAYOUT_LEAD_S = 0.25  # a full layout's cut comes this long before its first anchored word
-LAYOUT_MIN_S = 3.0  # layouts lane FULL_MIN_S: a full layout shorter than this is not read
+LAYOUT_MIN_S = V.LAYOUT_MIN_S  # Adam: every layout and panel is visible for at least 3 s
+LATE_WORDS_S = 0.75  # a full layout whose first word comes later than this after its cut shows bare ground
+ALT_FLAGS = {"_fit": "alt:fitting", "_loose": "alt:loose"}  # the picker's real alternates kept on the shot
 # order in which per-class queries are flattened into Shot.queries for the current sourcing stage
 CLASS_ORDER = ("encyclopedic", "archive", "web_image", "newspaper", "web_video", "stock")
 
@@ -137,17 +139,87 @@ def start_full_layouts_on_words(shots: list[Shot], first_word: dict[str, float],
         s.flags.append("cut_on_layout_words")
 
 
+def ai_brief(plan: dict) -> str:
+    """What an AI still must show: the clause's meaning (who does what) in its setting (where, when, season,
+    light), because a still of the nouns alone shows the wrong situation (Adam)."""
+    st = plan.get("setting") or {}
+    where = ", ".join(x for x in (st.get("place"), st.get("period"),
+                                  st.get("season") if st.get("season") not in ("", "any") else "") if x)
+    brief = str(plan.get("subject", ""))
+    if st.get("circumstance"):
+        brief += f"; {st['circumstance']}"
+    return f"{brief} ({where})" if where else brief
+
+
+def alternate_of(shot: Shot) -> Optional[Candidate]:
+    """The shot's best real alternate (fitting before loose), or None."""
+    for flag in ALT_FLAGS.values():
+        for c in shot.candidates:
+            if flag in c.flags and not c.reject_reason:
+                return c
+    return None
+
+
+def picture_type(c: Candidate) -> ShotType:
+    return ShotType.footage if c.media == "video" else ShotType.image
+
+
+def drop_layout(shot: Shot, why: str) -> bool:
+    """Remove a layout that cannot be shown whole; the shot keeps its own picture, else its alternate. Returns
+    False when the shot is left with no picture (the live fill then holds a neighbour)."""
+    shot.layout_notes.append(f"{shot.layout.kind.value if shot.layout else 'layout'} not shown: {why}")
+    shot.flags.append("layout_dropped")
+    shot.layout, shot.motion, shot.layout_at = None, None, 0.0
+    own = shot.selected_candidate()
+    if own is not None and not own.id.endswith("_layout_1"):
+        shot.type = picture_type(own) if shot.type == ShotType.motion_graphic else shot.type
+        return True
+    alt = alternate_of(shot)
+    shot.selected = alt.id if alt is not None else None
+    if alt is not None:
+        shot.type = picture_type(alt)
+    elif shot.type == ShotType.motion_graphic:
+        shot.type = ShotType.footage  # no graphic any more: the live fill gives it a neighbour's picture
+    return alt is not None
+
+
+def keep_layouts_whole(shots: list[Shot], first_word: dict[str, float],
+                       origin: dict[str, tuple[Candidate, str]]) -> list[str]:
+    """Adam: a graphic is shown whole or not at all. Every layout and panel stays at least LAYOUT_MIN_S from
+    its first word to the cut, else it is dropped and the shot keeps a picture. A full layout whose first word
+    comes more than LATE_WORDS_S after its cut (the cut could not move) is shown over the shot's alternate
+    picture from its words, so the viewer never sees seconds of bare ground; without an alternate it is
+    dropped."""
+    notes = []
+    for s in shots:
+        t = first_word.get(s.id)
+        if s.layout is None or t is None:
+            continue
+        on = max(s.start, t - LAYOUT_LEAD_S)
+        if s.end - on < LAYOUT_MIN_S - 1e-6:
+            drop_layout(s, f"only {s.end - on:.1f} s from its first word to the cut, under {LAYOUT_MIN_S:g} s")
+            notes.append(f"{s.id}: layout dropped, {s.end - on:.1f} s on screen")
+            continue
+        if _full_layout(s) and s.selected_candidate() is None and on - s.start > LATE_WORDS_S:
+            alt = alternate_of(s)
+            if alt is None:
+                drop_layout(s, f"its first word comes {on - s.start:.1f} s after the cut and no picture can "
+                               f"cover the wait")
+                notes.append(f"{s.id}: layout dropped, words late and no picture")
+                continue
+            s.selected = alt.id
+            s.type = picture_type(alt)
+            s.layout_at = round(on - s.start, 3)
+            s.flags.append("layout_over_picture_from_words")
+            notes.append(f"{s.id}: full layout shown from its words over {alt.id}")
+    return notes
+
+
 def _real_thing(plan: dict) -> Optional[RealThing]:
     rt = plan.get("real_thing")
     if not isinstance(rt, dict) or not str(rt.get("name") or "").strip():
         return None
     return RealThing(**{k: str(rt.get(k) or "") for k in ("name", "kind", "date", "place")})
-
-
-def _placeholder(layout: LayoutSpec, duration: float) -> MotionSpec:
-    title = layout.title or " / ".join(e.text for e in layout.elements[:3]) or layout.kind.replace("_", " ")
-    return MotionSpec(kind=MotionKind.title_card, duration=round(duration, 3),
-                      payload={"title": title[:80], "subtitle": layout.kind.replace("_", " ")})
 
 
 def _cand_copy(c: Candidate, frame: str, seconds: float) -> Candidate:
@@ -181,6 +253,7 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
         ed = edit_by_scene.get(sp["scene"])
         picks = ed["picks"] if ed else [{} for _ in groups]
         rows = []
+        lead: Optional[tuple[float, list]] = None  # (start, clauses) of a clause the next shot starts early for
         for g, pk in zip(groups, picks):
             plan, gc = g["plan"], g["clauses"]
             start, end = gc[0].start, gc[-1].end
@@ -201,26 +274,21 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
                     prev.flags.append(f"held_over:{gc[0].id}")
                     rows.append(_row(plan, gc, pk, "held into previous shot"))
                     continue
-                fallback = "text_over_footage"
-                pk["resolved"] = (pk.get("resolved", "") + "; hold over the limit, text over footage").strip("; ")
-            overlay_text = ""
-            if fallback == "text_over_footage" and cand is None:
-                cand = pk.get("_fallback_cand")  # the model's related real footage; never the previous shot's
-                passages = [str(e.get("text", "")) for e in (plan.get("layout") or {}).get("elements", [])]
-                overlay_text = str(pk.get("overlay_text")
-                                   or (" / ".join(passages) if plan["treatment"] == "document_focus" else "")
-                                   or (plan.get("real_thing") or {}).get("name", "")
-                                   or plan.get("anchor", ""))[:60]
-            if fallback == "map" and cand is None:
-                place = str(pk.get("map_place") or (plan.get("real_thing") or {}).get("place", "")
-                            or (plan.get("real_thing") or {}).get("name", ""))
-                plan = dict(plan, treatment="route_map", presentation="full", planned_treatment=plan["treatment"],
-                            layout={"title": place, "elements": [{"role": "place", "text": place,
-                                                                  "anchor": plan.get("anchor", ""), "at": gc[0].speech_start}]})
+                fallback = ""
+                pk["resolved"] = (pk.get("resolved", "") + "; hold over the limit, left for the fill").strip("; ")
+            if fallback == "extend_next":  # the next shot starts here: its picture covers this clause too
+                lead = (start, gc)
+                rows.append(_row(plan, gc, pk, "covered by the next shot starting early"))
+                continue
+            if lead is not None:
+                if lead[1][0].scene == gc[0].scene:
+                    start = lead[0]
+                    dur = round(end - start, 3)
+                lead = None
             typ = _shot_type(plan, cand, fallback)
             lay = _layout(plan, pk, cand, doc)
-            if lay is not None and lay.kind == LayoutKind.document_focus and doc is None and overlay_text:
-                lay = None  # no page carries the quote: its words go over related footage instead (overlay)
+            if lay is not None and lay.kind == LayoutKind.document_focus and doc is None:
+                lay = None  # no page carries it: a document is never drawn without its page; the shot keeps a picture
             shot = Shot(id="", beat_id=gc[0].beat, scene_id=sp["scene"], start=start, end=end, duration=dur,
                         type=typ, intent=str(plan.get("subject", "")),
                         must_show=[plan["real_thing"]["name"]] if plan.get("real_thing") else [],
@@ -234,19 +302,19 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
             if needs_pick(plan) and cand is None and ed:
                 shot.flags.append("nothing_fits")
             if typ == ShotType.ai_image:
-                shot.ai_prompt = str(plan.get("subject", ""))
-            if typ == ShotType.motion_graphic and lay is not None:
-                shot.motion = _placeholder(lay, dur)
+                shot.ai_prompt = ai_brief(plan)
             if cand is not None:
                 cc = _cand_copy(cand, pk.get("frame", "a"), dur)
                 shot.candidates.append(cc)
                 shot.selected = cc.id
                 origin[cc.id] = (cand, pk.get("frame", "a"))
-            if overlay_text and cand is not None:
-                shot.type = ShotType.footage_overlay if cand.media == "video" else ShotType.image_overlay
-                shot.overlay = MotionSpec(kind=MotionKind.text_overlay, duration=dur, background="transparent",
-                                          payload={"title": overlay_text, "subtitle": ""},
-                                          anchor=str(plan.get("anchor", "")))
+            for key, flag in ALT_FLAGS.items():  # alternates for a dropped layout or a repeat
+                alt = pk.get(key)
+                if alt and alt[0].id not in {c.id for c in shot.candidates}:
+                    ac = _cand_copy(alt[0], alt[1], dur)
+                    ac.flags = list(ac.flags) + [flag]
+                    shot.candidates.append(ac)
+                    origin[ac.id] = alt
             if plan["treatment"] == "document_focus" and doc is None and ed:
                 shot.flags.append("document_not_found")
             if doc is not None and lay is not None and doc.id not in {c.id for c in shot.candidates}:
@@ -267,10 +335,13 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
     for i, s in enumerate(shots):
         s.id = f"shot_{i + 1:03d}"
         s.index = i
-    start_full_layouts_on_words(shots, {s.id: t for s, t in zip(shots, first_at) if t is not None}, origin)
+    first = {s.id: t for s, t in zip(shots, first_at) if t is not None}
+    start_full_layouts_on_words(shots, first, origin)
+    drops = keep_layouts_whole(shots, first, origin)
     total = round(narration.duration + 1.0, 3)
     sl = ShotList(project_id=project_id, duration=total, shots=shots)
-    plan = {"version": 1, "planner": "clause", "clauses": len(clauses), "scenes": plan_scenes}
+    plan = {"version": 1, "planner": "clause", "clauses": len(clauses), "scenes": plan_scenes,
+            "layout_drops": drops}
     return plan, sl
 
 
