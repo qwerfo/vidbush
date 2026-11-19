@@ -293,14 +293,15 @@ def ai_may_fill(s: dict, t0: float) -> bool:
 
 
 def alternate(p: dict, field: str, pool: list[Candidate], recs: dict[str, dict], seconds: float,
-              taken: Any) -> Optional[tuple[Candidate, Any]]:
-    """The picker's fitting or loose asset for a clause, (candidate, start), when it is real, clean, plays long
-    enough and is not taken (taken(key) says the asset is already shown elsewhere); else None."""
+              taken: Any, still_max: float = V.HOLD_MAX_S) -> Optional[tuple[Candidate, Any]]:
+    """The picker's fitting or loose asset for a clause, (candidate, start), when it is real, clean and plays
+    long enough; taken(key) refuses an asset by key. Whether showing it repeats a picture too soon is decided
+    on the final shot list (live.enforce_repeats and the fill), where every shot's time is known."""
     c = _cand_at(pool, p.get(field)) if p.get(field) is not None else None
     if c is None or is_ai(c) or DS.blocked(recs.get(c.id, {})) or taken(asset_key(c)):
         return None
     t, why = time_problem(c, recs.get(c.id, {}), p.get(f"{field}_start"), seconds)
-    if why or (c.media != "video" and seconds > V.HOLD_MAX_S + 1e-6):
+    if why or (c.media != "video" and seconds > still_max + 1e-6):
         return None
     return c, (t if t is not None else "a")
 
@@ -548,8 +549,10 @@ def resolve(picks: list[dict], shots: list[dict], ai_tail: int, recs: dict[str, 
         p["filled_by"] = "pick" if p.get("_cand") is not None or not needs_pick(s["plan"]) else ""
         run = run + 1 if (cand is not None and is_ai(cand)) else 0
     for p, s in zip(picks, shots):  # an alternate is never an asset some pick of the film already shows
-        p["_fit"] = alternate(p, "fitting", pool or [], recs, shot_seconds(s), lambda k: k in used)
-        p["_loose"] = alternate(p, "loose", pool or [], recs, shot_seconds(s), lambda k: k in used)
+        # a clause planned as a layout may hold its stand-in still as long as the layout would have held
+        top = V.HOLD_MAX_S if s["plan"]["treatment"] in ("picture", "hold") else V.LAYOUT_HOLD_MAX_S
+        p["_fit"] = alternate(p, "fitting", pool or [], recs, shot_seconds(s), lambda k: False, top)
+        p["_loose"] = alternate(p, "loose", pool or [], recs, shot_seconds(s), lambda k: False, top)
     return picks
 
 

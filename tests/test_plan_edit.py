@@ -282,3 +282,12 @@ def test_a_slightly_short_clip_is_slowed_not_refused(pool):
     v = pool[5]  # clip 10 s to 30 s: 20 s
     assert E.time_problem(v, {}, 10.0, 22.0) == (10.0, None)
     assert E.time_problem(v, {}, 10.0, 24.0)[1] is not None
+
+
+def test_an_alternate_used_elsewhere_is_still_offered_and_layout_clauses_hold_it_longer(pool, recs):
+    sh = shots([10.0], None, AFTER_OPENING)
+    p = E.resolve(picks({"pick": None, "loose": 1})["picks"], sh, 0, recs, {"https://x/real1.jpg": "c050"}, pool)
+    assert p[0]["_loose"] is None, "a still over 9 s does not stand in for a picture clause"
+    sh[0]["plan"]["treatment"] = "document_focus"
+    p = E.resolve(picks({"pick": None, "loose": 1})["picks"], sh, 0, recs, {"https://x/real1.jpg": "c050"}, pool)
+    assert p[0]["_loose"][0].id == "real1"

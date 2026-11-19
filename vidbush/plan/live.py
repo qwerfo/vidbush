@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import GENERATED_SOURCES, LayoutKind, Narration, ShotList, ShotType, SourceKind
+from ..models import GENERATED_SOURCES, PANEL_LAYOUT_KINDS, LayoutKind, Narration, ShotList, ShotType, SourceKind
 from . import edit as E
 from . import vocab as V
 
@@ -239,6 +239,28 @@ def enforce_repeats(sl: ShotList) -> list[str]:
     return notes
 
 
+OVER_PICTURE_KINDS = (LayoutKind.number_over_footage, LayoutKind.date_title)
+
+
+def needs_picture(s: Any) -> bool:
+    """The shot shows nothing unless it gets a picture: no selected candidate, and no full-frame layout."""
+    return s.selected_candidate() is None and (s.layout is None or s.type != ShotType.motion_graphic)
+
+
+def layout_without_picture(s: Any, notes: list[str]) -> None:
+    """A panel with no picture beneath shows full screen (the graphic is all there is to see); a number or
+    date over footage with no footage is dropped, and the shot is then filled like any empty shot."""
+    from .emit import drop_layout
+    if s.layout.kind in PANEL_LAYOUT_KINDS:
+        s.layout.presentation = "full"
+        s.type = ShotType.motion_graphic
+        s.flags.append("panel_shown_full:no_picture")
+        notes.append(f"{s.id}: {s.layout.kind.value} panel has no picture beneath; shown full screen")
+    else:
+        drop_layout(s, "no real picture to show it over")
+        notes.append(f"{s.id}: {s.layout.kind.value if s.layout else 'layout'} dropped, no picture beneath")
+
+
 def fill_empty_shots(sl: ShotList, *_: Any, **__: Any) -> list[str]:
     """No shot leaves the pick with nothing on screen, and nothing is ever typed over a picture to fill one
     (Adam). In order: the shot's own real alternate (the picker's fitting, then loose picture); the previous
@@ -250,16 +272,23 @@ def fill_empty_shots(sl: ShotList, *_: Any, **__: Any) -> list[str]:
     out: list[Any] = []
     shots = sl.shots
     for i, s in enumerate(shots):
-        if s.selected_candidate() is not None or s.layout is not None:
+        if not needs_picture(s):
             out.append(s)
             continue
         alt = alternate_of(s)
         if alt is not None and not _shown_near(shots, s, alt):
-            s.selected, s.type = alt.id, picture_type(alt)
+            s.selected = alt.id
+            if s.layout is None:
+                s.type = picture_type(alt)
             s.flags.append("filled:alternate")
             notes.append(f"{s.id}: its alternate {alt.id}")
             out.append(s)
             continue
+        if s.layout is not None:
+            layout_without_picture(s, notes)
+            if not needs_picture(s):
+                out.append(s)
+                continue
         prev = out[-1] if out else None
         pc = prev.selected_candidate() if prev is not None else None
         if (prev is not None and prev.scene_id == s.scene_id and _real(pc) and prev.layout is None
@@ -281,11 +310,39 @@ def fill_empty_shots(sl: ShotList, *_: Any, **__: Any) -> list[str]:
             nxt.flags.append(f"started_early_over:{s.id}")
             notes.append(f"{s.id}: {nxt.id}'s picture starts early over it")
             continue
+        if split_between(s, prev, pc, nxt, nc):
+            notes.append(f"{s.id}: {prev.id} holds into it and {nxt.id} starts early, meeting inside it")
+            continue
         s.flags.append("filled:nothing")
         notes.append(f"{s.id}: nothing real to hold or show, left empty")
         out.append(s)
     sl.shots = out
     return notes
+
+
+def split_between(s: Any, prev: Any, pc: Any, nxt: Any, nc: Any) -> bool:
+    """Cover an empty shot with both neighbours: the previous picture holds into it and the next starts early,
+    each inside its own limit, meeting at a point inside it. Only within one scene, real pictures, no layout."""
+    def ok(n, c):
+        return n is not None and n.scene_id == s.scene_id and _real(c) and n.layout is None
+    if not (ok(prev, pc) and ok(nxt, nc)):
+        return False
+    for frac in (0.5, 0.35, 0.65, 0.2, 0.8):
+        cut = round(s.start + frac * s.duration, 3)
+        if can_cover(pc, prev.start, cut) and can_cover(nc, cut, nxt.end, earlier=nxt.start - cut):
+            prev.end, prev.duration = cut, round(cut - prev.start, 3)
+            if pc.media == "video":
+                pc.out_point = round(pc.in_point + prev.duration, 3)
+            if nc.media == "video":
+                nc.in_point = round(nc.in_point - (nxt.start - cut), 3)
+            nxt.start, nxt.duration = cut, round(nxt.end - cut, 3)
+            for spec in (prev.motion, prev.overlay, nxt.motion, nxt.overlay):
+                if spec is not None:
+                    spec.duration = prev.duration if spec in (prev.motion, prev.overlay) else nxt.duration
+            prev.flags.append(f"held_into:{s.id}")
+            nxt.flags.append(f"started_early_over:{s.id}")
+            return True
+    return False
 
 
 def renumber(sl: ShotList) -> None:

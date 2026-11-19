@@ -217,3 +217,31 @@ def test_pick_clause_drops_repeats_fills_and_renumbers(tmp_path, monkeypatch):
     assert [s.id for s in sl.shots] == ["shot_001", "shot_002"] and sl.shots[0].end == 6.0
     plan = json.loads((tmp_path / L.PLAN_FILE).read_text(encoding="utf-8"))
     assert plan["ai_rulings"]["opening"] == ["shot_002"] and warns == [{"opening": ["shot_002"]}]
+
+
+def test_a_panel_with_no_picture_beneath_is_shown_full_screen(tmp_path):
+    s = _shot(0, ShotType.footage)
+    s.layout = LayoutSpec(kind=LayoutKind.chart, presentation="panel")
+    sl = ShotList(project_id="p", duration=3.0, shots=[s])
+    L.fill_empty_shots(sl)
+    assert s.layout.presentation == "full" and s.type == ShotType.motion_graphic and "filled:nothing" not in s.flags
+
+
+def test_a_number_over_footage_with_no_footage_is_dropped_and_the_shot_filled(tmp_path):
+    a = _showing(_shot(0, ShotType.image), _cand(tmp_path, "A"))
+    b = _shot(1, ShotType.footage)
+    b.layout = LayoutSpec(kind=LayoutKind.number_over_footage)
+    sl = ShotList(project_id="p", duration=6.0, shots=[a, b])
+    L.fill_empty_shots(sl)
+    assert sl.shots == [a] and a.end == 6.0 and _no_words(sl)
+
+
+def test_an_empty_shot_too_long_for_one_neighbour_is_split_between_both(tmp_path):
+    a = _showing(_shot(0, ShotType.image, 6.0), _cand(tmp_path, "A"))
+    b = _shot(2, ShotType.footage, 6.0)
+    c = _showing(_shot(4, ShotType.image, 6.0), _cand(tmp_path, "C"))
+    b.start, b.end = 6.0, 12.0
+    c.start, c.end = 12.0, 18.0
+    sl = ShotList(project_id="p", duration=18.0, shots=[a, b, c])
+    L.fill_empty_shots(sl)
+    assert sl.shots == [a, c] and a.end == c.start == 9.0 and a.duration == 9.0 and c.duration == 9.0
