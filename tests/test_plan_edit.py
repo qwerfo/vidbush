@@ -267,7 +267,7 @@ def test_resolve_removes_accidental_repeat_but_keeps_adjacent_and_callback(pool,
     assert out[4]["_cand"] is not None  # labelled callback stays
 
 
-def test_open_clause_no_ai_can_fill_must_name_a_loose_picture(pool, recs):
+def test_every_open_clause_must_name_a_loose_picture(pool, recs):
     """A clause nothing else can fill (too long for an AI still, or in the opening) needs a loose real picture."""
     sh = shots([6.0], None, AFTER_OPENING)
     _, errors = E.check(picks({"pick": None}), sh, pool, recs, {}, 0)
@@ -275,7 +275,7 @@ def test_open_clause_no_ai_can_fill_must_name_a_loose_picture(pool, recs):
     _, errors = E.check(picks({"pick": None, "loose": 1}), sh, pool, recs, {}, 0)
     assert not any("name the loose" in e for e in errors)
     _, errors = E.check(picks({"pick": None}), shots([3.0], None, AFTER_OPENING), pool, recs, {}, 0)
-    assert not any("name the loose" in e for e in errors), "a short clause may still take an AI still"
+    assert any("name the loose" in e for e in errors), "the AI run is only known after the ladder: name one"
 
 
 def test_a_slightly_short_clip_is_slowed_not_refused(pool):

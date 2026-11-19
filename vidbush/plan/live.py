@@ -298,12 +298,16 @@ def fill_empty_shots(sl: ShotList, *_: Any, **__: Any) -> list[str]:
             continue
         nxt = shots[i + 1] if i + 1 < len(shots) else None
         nc = nxt.selected_candidate() if nxt is not None else None
+        early = nxt.start - s.start if nxt is not None else 0.0
+        back = min(early, nc.in_point or 0.0) if nc is not None and nc.media == "video" else early
         if (nxt is not None and nxt.scene_id == s.scene_id and _real(nc) and nxt.layout is None
-                and can_cover(nc, s.start, nxt.end, earlier=nxt.start - s.start)):
-            if nc.media == "video":
-                nc.in_point = round(nc.in_point - (nxt.start - s.start), 3)
+                and can_cover(nc, s.start, nxt.end, earlier=back)):
+            if nc.media == "video":  # play earlier frames where there are some, else the same window longer
+                nc.in_point = round(nc.in_point - back, 3)
             nxt.start = s.start
             nxt.duration = round(nxt.end - nxt.start, 3)
+            if nc.media == "video":
+                nc.out_point = round(nc.in_point + nxt.duration, 3)
             for spec in (nxt.motion, nxt.overlay):
                 if spec is not None:
                     spec.duration = nxt.duration

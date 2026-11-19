@@ -245,3 +245,15 @@ def test_an_empty_shot_too_long_for_one_neighbour_is_split_between_both(tmp_path
     sl = ShotList(project_id="p", duration=18.0, shots=[a, b, c])
     L.fill_empty_shots(sl)
     assert sl.shots == [a, c] and a.end == c.start == 9.0 and a.duration == 9.0 and c.duration == 9.0
+
+
+def test_a_next_clip_with_no_earlier_frames_plays_longer_from_its_start(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "_file_s", lambda c: 20.0)
+    lay = _shot(0, ShotType.motion_graphic)
+    lay.layout = LayoutSpec(kind=LayoutKind.chart, presentation="full")
+    b = _shot(1, ShotType.footage)
+    c = _showing(_shot(2, ShotType.footage), _cand(tmp_path, "V", "video", in_point=0.0, out_point=3.0))
+    sl = ShotList(project_id="p", duration=9.0, shots=[lay, b, c])
+    L.fill_empty_shots(sl)
+    v = c.selected_candidate()
+    assert sl.shots == [lay, c] and c.start == 3.0 and (v.in_point, v.out_point) == (0.0, 6.0)

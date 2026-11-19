@@ -400,8 +400,10 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
         hold = str(p.get("hold") or "").strip().lower()
         p["hold"] = hold if hold in ("previous", "next") else ""
         doc_open = needs_document(s["plan"]) and p.get("document_pick") is None
-        if (p.get("pick") is None and p.get("fitting") is None and p.get("loose") is None and not p["hold"]
-                and (needs_pick(s["plan"]) or doc_open) and not ai_may_fill(s, t0)):
+        # loose is the last step of the ladder; whether an AI still can fill depends on the run around it,
+        # known only after the ladder, so every open clause names one (night 3: a third AI in a row left black)
+        if (p.get("pick") is None and p.get("fitting") is None and p.get("loose") is None
+                and (needs_pick(s["plan"]) or doc_open)):
             errors.append(f"{cid}: no pick, fitting, hold or loose, and no AI still may fill it; name the loose "
                           f"real asset that best keeps the viewer in the story (its place, its people, its "
                           f"subject), unless every asset would show the viewer something false.")

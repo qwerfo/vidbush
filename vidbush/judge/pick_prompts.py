@@ -42,7 +42,8 @@ PICK_RULES = [
     "read full screen, or a picture with a burned-in title, channel name or caption.",
     "hold: for a clause with no pick, 'previous' or 'next' when that neighbouring clause's picture also fits "
     "this clause's situation and could stay on screen across it, else empty.",
-    "loose: for a clause with neither pick nor fitting, the real asset that best keeps the viewer in the "
+    "loose: for every clause with neither pick nor fitting (even when a hold or an AI still may fill it), the "
+    "real asset that best keeps the viewer in the "
     "story: the same place, the same people or the same subject, shown plain while the narration explains. "
     "A landscape or street of the story's region is a good loose picture for almost any line about it. Null "
     "only when every asset would show the viewer something false (a different named place or person, or "
