@@ -62,6 +62,7 @@ SOURCE_CLASSES = {
 HOLD_MAX_S = 9.0  # longest a picture stays on screen in one shot (benchmark: nothing static past about 9 s)
 LAYOUT_HOLD_MAX_S = 12.0  # maps, documents and text layouts may hold longer (benchmark up to about 11 s)
 AI_HOLD_MAX_S = 4.0  # Adam: each AI still is on screen briefly
+VIDEO_SLOW_MAX = 1.15  # a clip this much shorter than its shot is slowed to fit (renderer allows 1.25)
 AI_RUN_MAX = 2  # Adam: no more than two AI stills in a row
 AI_OPENING_S = 15.0  # Adam: no AI-looking picture in the first 15 s
 HOLD_FILL_MAX_S = 7.0  # Adam: a neighbouring picture held over a clause with nothing, about 7 s in total

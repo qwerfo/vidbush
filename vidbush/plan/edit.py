@@ -265,8 +265,10 @@ def time_problem(c: Candidate, rec: dict, start: Any, seconds: float) -> tuple[O
     if c.media != "video":
         return None, None
     span = c.out_point - c.in_point
-    if span + 0.05 < seconds:
+    need = seconds / V.VIDEO_SLOW_MAX  # the renderer slows a slightly short clip to fill its shot
+    if span + 0.05 < need:
         return None, f"the clip is {span:.1f} s and the shot needs {seconds:.1f} s"
+    seconds = min(seconds, span)
     try:
         t = float(start)
     except (TypeError, ValueError):
@@ -281,6 +283,13 @@ def time_problem(c: Candidate, rec: dict, start: Any, seconds: float) -> tuple[O
 
 def ai_allowed_at(start: float) -> bool:
     return start >= V.AI_OPENING_S - 1e-6
+
+
+def ai_may_fill(s: dict, t0: float) -> bool:
+    """The ladder could put an AI still on this clause (the run of two is decided later)."""
+    rt = s["plan"].get("real_thing") or {}
+    return (rt.get("kind") not in NO_AI_KINDS and not needs_document(s["plan"]) and ai_allowed_at(t0)
+            and shot_seconds(s) <= V.AI_HOLD_MAX_S + 1e-6)
 
 
 def alternate(p: dict, field: str, pool: list[Candidate], recs: dict[str, dict], seconds: float,
@@ -389,6 +398,12 @@ def check(raw: Any, shots: list[dict], pool: list[Candidate], recs: dict[str, di
                 errors.append(f"{cid}: {field} {p.get(field)} is an AI still; {field} is always a real asset.")
         hold = str(p.get("hold") or "").strip().lower()
         p["hold"] = hold if hold in ("previous", "next") else ""
+        doc_open = needs_document(s["plan"]) and p.get("document_pick") is None
+        if (p.get("pick") is None and p.get("fitting") is None and p.get("loose") is None and not p["hold"]
+                and (needs_pick(s["plan"]) or doc_open) and not ai_may_fill(s, t0)):
+            errors.append(f"{cid}: no pick, fitting, hold or loose, and no AI still may fill it; name the loose "
+                          f"real asset that best keeps the viewer in the story (its place, its people, its "
+                          f"subject), unless every asset would show the viewer something false.")
         if ai_here:
             run += 1
             if run > V.AI_RUN_MAX:

@@ -39,8 +39,11 @@ PICK_RULES = [
     "nothing fits.",
     "hold: for a clause with no pick, 'previous' or 'next' when that neighbouring clause's picture also fits "
     "this clause's situation and could stay on screen across it, else empty.",
-    "loose: for a clause with neither pick nor fitting, a real asset loosely related to the clause that does "
-    "not contradict its setting, shown plain. Null when even that would mislead.",
+    "loose: for a clause with neither pick nor fitting, the real asset that best keeps the viewer in the "
+    "story: the same place, the same people or the same subject, shown plain while the narration explains. "
+    "A landscape or street of the story's region is a good loose picture for almost any line about it. Null "
+    "only when every asset would show the viewer something false (a different named place or person, or "
+    "modern objects under a historical line); a clause with nothing at all is far worse than a loose picture.",
     "A named real thing (the clause's real_thing) is only shown by an asset whose record supports that it is "
     "that thing: its title, description, page text, date, or the text visible in the frame. A look-alike is "
     "refused, because a viewer who knows the subject sees the substitution and stops trusting the film. For "

@@ -195,3 +195,9 @@ def test_small_panel_is_look_only(page):
     big = DocumentFocus(_marks_job(page, presentation="panel"), int(w * 1920), int(h * 1080), True)
     assert big.fits() and len(big.targets) == 2
     assert all(t.lh * t.s >= 34 for t in big.targets)  # marked type at the floor on screen
+
+
+def test_a_state_postal_code_qualifies_a_place():
+    from vidbush.mg.layouts.routemap import split_place
+    assert split_place("Santa Monica, CA") == ("Santa Monica", "California")
+    assert split_place("Paris, France") == ("Paris", "France")

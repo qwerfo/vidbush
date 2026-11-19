@@ -57,10 +57,25 @@ def _same(a: str, b: str) -> bool:
     return norm(a) == norm(b)
 
 
+US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California", "CO": "Colorado",
+    "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana",
+    "ME": "Maine", "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota",
+    "MS": "Mississippi", "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
+    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas",
+    "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia"}
+
+
 def split_place(text: str) -> tuple[str, str]:
-    """'Santa Monica, California' -> ('Santa Monica', 'California'): the name drawn, the qualifier geocoded."""
+    """'Santa Monica, California' -> ('Santa Monica', 'California'): the name drawn, the qualifier geocoded.
+    A US state's postal code ('Santa Monica, CA') reads as the state."""
     name, _, qual = (text or "").partition(",")
-    return name.strip(), qual.strip()
+    qual = qual.strip()
+    return name.strip(), US_STATES.get(qual.upper().replace(".", ""), qual) if len(qual) <= 3 else qual
 
 
 def resolve(name: str, qual: str = "", near: Any = ()) -> Any:
