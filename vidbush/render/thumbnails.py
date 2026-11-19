@@ -18,6 +18,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from ..models import ShotList, SourceKind
+from ..providers.base import ProviderError
 from ..util import no_em_dash, run, slug
 from .cache import resolve_media
 
@@ -70,25 +71,37 @@ def font_path(settings: Any) -> Path:
 
 # ---------------------------------------------------------------- frames
 
+SCORE_MAX = 12  # frames scored by the judge for thumbnail candidates
+
 def best_frames(shotlist: ShotList, ctx: Any, k: int) -> list[Path]:
     """Up to k distinct frame images from selected candidates, best judge score first (motion graphics last)."""
     scored: list[tuple[int, float, Path]] = []
     seen: set[str] = set()
     grab_dir = ctx.work / "thumbs"
-    for shot in shotlist.shots:
+    shots = [s for s in shotlist.shots if s.selected_candidate() is not None]
+    step = max(1, len(shots) // SCORE_MAX)  # a few frames spread over the film, not a paid call per shot
+    asked = 0
+    for n, shot in enumerate(shots):
         c = shot.selected_candidate()
-        if c is None or c.id in seen:
+        if c.id in seen:
             continue
         seen.add(c.id)
+        score = c.score if c.score is not None else shot.judge_score
+        if score is None and (n % step or asked >= SCORE_MAX):
+            continue
         img = _frame_for(shot, c, ctx, grab_dir)
         if img is None:
             continue
-        score = c.score if c.score is not None else shot.judge_score
         if score is None:
-            res = ctx.seats.vision_json("judge", "thumbnail_score", JUDGE_SYSTEM,
-                                        JUDGE_PROMPT.format(intent=shot.intent or "documentary"), [str(img)],
-                                        stage="packaging", intent=shot.intent)
-            score = float(res.get("score", 0) or 0)
+            asked += 1
+            try:
+                res = ctx.seats.vision_json("judge", "thumbnail_score", JUDGE_SYSTEM,
+                                            JUDGE_PROMPT.format(intent=shot.intent or "documentary"), [str(img)],
+                                            stage="packaging", intent=shot.intent)
+                score = float(res.get("score", 0) or 0)
+            except ProviderError as e:  # thumbnails are a by-product: an outage never fails the render
+                ctx.log.warn("thumbnail scoring unavailable, frames unscored", error=str(e)[:200])
+                score = 0.0
         scored.append((1 if c.source == SourceKind.motion else 0, -float(score), img))
     scored.sort(key=lambda t: (t[0], t[1]))
     return [p for _, _, p in scored[:k]]
