@@ -37,6 +37,9 @@ PICK_RULES = [
     "the specific thing. Example (invented): for 'in the winter of 1890 the miners slept in tents on the ice' "
     "a black and white photograph of a tent camp in snow fits; a modern summer campsite does not. Null when "
     "nothing fits.",
+    "Never pick, as pick, fitting or loose, a clip from a feature film or television drama (recognisable "
+    "actors, a film's staging), a picture whose main content is a small sign, plaque or page the viewer cannot "
+    "read full screen, or a picture with a burned-in title, channel name or caption.",
     "hold: for a clause with no pick, 'previous' or 'next' when that neighbouring clause's picture also fits "
     "this clause's situation and could stay on screen across it, else empty.",
     "loose: for a clause with neither pick nor fitting, the real asset that best keeps the viewer in the "

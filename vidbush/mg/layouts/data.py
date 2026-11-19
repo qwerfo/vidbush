@@ -349,7 +349,8 @@ class Chart(DataComp):
             o = _ease_in(t, c.appear)
             blit(frame, it["ls"], it["lx"] + ox, it["ly"] + oy + self.fs(12, 8) * (1 - o), o)
             end = max(c.word + 0.35, c.appear + 0.5)
-            full = self.L * max(0.0, it["v"]) / self.vmax
+            # a positive value always shows a visible stub, so a tiny bar never reads as a missing one
+            full = max(self.L * max(0.0, it["v"]) / self.vmax, self.bt * 0.6 if it["v"] > 0 else 0.0)
             ln = full * ez.ease_out_cubic(ez.progress(t, c.appear, end))
             col = self.c_accent if k == self.emph else _mix(self.c_paper, self.c_muted, u)
             _fill(frame, self.x0 + ox, it["by"] + oy, self.x0 + ln + ox, it["by"] + self.bt + oy, col)

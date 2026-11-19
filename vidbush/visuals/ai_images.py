@@ -281,6 +281,17 @@ def _answer(raw: Any) -> tuple[Optional[str], Optional[list[str]]]:
     return raw.get("prompt"), ([str(r) for r in removed if str(r).strip()] if isinstance(removed, list) else None)
 
 
+_SEASONS = ("winter", "spring", "summer", "autumn", "fall")
+
+
+def setting_words(brief: str) -> list[str]:
+    """The season and year or decade of the clause's setting, which the prompt rewrite must keep: a still
+    without them showed deep snow under a line set in summer (night 3)."""
+    low = brief.lower()
+    return ([w for w in _SEASONS if re.search(rf"\b{w}\b", low)]
+            + re.findall(r"\b(?:1[5-9]|20)\d0s\b|\b(?:1[5-9]|20)\d\d\b", brief))
+
+
 def safe_prompt(text: str, ctx: Any, keep: Optional[list[str]] = None, narration: str = "",
                 problem: str = "", names: Optional[list[str]] = None) -> str:
     """The prompt with named people, brands and readable text rewritten out by the editor seat. Image models
@@ -529,7 +540,8 @@ def generate_ai_candidate(shot: Shot, ctx: Any, prompt: Optional[str] = None, pr
             shot.flags.append("real_person_photo_wanted")
     narration = " ".join(dict.fromkeys(x for x in (shot_window_text(shot, ctx),
                                                     narration_by_beat(ctx).get(shot.beat_id, "")) if x))
-    text = safe_prompt(text, ctx, keep=shot.must_show, narration=narration, problem=problem, names=brief["people"])
+    text = safe_prompt(text, ctx, keep=list(shot.must_show) + setting_words(shot.ai_prompt or ""),
+                       narration=narration, problem=problem, names=brief["people"])
     lock = _lock(brief)
     if lock and lock not in text:
         text = f"{text.rstrip()} {lock}"
