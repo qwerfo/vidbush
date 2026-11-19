@@ -77,7 +77,7 @@ def pick_clause(sourced: ShotList, ctx: Any) -> ShotList:
         ctx.log.info("layout dropped", note=n)
     for n in enforce_repeats(sl):
         ctx.log.info("repeat", note=n)
-    for n in fill_empty_shots(sl):
+    for n in fill_empty_shots(sl, film=getattr(ctx, "film_pool", None) or []):
         ctx.log.info("empty shot filled", note=n)
     renumber(sl)
     rulings = check_ai_rulings(sl)
@@ -261,7 +261,73 @@ def layout_without_picture(s: Any, notes: list[str]) -> None:
         notes.append(f"{s.id}: {s.layout.kind.value if s.layout else 'layout'} dropped, no picture beneath")
 
 
-def fill_empty_shots(sl: ShotList, *_: Any, **__: Any) -> list[str]:
+_YEAR = re.compile(r"\b(1[5-9]\d\d|20\d\d)s?\b")
+_NOW = ("present", "today", "contemporary", "modern", "recent")
+
+
+def _years(text: str) -> list[int]:
+    return [int(m) for m in _YEAR.findall(text or "")]
+
+
+def period_agrees(want: str, got: str) -> bool:
+    """The record's period agrees with the clause's: a year or decade within 10 years, or both present day.
+    A record that states no period never agrees with a historical clause."""
+    want_now = any(w in (want or "").lower() for w in _NOW)
+    got_now = any(w in (got or "").lower() for w in _NOW)
+    if want_now:
+        return got_now or bool([y for y in _years(got) if y >= 2000])
+    wy, gy = _years(want), _years(got)
+    return bool(wy and gy and min(abs(a - b) for a in wy for b in gy) <= 10)
+
+
+def place_names(place: str) -> list[str]:
+    """Proper names in the clause's place ('Anchorage, Alaska' -> Anchorage, Alaska)."""
+    return [w for w in re.findall(r"[A-Z][a-zA-Z'\-]{3,}", place or "")]
+
+
+def setting_match(s: Any, film: list, shots: list) -> Optional[Any]:
+    """Last resort before a shot stays empty (Adam's step 4, a loosely related real picture shown plain): a
+    clean real photograph or film from the whole film's described pool whose recorded place names the
+    clause's place and whose recorded period agrees with the clause's (the describe record against the
+    director's setting, ruling C), never a page or a drawing, never shown within a minute. Video first."""
+    from ..judge.describe import BLOCKING
+    from ..plan.edit import STAND_IN_REFUSED_LOOKS, in_point
+    tag = next((f for f in s.flags if f.startswith("setting:")), "")
+    if not tag:
+        return None
+    place, period, _ = (tag[len("setting:"):].split("|") + ["", ""])[:3]
+    names = place_names(place)
+    if not names or not period:
+        return None
+    best = None
+    for c, rec in film:
+        vis = rec.get("visual") or {}
+        if (not _real(c) or vis.get("look") in STAND_IN_REFUSED_LOOKS + ("unknown",)
+                or set(vis.get("quality", [])) & (set(BLOCKING) | {"low_resolution", "presenter_to_camera",
+                                                                     "screen_recording"})):
+            continue
+        where = " ".join([vis.get("place", ""), vis.get("shows", ""), c.title or ""])
+        if not any(n.lower() in where.lower() for n in names) or not period_agrees(period, vis.get("period", "")):
+            continue
+        if c.media == "video" and (c.out_point - c.in_point) * V.VIDEO_SLOW_MAX < s.duration - 0.05:
+            continue
+        if c.media != "video" and s.duration > V.HOLD_MAX_S + 1e-6:
+            continue
+        if _shown_near(shots, s, c):
+            continue
+        if best is None or (c.media == "video" and best.media != "video"):
+            best = c
+            if c.media == "video":
+                break
+    if best is None:
+        return None
+    cc = best.model_copy(deep=True)
+    cc.in_point, cc.out_point = in_point(best, "a", s.duration)
+    cc.flags = list(cc.flags) + ["alt:setting"]
+    return cc
+
+
+def fill_empty_shots(sl: ShotList, *_: Any, film: Optional[list] = None, **__: Any) -> list[str]:
     """No shot leaves the pick with nothing on screen, and nothing is ever typed over a picture to fill one
     (Adam). In order: the shot's own real alternate (the picker's fitting, then loose picture); the previous
     shot's real picture holds over it (one shot, one move) inside its hold limit; the next shot's real picture
@@ -316,6 +382,14 @@ def fill_empty_shots(sl: ShotList, *_: Any, **__: Any) -> list[str]:
             continue
         if split_between(s, prev, pc, nxt, nc):
             notes.append(f"{s.id}: {prev.id} holds into it and {nxt.id} starts early, meeting inside it")
+            continue
+        alt = setting_match(s, film or [], shots + out)
+        if alt is not None:
+            s.candidates.append(alt)
+            s.selected, s.type = alt.id, picture_type(alt)
+            s.flags.append("filled:setting")
+            notes.append(f"{s.id}: a real picture of the same place and period, {alt.id}")
+            out.append(s)
             continue
         s.flags.append("filled:nothing")
         notes.append(f"{s.id}: nothing real to hold or show, left empty")

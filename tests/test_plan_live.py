@@ -257,3 +257,32 @@ def test_a_next_clip_with_no_earlier_frames_plays_longer_from_its_start(tmp_path
     L.fill_empty_shots(sl)
     v = c.selected_candidate()
     assert sl.shots == [lay, c] and c.start == 3.0 and (v.in_point, v.out_point) == (0.0, 6.0)
+
+
+def _rec(place, period, look="black_and_white", shows="a street"):
+    return {"visual": {"place": place, "period": period, "look": look, "shows": shows, "quality": []}}
+
+
+def test_an_empty_shot_takes_a_real_picture_of_the_same_place_and_period_from_the_film(tmp_path):
+    s = _shot(0, ShotType.footage)
+    s.flags.append("setting:Anchorage, Alaska|1958|summer")
+    film = [(_cand(tmp_path, "page"), _rec("Anchorage newsroom", "1958", look="document")),
+            (_cand(tmp_path, "modern"), _rec("Anchorage downtown", "Contemporary", look="modern_digital")),
+            (_cand(tmp_path, "texas"), _rec("Austin, Texas", "1950s")),
+            (_cand(tmp_path, "old"), _rec("A street in Anchorage, Alaska", "1950s, from the cars"))]
+    sl = ShotList(project_id="p", duration=3.0, shots=[s])
+    L.fill_empty_shots(sl, film=film)
+    assert s.selected == "old" and "filled:setting" in s.flags and _no_words(sl)
+
+
+def test_the_setting_fill_never_guesses_without_a_period(tmp_path):
+    s = _shot(0, ShotType.footage)
+    s.flags.append("setting:Anchorage, Alaska|1958|summer")
+    sl = ShotList(project_id="p", duration=3.0, shots=[s])
+    L.fill_empty_shots(sl, film=[(_cand(tmp_path, "x"), _rec("Anchorage, Alaska", ""))])
+    assert s.selected is None and "filled:nothing" in s.flags
+
+
+def test_periods_agree_within_ten_years_or_both_present_day():
+    assert L.period_agrees("1958", "1950s") and L.period_agrees("present day", "Contemporary")
+    assert not L.period_agrees("1958", "Contemporary") and not L.period_agrees("1958", "1920s")

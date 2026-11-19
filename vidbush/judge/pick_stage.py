@@ -146,6 +146,7 @@ def pick_shotlist(shotlist: ShotList, ctx: Any) -> ShotList:
     edits = E.edit_all(ctx.seats, scenes, clauses, narration, shotlist, work / "pick_sheets", log=log,
                        settings=ctx.settings, ladder=ladder)
     new_plan, sl = M.emit(ctx.project.id, script, narration, clauses, scenes, edits)
+    ctx.film_pool = [(c, e["records"].get(c.id) or {}) for e in edits for c in e["pool"]]
     for sc, e in zip(new_plan["scenes"], edits):
         by = {p["clause"]: p for p in e["picks"]}
         for r in sc["shots"]:

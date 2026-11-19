@@ -313,6 +313,9 @@ def emit(project_id: str, script: Script, narration: Narration, clauses: list[Cl
                 shot.candidates.append(cc)
                 shot.selected = cc.id
                 origin[cc.id] = (cand, pk.get("frame", "a"))
+            st = plan.get("setting") or {}
+            if st.get("place") or st.get("period"):
+                shot.flags.append("setting:" + "|".join(str(st.get(k) or "") for k in ("place", "period", "season")))
             for key, flag in ALT_FLAGS.items():  # alternates for a dropped layout or a repeat
                 alt = pk.get(key)
                 if alt and alt[0].id not in {c.id for c in shot.candidates}:
